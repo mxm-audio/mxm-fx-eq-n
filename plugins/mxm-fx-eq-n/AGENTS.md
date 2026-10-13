@@ -125,8 +125,10 @@ transaction. The factory set is E4's.
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
   too, where the host has it, writing nothing**; the history is the instance's.
 - **The editor reads what it sent** (`normalised_now`, `band_now`): nice-plug changes a parameter
-  only when its queued event is written, so every chained edit, the drawing and the column read
-  the history's pending values until the host applies them.
+  only when its queued event is written, so the editor's own reads — the graph, the keyboard's
+  edits and the column's own decisions (its menus, Hold) — take the history's pending values until
+  the host applies them. The column's shared controls read the parameter itself, mxm-kit's binding
+  as everywhere ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*; plan §7).
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; settings are view state (`view.rs`), persisted, dirty-only;
   within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).

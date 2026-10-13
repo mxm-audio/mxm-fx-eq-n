@@ -111,12 +111,12 @@ impl History {
     }
 
     pub fn begin(&mut self, index: usize, readback: f32) {
-        // A new gesture: whatever was abandoned of this parameter is over.
-        self.abandoned.retain(|&abandoned| abandoned != index);
         if self.replacing {
-            self.replaced = true;
+            self.replacing_write();
             return;
         }
+        // A new gesture: whatever was abandoned of this parameter is over.
+        self.abandoned.retain(|&abandoned| abandoned != index);
         if !self.open.iter().any(|change| change.index == index) {
             let before = self.current(index, readback);
             self.open.push(Change {
@@ -131,7 +131,7 @@ impl History {
     pub fn set(&mut self, index: usize, normalised: f32, readback: f32) {
         self.note_sent(index, readback, normalised);
         if self.replacing {
-            self.replaced = true;
+            self.replacing_write();
             return;
         }
         match self.open.iter_mut().find(|change| change.index == index) {
@@ -187,6 +187,22 @@ impl History {
         self.undo.clear();
         self.redo.clear();
         self.abandon_open();
+    }
+
+    /// A write inside the preset bar's calls. The first one abandons every gesture still open, so
+    /// the recorder can end them at the host before the replacement's own `begin` reaches it: a
+    /// begin is never nested in another on the same parameter.
+    fn replacing_write(&mut self) {
+        if !self.replaced {
+            self.replaced = true;
+            self.abandon_open();
+        }
+    }
+
+    /// Whether a held control's write for `index` is dropped: abandoned, and not the replacement's
+    /// own, which always passes.
+    fn drops(&self, index: usize) -> bool {
+        !self.replacing && self.is_abandoned(index)
     }
 
     /// Every gesture still open ends, unrecorded, whichever control opened it — the graph, the
@@ -318,16 +334,14 @@ pub fn lock(history: &Shared) -> std::sync::MutexGuard<'_, History> {
 pub struct Recorder {
     host: GuiContext,
     history: Shared,
-    pointers: Arc<dyn Fn() -> Vec<ParamPtr> + Send + Sync>,
+    /// Every host parameter, in the order the history's indices name them: taken once, so a write
+    /// looks its parameter up without building the list.
+    pointers: Vec<ParamPtr>,
 }
 
 impl Recorder {
     /// `pointers` lists every host parameter in the order the history's indices name them.
-    pub fn context(
-        host: GuiContext,
-        history: Shared,
-        pointers: Arc<dyn Fn() -> Vec<ParamPtr> + Send + Sync>,
-    ) -> GuiContext {
+    pub fn context(host: GuiContext, history: Shared, pointers: Vec<ParamPtr>) -> GuiContext {
         GuiContext::new(Arc::new(Recorder {
             host,
             history,
@@ -336,7 +350,17 @@ impl Recorder {
     }
 
     fn index(&self, param: ParamPtr) -> Option<usize> {
-        (self.pointers)().iter().position(|other| *other == param)
+        self.pointers.iter().position(|other| *other == param)
+    }
+
+    /// Ends at the host the parameters whose gestures the history abandoned.
+    fn end_abandoned(&self, ended: Vec<usize>) {
+        for index in ended {
+            if let Some(ptr) = self.pointers.get(index) {
+                // SAFETY: every pointer names a live parameter of this plugin's `EqParams`.
+                unsafe { self.host.raw_end_set_parameter(*ptr) };
+            }
+        }
     }
 }
 
@@ -373,7 +397,13 @@ impl GuiContextInner for Recorder {
         if let Some(index) = self.index(param) {
             // SAFETY: the pointer came from the caller's live parameter.
             let readback = unsafe { param.unmodulated_normalized_value() };
-            lock(&self.history).begin(index, readback);
+            let ended = {
+                let mut history = lock(&self.history);
+                history.begin(index, readback);
+                history.take_to_end()
+            };
+            // A replacement's first write abandoned what was open: ended before its own begin.
+            self.end_abandoned(ended);
         }
         // SAFETY: forwarded unchanged.
         unsafe { self.host.raw_begin_set_parameter(param) };
@@ -383,7 +413,7 @@ impl GuiContextInner for Recorder {
         if let Some(index) = self.index(param) {
             let mut history = lock(&self.history);
             // An abandoned gesture's later writes would land on the patch that replaced it.
-            if history.is_abandoned(index) {
+            if history.drops(index) {
                 return;
             }
             // SAFETY: as above.
@@ -396,7 +426,10 @@ impl GuiContextInner for Recorder {
 
     unsafe fn raw_end_set_parameter(&self, param: ParamPtr) {
         let index = self.index(param);
-        if index.is_some_and(|index| lock(&self.history).take_abandoned_end(index)) {
+        if index.is_some_and(|index| {
+            let mut history = lock(&self.history);
+            !history.replacing && history.take_abandoned_end(index)
+        }) {
             return;
         }
         // SAFETY: forwarded unchanged.
@@ -423,13 +456,7 @@ impl GuiContextInner for Recorder {
                 history.restored();
                 history.take_to_end()
             };
-            let pointers = (self.pointers)();
-            for index in ended {
-                if let Some(ptr) = pointers.get(index) {
-                    // SAFETY: as above.
-                    unsafe { self.host.raw_end_set_parameter(*ptr) };
-                }
-            }
+            self.end_abandoned(ended);
         }
         self.host.set_state(state);
     }

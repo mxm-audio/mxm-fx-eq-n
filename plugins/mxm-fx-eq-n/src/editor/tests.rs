@@ -198,12 +198,14 @@ impl Rig {
         history::lock(&self.app.history).depth()
     }
 
-    /// Every parameter's gestures are balanced: as many ends as begins, each set inside one.
+    /// Every parameter's gestures are balanced: as many ends as begins, each set inside one, and
+    /// no begin while that parameter is already open (nice-plug's own checks reject one).
     fn gestures_balanced(&self) -> bool {
         let log = self.host.log.lock().unwrap();
         let mut open: Vec<ParamPtr> = Vec::new();
         for (what, param) in log.iter() {
             match what {
+                'b' if open.contains(param) => return false,
                 'b' => open.push(*param),
                 'e' => {
                     let Some(at) = open.iter().position(|other| other == param) else {
@@ -992,6 +994,102 @@ fn the_cursor_s_target_is_scrolled_into_view() {
             rig.app.nav.parameter()
         );
     }
+}
+
+/// A preset load while a shared control holds a parameter it writes: the control's gesture ends at
+/// the host before the load's own begin, the load lands, and the control's tail is dropped.
+#[test]
+fn a_preset_load_never_nests_a_begin_in_a_held_control_s_gesture() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let gui = rig.app.gui.clone().unwrap();
+    let setter = gui.param_setter();
+    let params = rig.app.params.clone();
+    let output = params.param(OUTPUT_INDEX);
+    output.begin(&setter);
+    output.set(&setter, 0.3);
+
+    rig.app.start_replacing();
+    rig.app.instant(&[(OUTPUT_INDEX, 0.7)]);
+    rig.app.finish_replacing(&rig.ctx.clone());
+    assert!(
+        rig.gestures_balanced(),
+        "no nested begin, every gesture ended"
+    );
+    assert_eq!(output.normalised(), 0.7);
+
+    output.set(&setter, 0.9);
+    output.end(&setter);
+    assert_eq!(
+        output.normalised(),
+        0.7,
+        "the held control's tail is dropped"
+    );
+    assert!(rig.gestures_balanced());
+}
+
+/// A selected target stays in view when the window shrinks or the zoom grows under it.
+#[test]
+fn a_resize_or_a_zoom_keeps_the_cursor_s_target_in_view() {
+    for zoom in [false, true] {
+        let mut rig = Rig::new();
+        rig.press(Vec::new());
+        rig.press(Vec::new());
+        rig.view(Key::ArrowRight);
+        for _ in 0..3 {
+            rig.press(Vec::new());
+        }
+        assert!(!rig.app.cursor_on_graph(), "on a column card");
+        let size = if zoom {
+            rig.ctx.set_zoom_factor(2.0);
+            Rig::opening()
+        } else {
+            egui::vec2(MINIMUM.0 as f32, MINIMUM.1 as f32)
+        };
+        for _ in 0..30 {
+            rig.frame(size, Vec::new());
+        }
+        let window = rig.ctx.content_rect();
+        let rect = mxm_ui::navigation::spots(&rig.ctx)
+            .into_iter()
+            .find(|spot| {
+                Some(spot.card) == rig.app.nav.card()
+                    && Some(spot.key.as_str()) == rig.app.nav.parameter()
+            })
+            .map(|spot| spot.rect)
+            .expect("drawn");
+        assert!(
+            rect.min.x >= window.min.x - 0.5 && rect.max.x <= window.max.x + 0.5,
+            "zoom {zoom}: {rect:?} inside {window:?}"
+        );
+    }
+}
+
+/// The editor's per-frame reads allocate nothing: a band as last set, for every slot, and a
+/// recorded write inside an open gesture.
+#[test]
+fn the_editor_s_hot_reads_and_recorded_writes_allocate_nothing() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    let gui = rig.app.gui.clone().unwrap();
+    let setter = gui.param_setter();
+    let params = rig.app.params.clone();
+    let freq = params.param(band_index(0, Field::Freq));
+    freq.begin(&setter);
+    freq.set(&setter, 0.6);
+    rig.host.log.lock().unwrap().reserve(64);
+    nice_assert_no_alloc::assert_no_alloc(|| {
+        for slot in 0..SLOTS {
+            let _ = rig.app.band_now(slot);
+        }
+        for step in 0..8 {
+            freq.set(&setter, 0.6 + step as f32 * 0.01);
+        }
+    });
+    freq.end(&setter);
+    assert!(rig.gestures_balanced());
 }
 
 /// MOVE held and stepped once on band 1: a keyboard gesture left open.

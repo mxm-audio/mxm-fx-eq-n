@@ -66,8 +66,7 @@ impl EqApp {
 
         {
             let params = self.params.clone();
-            let erased = params.erased();
-            history::lock(&self.history).settle(|index| erased[index].normalised());
+            history::lock(&self.history).settle(|index| params.param(index).normalised());
         }
         let restored = history::lock(&self.history).observe_restores(self.params.view.restores());
         if restored {
@@ -114,7 +113,15 @@ impl EqApp {
             self.nav.card(),
             self.nav.parameter().map(str::to_owned),
         );
-        if target != self.last_target {
+        // So does a change of the window's size or zoom, on that frame and the next: the first still
+        // has last frame's layout, the second the new one.
+        let view = (ctx.content_rect().size(), ctx.zoom_factor());
+        if view != self.last_view {
+            self.last_view = view;
+            self.rescroll = 2;
+        }
+        if target != self.last_target || self.rescroll > 0 {
+            self.rescroll = self.rescroll.saturating_sub(1);
             if let (None, Some(card), Some(key)) = &target
                 && navigation::shown(&ctx)
                 && let Some(spot) = navigation::spots(&ctx)

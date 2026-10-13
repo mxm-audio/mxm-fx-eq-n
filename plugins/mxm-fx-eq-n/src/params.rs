@@ -258,6 +258,19 @@ impl EqParams {
         all
     }
 
+    /// [`erased`](Self::erased)'s parameter at `index`, without building the list: the editor
+    /// reads parameters one at a time, every frame.
+    pub fn param(&self, index: usize) -> &dyn mxm_params::ErasedParam {
+        const FIELDS: usize = 6;
+        match index {
+            index if index < SLOTS * FIELDS => {
+                self.bands[index / FIELDS].parameters()[index % FIELDS]
+            }
+            index if index == SLOTS * FIELDS => &self.output,
+            _ => &self.gain_scale,
+        }
+    }
+
     /// [`erased`](Self::erased)'s parameters as nice-plug's pointers.
     pub fn pointers(&self) -> Vec<nice_plug::params::internals::ParamPtr> {
         let mut all = Vec::with_capacity(SLOTS * 6 + 2);

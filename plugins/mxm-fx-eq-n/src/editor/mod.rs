@@ -188,6 +188,9 @@ pub struct EqApp {
     last_target: (Option<usize>, Option<u64>, Option<String>),
     /// The cursor's new target, to scroll into view when the surface is drawn.
     scroll_to: Option<Rect>,
+    /// The window's size and zoom last frame, and the frames left to scroll after a change.
+    last_view: (egui::Vec2, f32),
+    rescroll: u8,
     pub(crate) text: HashMap<&'static str, Option<String>>,
     pub(crate) presets: mxm_preset::PresetUi,
     pub(crate) meters: column::MeterDisplay,
@@ -231,6 +234,8 @@ impl EqApp {
             analyser_on: false,
             last_target: (None, None, None),
             scroll_to: None,
+            last_view: (egui::Vec2::ZERO, 1.0),
+            rescroll: 0,
             text: HashMap::new(),
             presets,
             meters: column::MeterDisplay::default(),
@@ -245,7 +250,7 @@ impl EqApp {
         self.gui = Some(history::Recorder::context(
             host.clone(),
             self.history.clone(),
-            Arc::new(move || params.pointers()),
+            params.pointers(),
         ));
         self.host = Some(host);
         self.solo_endings = self.audition.state().0;
@@ -268,7 +273,7 @@ impl EqApp {
             let params = self.params.clone();
             let open = history::lock(&self.history).open_params();
             for index in open {
-                params.erased()[index].end(&setter);
+                params.param(index).end(&setter);
             }
         }
         self.copy = None;
@@ -298,7 +303,7 @@ impl EqApp {
     }
 
     pub(crate) fn erased(&self, index: usize) -> &dyn ErasedParam {
-        self.params.erased()[index]
+        self.params.param(index)
     }
 
     pub(crate) fn band_in_use(&self, slot: usize) -> bool {
@@ -357,7 +362,7 @@ impl EqApp {
         };
         let setter = gui.param_setter();
         let params = self.params.clone();
-        let param = params.erased()[index];
+        let param = params.param(index);
         if !self.open.holds(index) {
             // Where the previous gesture left it, though the host may not have applied that yet.
             let before = self.normalised_now(index);
@@ -381,9 +386,8 @@ impl EqApp {
         };
         let setter = gui.param_setter();
         let params = self.params.clone();
-        let erased = params.erased();
         for (index, _) in open {
-            erased[index].end(&setter);
+            params.param(index).end(&setter);
         }
     }
 
@@ -404,10 +408,9 @@ impl EqApp {
         };
         let setter = gui.param_setter();
         let params = self.params.clone();
-        let erased = params.erased();
         let edits: Vec<(&dyn ErasedParam, f32)> = writes
             .iter()
-            .map(|&(index, value)| (erased[index], value))
+            .map(|&(index, value)| (params.param(index), value))
             .collect();
         mxm_params::binding::set_together(&setter, &edits);
     }
@@ -710,7 +713,7 @@ impl EqApp {
             let setter = host.param_setter();
             let params = self.params.clone();
             for index in ended {
-                params.erased()[index].end(&setter);
+                params.param(index).end(&setter);
             }
         }
         self.open = Open::default();

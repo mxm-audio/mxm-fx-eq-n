@@ -115,8 +115,10 @@ and `audition.rs`'s tests hold the lifecycle.
   (`abandon_gesture`), so BACK can put back nothing from before. That is every gesture the
   recorder saw begin, a shared column control's as well as the graph's and the keyboard's: each is
   ended at the host once, egui's drag is stopped, and what the still-held control sends for it is
-  dropped until it begins anew (`History::abandon_open`). A band turned Off outside the editor does
-  the same for the gesture on it. A restore also forgets the values sent that the host had not
+  dropped until it begins anew (`History::abandon_open`). A preset load abandons them at its first
+  write, and the recorder ends them at the host before the load's own `begin`, so no begin is ever
+  nested in another on the same parameter; the load's writes always pass. A band turned Off
+  outside the editor does the same for the gesture on it. A restore also forgets the values sent that the host had not
   applied yet; a load's own writes replace theirs.
 
   **What was sent is read back** (`normalised_now`, `band_now`). nice-plug's CLAP context changes a
@@ -129,7 +131,9 @@ and `audition.rs`'s tests hold the lifecycle.
   the edit still on its way, and none stays pending past `PENDING_FRAMES` (half a second at 60 Hz,
   for a write applied and put back between two frames, which no readback can tell from one on its
   way). A gesture's starting value comes the same way, so BACK puts back only its own. The tests run
-  this on a host that applies writes only when told. **A known limit**: the column's controls are
+  this on a host that applies writes only when told. These reads look each parameter up alone
+  (`EqParams::param`), and the recorder keeps its pointer list from attach, so a frame's reads and
+  a drag's writes allocate nothing (`the_editor_s_hot_reads_and_recorded_writes_allocate_nothing`). **A known limit**: the column's controls are
   mxm-kit's shared binding, which reads the parameter itself in every editor of the collection, so a
   slider pressed inside the same host buffer as a graph edit starts from the value before it. No
   person crosses from the graph to a slider that fast; a pending-aware read in the binding would
@@ -137,7 +141,9 @@ and `audition.rs`'s tests hold the lifecycle.
 
   **The narrow layout scrolls the cursor's target into view** the frame it moves there
   (`scroll_to_rect` on its last drawn rectangle), asked inside each scroll area, since one takes
-  only the requests made inside it: down the column, then sideways for the surface. With no band
+  only the requests made inside it: down the column, then sideways for the surface. A change of the
+  window's size or zoom asks again, on that frame and the next, so a target the cursor did not
+  leave stays in view. With no band
   selected the Band card holds no control and is no stop of the cursor's (`bar_card_absent`):
   VIEW from the graph would land on nothing and fall back, and at the minimum window it is the
   card nearest the graph's middle.
