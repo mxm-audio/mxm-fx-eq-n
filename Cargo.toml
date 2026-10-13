@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/mxm-fx-eq-n-dsp",
+    "plugins/mxm-fx-eq-n",
     "xtask",
 ]
 
@@ -18,7 +19,14 @@ repository = "https://github.com/mxm-audio/mxm-fx-eq-n"
 # kit's from mxm-kit's main.
 egui = "=0.36.1"
 mxm-fx-eq-n-dsp = { path = "crates/mxm-fx-eq-n-dsp" }
+mxm-fft = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-keys = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-measure = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-params = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-plugin-test = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-preset = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-telemetry = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-ui = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-xtask = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 nice-plug = { version = "=0.4.2", default-features = false, features = ["editor", "assert_process_allocs"] }
 nice-plug-egui = { version = "=0.5.1", default-features = false, features = ["opengl"] }
@@ -28,6 +36,14 @@ lto = "thin"
 strip = "symbols"
 
 [profile.dev.package.mxm-measure]
+opt-level = 3
+
+# The FFT under mxm-fft: the editor's analyser transforms every frame, and unoptimised a debug
+# bundle stutters. A dependency's profiles are ignored, so they are set here.
+[profile.dev.package.rustfft]
+opt-level = 3
+
+[profile.dev.package.realfft]
 opt-level = 3
 
 [profile.profiling]

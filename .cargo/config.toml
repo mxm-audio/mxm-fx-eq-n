@@ -1,2 +1,25 @@
 [alias]
 xtask = "run --package xtask --release --"
+
+# >>> local kit: mxm-kit's feat/eq-n (its port/audit-o9 plus mxm-fft and the surface API), until
+# it reaches main. Closer than the workspace's link, so it wins for this repository. Remove before
+# any push.
+[patch."https://github.com/mxm-audio/mxm-kit"]
+mxm-audio-file = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-audio-file" }
+mxm-audio-file-decode = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-audio-file-decode" }
+mxm-control-map = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-control-map" }
+mxm-fft = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-fft" }
+mxm-keys = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-keys" }
+mxm-measure = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-measure" }
+mxm-modulation = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-modulation" }
+mxm-modulation-params = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-modulation-params" }
+mxm-params = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-params" }
+mxm-part-routing = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-part-routing" }
+mxm-plugin-test = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-plugin-test" }
+mxm-preset = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-preset" }
+mxm-tempo = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-tempo" }
+mxm-telemetry = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-telemetry" }
+mxm-ui = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/ui" }
+mxm-vst3-host = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-vst3-host" }
+mxm-xtask = { path = "Z:/newDAWn/kit/mxm-kit-eq-n/crates/mxm-xtask" }
+# <<< local kit

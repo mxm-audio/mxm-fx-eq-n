@@ -433,61 +433,36 @@ shape (a ring) as well as colour. Hue may add to that but never carries it alone
 red-green colour-blind; the research found one maker-documented colour-blind scheme (Eventide's)
 and notes that Pro-Q draws right in red and mid in green (§18 there).
 
-### 5.3 The keyboard — newDAWn's held-key model
+### 5.3 The keyboard — the collection's keyboard language
 
-The owner's ruling (2026-10-12): *"follow newDAWn's held-key model"*. The model is
-`01-newDAWn/AGENTS.md` *Keyboard*, and it is built in **`crates/ui`** (decision 5: *"it should follow
-the standard"*), as an opt-in module beside the existing cursor (`src/navigation.rs`), which stays
-untouched.
+The owner's ruling (2026-10-12): *"follow newDAWn's held-key model"*. In the live collection that
+model is the law for every editor already: **the keyboard language** (mxm-kit's design system §11,
+engine `mxm-keys`, the keymap in use in the folder newDAWn and every editor share), read through
+`mxm_ui::navigation`'s cursor. The archive's K1 table and its `held` layer are replaced by it (revision
+20). Nothing here is the EQ's own but what the bands' verbs do.
 
-**The model:**
-- **Arrows alone move focus.** On the graph, ←/→ select the previous or next band by frequency (*"l
-  r is selecting a point on the line"*). Focus is a position on the line, so on an empty graph, or
-  past the outermost band, ←/→ step along it.
-- **Shift+arrows** move between views: graph, column, app bar.
-- **A held left-hand key plus arrows** does that key's job, on the Q W E / A S D / Z X C grid. The
-  columns are *start, whole, end*; the rows are *coarse, normal, fine*.
-- **Tapping a grid key alone is an action.** `item.insert` adds a 0 dB bell at the focus, so a
-  keyboard user starts from an empty Init. `item.delete` removes the selected band, as Delete does.
-  The keys are settled at E0.5.
-- **Well-known shortcuts keep their meanings.**
+- **The column and the bars are the cursor's**, as in every editor: the arrows walk the controls,
+  VIEW + arrows go between the cards and up to the bars, a step key (or VALUE) + arrows edit a
+  value as one gesture that OUT keeps and BACK cancels, F1 shows the keys.
+- **The graph is a surface** (`navigation::surface`, added to mxm-kit for this editor): with the
+  cursor on it, the language's outputs come to the editor, and they act on the bands.
+  - ← → select the previous or next band by frequency, and step along the line where there is none.
+  - **MOVE** + ← → frequency (a semitone; COARSE an octave, MICRO a cent), ↑ ↓ gain (0.5 dB; 3, 0.1).
+  - **VALUE** + ↑ ↓ gain. **EXTENT** + ← → narrower or wider (Q).
+  - **MICRO** + ← → takes the band's start or end edge, which MOVE then moves alone, the other edge
+    staying put: E0.5's "which edge a Q key keeps", answered by the language.
+  - **DUPLICATE** + arrows carries a copy where they go. **ADD** makes a 0 dB bell at the keyboard's
+    place, so a keyboard user starts from an empty Init; **REMOVE** and **DELETE** take it away.
+  - BACK with nothing to cancel lets go of the edge, then of the band.
+- **A gesture is one host gesture and one undo step**; BACK puts it back. BACK also cancels a mouse
+  drag on the graph, as on every shared control.
+- **Typing is the cursor's**: a focused text field or an open menu makes it inert.
+- **Space** is not the language's, and the live window adapter has no key capture of the archive's
+  kind; whether a host's transport hears it is E5's check.
 
-**K1 for the selected band** (decision 4):
-
-| Held key | ←/→ | ↑/↓ |
-|---|---|---|
-| S (W coarse, X fine) | frequency, so the point moves where it is drawn | gain |
-| A / D (Q/E, Z/C) | the lower / upper edge, which changes the width (Q) | — |
-
-Steps are in natural units: dB, and semitones and octaves for frequency. Elsewhere they are ±10 %,
-±1 % and ±0.1 % of travel, and never less than one of the parameter's own steps. In the column,
-arrows move between parameters and the held keys change the focused value.
-
-**Contracts:**
-- **A held edit is one host gesture** from press to release (`crates/ui/AGENTS.md`).
-- **Keys are physical positions,** so the grid holds on AZERTY and Dvorak. egui-baseview publishes
-  `physical_key: None` today (`vendor/egui-baseview/src/window.rs`), and its existing patch grows to
-  carry the key code.
-- **The editor tracks held keys itself,** ignoring OS repeat for letters; **focus loss releases every
-  held key**, because egui clears them without a key-up.
-- **The keyboard is claimed only while the editor has focus**, or a DAW may also act on "S".
-  **Space has one owner per mode.** Outside text entry it always passes to the host, for transport.
-  In text entry the field owns it, so names can contain spaces and transport never fires while
-  typing; design system §11 forbids only trapping transport *unexpectedly*. The other transport keys
-  are never claimed. MXM Player's computer-keyboard piano takes letters only while
-  its own window is focused (`apps/mxm-player/src/ui/mod.rs`); E0.5 confirms it.
-- **Typing is a separate mode** (newDAWn). It begins when a text field takes focus (a preset name or
-  search, or Enter on a value) and ends on Enter, Escape or focus loss. While it lasts the command
-  layer is inert, as the shared cursor already is around a text field.
-- **Holding a key shows the 3×3 map** of what the arrows do, taking no layout space.
-
-**Named commands.** Every action is a named command (`focus.move`, `item.move`, `edge.end.move`, in
-newDAWn's names where it has them), and one plain table maps keys to commands. newDAWn's shared
-keymap format replaces that table when it exists; no format is invented here.
-
-**An exception to design system §11 until the migration.** The design system says so in one line,
-naming this plan. The shared `keyboard_checks` assume the old cursor, so this plugin has its own
-coverage test: every band and column parameter is reachable and operable through the commands.
+**Proved by** the plugin's own language tests (every verb on the graph, gesture balance, BACK) and
+the shared `keyboard_checks::the_cursor_reaches_and_operates_from` over the column in a bell's state
+and a cut's.
 
 ### 5.4 Undo, presets, accessibility
 
@@ -521,15 +496,14 @@ coverage test: every band and column parameter is reachable and operable through
 |---|---|
 | Root `AGENTS.md` | *Naming* (`mxm-fx-eq-n` added to the effect names), DOX count and list, crate and plugin counts, the MSRV table, the Child DOX Index |
 | `plugins/AGENTS.md` | The plugin table and child index. The side-column exception is recorded beside `mxm-fx-curve`'s, and the keyboard exception |
-| `docs/MXM_DESIGN_SYSTEM.md` §11 | One line: this plugin follows newDAWn's model by owner ruling, pending the collection's migration |
+| mxm-kit `docs/MXM_DESIGN_SYSTEM.md` §11, `docs/plugin-conventions.md` | An editor's own view of items joins the cursor as a surface; the EQ's row, its Init exception and its layout exception |
 | `docs/briefs/mxm-fx-eq-n.md` | New: the E0 brief |
-| `crates/ui` | A new opt-in held-key command module (decision 5); nothing else |
-| `crates/mxm-fft` | New and shared, owned by `plans/plan-mxm-fft.md`; this plugin's editor is a consumer |
+| mxm-kit `crates/ui` | `navigation::surface` and `surface_outputs`, the sheet naming a surface's jobs (branch `feat/eq-n`) |
+| mxm-kit `crates/mxm-fft` | New and shared (branch `feat/eq-n`); this plugin's editor is its first consumer |
 | `crates/mxm-preset` | Nothing: undo records at the editor's own host context (§5.4, E3) |
-| `vendor/egui-baseview` | Its existing patch grows to carry the physical key code into egui (§5.3). The patch's scope note and drop condition in `vendor/AGENTS.md` change with it |
 | `vendor/nice-plug` | Nothing in v1. F6 makes the collection's first latency report: `set_latency_samples` and `request_restart` exist, but the player's headless restart path is untested (`plugins/mxm-mono-00/AGENTS.md`) |
-| `apps/mxm-player` | `tests/editor_resize.rs` lists the new bundle; AGENTS.md counts |
-| `bundler.toml`, `README.md`, `Cargo.toml` | Bundle name; effects table; both crates in `members` and `default-members` |
+| The workspace | `repos.txt` gains the repository once the owner creates it on GitHub |
+| This repository | `bundler.toml`, `README.md`, `Cargo.toml`: its own, as every product's |
 | Control map | None in v1. No role fits on-demand bands, and a map is optional |
 
 ## 7. Later phases — the rest of "flexible and useful"
@@ -577,7 +551,7 @@ the band pool and the analysis layer, not beside them.
 | **E0.5** | A disposable interaction probe in MXM Player: graph and right column, click-to-add, drag, where points are drawn (§5.2), the K1 held-key layer, an analyser stub. Also the key-delivery spike: physical-key down/up in MXM Player and one DAW, under a QWERTY and a non-QWERTY layout, no host double action, Space passing through. **Built** as `apps/mxm-eq-n-probe`, with the egui-baseview physical-key patch, and **deleted at E3** (2026-10-13). Its code was reviewed by the agent-loop and **approved in round 11** (2026-10-12; 30 findings fixed, two rejected with evidence). **Owner so far:** per-band curves are "mostly visual noise", now a switch, off by default; a narrow bell's solo ringing is "fine" (solo stays a band-pass at the band's Q); momentary solo reads *Hold* and holds for as long as it is pressed. **The owner moved on to E1 on 2026-10-13** (*"no continue the plan"*), leaving the rest of the probe unjudged. Those items move to the phases that can judge them. Where points are drawn, latching or momentary solo, which edge a Q key keeps and the K1 keys go to E3's by-eye check. Key delivery in a DAW and on a non-QWERTY layout goes to E5, including whether Space reaches the host on Windows (baseview there ignores the plugin's handled report) | Owner by hand |
 | **E1** | `crates/mxm-fx-eq-n-dsp`: bands, cascade, smoothing, transitions, the cramping choice, precision, cost at the cap, tail and activity, silence/NaN/reset tests; MSRV 1.87 verified. **Built** (2026-10-13), 49 tests; the worst case measures about 20 % steady and up to 57 % with every band crossfading and gliding at 192 kHz. Its code was reviewed by the agent-loop and **approved in round 6** (2026-10-13; 16 findings fixed, none rejected), inside A6's 35 % and 70 % | Measurements in its `AGENTS.md` |
 | **E2** | `plugins/mxm-fx-eq-n` shell: the slot pool, layouts, Init, presets seam, telemetry rings, meters, permanent-id test. **Built** (2026-10-13): 30 tests; the release bundle passes `clap-validator` (33 passed, 0 failed, in debug and release); code **approved by the agent-loop in round 1** | Unit tests; bundle; `clap-validator` |
-| **E3** | The editor: graph, column, analyser, held-key commands with the 3×3 map, undo, band identity, accessibility, every editor check. **Built** (2026-10-13): 25 tests in the editor and its modules, 59 in the plugin, and a release cost measurement; the analyser within its budget; the probe deleted. For the owner's eye: points at their own gain, solo held, an edge key keeps the other edge, K1 as newDAWn has it | Editor tests; owner by eye |
+| **E3** | The editor: graph, column, analyser, held-key commands with the 3×3 map, undo, band identity, accessibility, every editor check. **Built** (2026-10-13): 25 tests in the editor and its modules, 59 in the plugin, and a release cost measurement; the analyser within its budget; the probe deleted. For the owner's eye: points at their own gain, solo held, an edge key keeps the other edge, K1 as newDAWn has it **Ported** to this repository (2026-10-13) onto the live kit: the keys are the language, the graph a surface; 64 tests, the column under the shared keyboard check | Editor tests; owner by eye |
 | **E4** | Factory presets, `host-tests/`, inventories, DOX closeout (§10) | Merge gate |
 | **E5** | Listening, by-eye and DAW checks | Owner sign-off |
 

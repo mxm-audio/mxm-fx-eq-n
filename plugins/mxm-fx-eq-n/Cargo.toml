@@ -1,0 +1,41 @@
+[package]
+name = "mxm-fx-eq-n"
+description = "A parametric EQ with only the bands you need, up to 24, matched to analogue curves"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+egui.workspace = true
+nice-plug.workspace = true
+nice-plug-egui.workspace = true
+mxm-ui.workspace = true
+mxm-preset.workspace = true
+mxm-params.workspace = true
+# The keyboard language's outputs, which the graph reads as a surface.
+mxm-keys.workspace = true
+# The Out meter's peak and clip, the collection's one policy.
+mxm-telemetry.workspace = true
+mxm-fx-eq-n-dsp.workspace = true
+# The analyser's transforms, editor-side only: mxm-kit's one FFT.
+mxm-fft.workspace = true
+# The analyser's audio-to-editor block handoff, at the version the player already locks.
+rtrb = "=0.3.5"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
+
+[dev-dependencies]
+# The collection's shared headless checks (`crates/mxm-plugin-test`).
+mxm-plugin-test.workspace = true
+# Holds `process()` to the realtime rules with an editor open, which `clap-validator` never does.
+nice-assert-no-alloc = "=1.0.0"
+# `wgpu` renders a frame to pixels for the review pictures (`mxm_plugin_test::tree_checks`,
+# `editor::tests::pictures`). Test-only: nothing here reaches the bundle.
+egui_kittest = { version = "=0.36.1", features = ["wgpu"] }
+image = { version = "=0.25.9", default-features = false, features = ["png"] }
