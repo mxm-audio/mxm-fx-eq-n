@@ -85,8 +85,10 @@ and `audition.rs`'s tests hold the lifecycle.
   (`navigation::paged_with_bar`): the arrows walk the column's controls and the bars, VIEW + arrows
   go between the graph and the cards, and F1 shows the keys. **The graph is a surface**
   (`navigation::surface`): with the cursor on it, the language's outputs come to `on_surface`.
-  ← → select the previous or next band by frequency, and step along the line (a semitone, an
-  octave with COARSE) where there is none; MOVE + ← → moves the band's frequency (a semitone,
+  ← → select the previous or next band by frequency, and step along the line a semitone where
+  there is none; COARSE + ← → leaves the bands and walks the line an octave a press, so the
+  keyboard's place can pass a cluster or sit between two close bands before ADD; MICRO + ↑ ↓ does
+  nothing. MOVE + ← → moves the band's frequency (a semitone,
   COARSE an octave, MICRO a cent) and ↑ ↓ its gain (0.5, 3, 0.1 dB); VALUE + ↑ ↓ its gain;
   EXTENT + ← → narrows or widens it (a share of Q's logarithmic travel); MICRO + ← → takes its start
   or end edge, which **MOVE then moves alone, the other edge staying put**, so a bell, notch or band

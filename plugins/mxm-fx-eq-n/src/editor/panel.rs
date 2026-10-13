@@ -24,7 +24,8 @@ impl EqApp {
 
     fn drain_analyser(&mut self, settings: &ViewSettings) {
         let rate = self.telemetry.sample_rate();
-        if (rate - self.spectrum.sample_rate()).abs() > 0.5 {
+        // Any change, the rule `ingest` keeps: a block at another rate is never analysed.
+        if rate != self.spectrum.sample_rate() {
             self.spectrum = super::spectrum::Spectrum::new(rate);
         }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
@@ -74,7 +75,14 @@ impl EqApp {
         if !ctx.input(|input| input.pointer.primary_down()) {
             self.solo_button = None;
         }
-        if self.selected.is_some_and(|slot| !self.band_in_use(slot)) {
+        // A band turned Off outside the editor (automation, the host) takes its gesture with it,
+        // ended where the host has it.
+        let removed = |app: &Self, slot: Option<usize>| slot.is_some_and(|s| !app.band_in_use(s));
+        let dragged = self.drag.as_ref().map(|drag| drag.slot);
+        if (removed(self, self.selected) || removed(self, dragged)) && !self.open.is_empty() {
+            self.abandon_gesture();
+        }
+        if removed(self, self.selected) {
             self.selected = None;
             self.edge = None;
         }

@@ -547,6 +547,162 @@ fn a_restore_or_a_preset_load_starts_an_epoch() {
     assert_eq!(rig.depth(), 0);
 }
 
+/// The history is the instance's, and so is the restore count it last saw: a restore while the
+/// editor is closed starts an epoch when it opens again.
+#[test]
+fn a_restore_while_the_editor_is_closed_starts_an_epoch_on_reopening() {
+    use nice_plug::params::persist::PersistentField;
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    assert!(history::lock(&rig.app.history).can_undo());
+    rig.app.detach();
+
+    PersistentField::set(&rig.app.params.view, ViewSettings::default());
+
+    let mut reopened = EqApp::new(Handles {
+        params: rig.app.params.clone(),
+        telemetry: rig.telemetry.clone(),
+        audition: rig.audition.clone(),
+        history: rig.app.history.clone(),
+        analyser: None,
+    });
+    reopened.attach(GuiContext::new(rig.host.clone()));
+    rig.app = reopened;
+    rig.press(Vec::new());
+    assert!(
+        !history::lock(&rig.app.history).can_undo(),
+        "nothing from before the restore"
+    );
+}
+
+/// A drag that starts on the line makes the band and moves it as one action: one undo takes it
+/// away, and BACK during the drag leaves nothing to undo.
+#[test]
+fn a_drag_from_the_line_makes_and_moves_the_band_as_one_action() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let from = egui::pos2(axes.x(500.0), axes.y(0.0));
+    let to = egui::pos2(axes.x(2_000.0), axes.y(6.0));
+    let drag = |rig: &mut Rig, release: bool| {
+        rig.press(pointer(from, Some(true)));
+        for step in 1..=8 {
+            rig.press(pointer(from + (to - from) * (step as f32 / 8.0), None));
+        }
+        if !release {
+            rig.press(vec![
+                key(job_key(BACK), true, NONE),
+                key(job_key(BACK), false, NONE),
+            ]);
+        }
+        rig.press(pointer(to, Some(false)));
+        rig.press(Vec::new());
+    };
+
+    drag(&mut rig, true);
+    let band = rig.band(0);
+    assert_eq!(band.shape, Some(Shape::Bell));
+    assert!((band.freq / 2_000.0 - 1.0).abs() < 0.05, "{}", band.freq);
+    assert_eq!(rig.depth(), 1, "made and moved: one action");
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, None, "one undo takes the band away");
+
+    drag(&mut rig, false);
+    assert_eq!(rig.band(0).shape, None, "BACK took it away");
+    assert!(!history::lock(&rig.app.history).can_undo());
+    assert!(rig.gestures_balanced());
+}
+
+/// COARSE + ← → leaves the bands for the line, an octave a press; ← → alone visit the bands.
+#[test]
+fn coarse_walks_the_line_past_the_bands_and_the_arrows_visit_them() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.app.insert_at(1_200.0);
+    rig.app.select(0);
+    rig.press(Vec::new());
+    rig.hold(&[COARSE], &[Key::ArrowRight]);
+    assert_eq!(rig.app.selected, None);
+    assert!(
+        (rig.app.focus_freq / 2_000.0 - 1.0).abs() < 1e-3,
+        "{}",
+        rig.app.focus_freq
+    );
+
+    rig.app.select(0);
+    rig.type_keys(&[Key::ArrowRight]);
+    assert_eq!(rig.app.selected, Some(1), "the 1.2 kHz band");
+}
+
+/// MICRO + ← → take the start and end edges; MICRO + ↑ ↓ take none.
+#[test]
+fn only_micro_left_and_right_take_an_edge() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    for (arrow, edge) in [
+        (Key::ArrowUp, None),
+        (Key::ArrowDown, None),
+        (Key::ArrowLeft, Some(Edge::Start)),
+        (Key::ArrowRight, Some(Edge::End)),
+    ] {
+        rig.app.edge = None;
+        rig.hold(&[MICRO], &[arrow]);
+        assert_eq!(rig.app.edge, edge, "{arrow:?}");
+    }
+}
+
+/// A band automation turns Off during a held gesture takes the gesture with it: the host's
+/// gestures balance at once, and BACK then writes nothing.
+#[test]
+fn a_band_turned_off_outside_the_editor_ends_its_gesture() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    open_a_move(&mut rig);
+    let moved = rig.band(0).freq;
+    let kind = band_index(0, Field::Type);
+    // SAFETY: the test owns the parameter for the whole call.
+    unsafe { rig.app.pointers[kind]._internal_set_normalized_value(0.0) };
+    rig.press(Vec::new());
+    assert!(rig.app.open.is_empty());
+    assert!(rig.gestures_balanced());
+    assert_eq!(rig.app.selected, None);
+    back_and_let_go(&mut rig);
+    assert_eq!(rig.band(0).shape, None);
+    assert_eq!(rig.band(0).freq, moved, "BACK wrote nothing");
+    assert!(rig.gestures_balanced());
+}
+
+/// A rate change of any size rebuilds the spectrum, so its blocks are analysed.
+#[test]
+fn any_change_of_rate_rebuilds_the_spectrum() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.telemetry.publish_sample_rate(48_000.25);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.spectrum.sample_rate(), 48_000.25);
+}
+
+/// nice-plug keeps the editor between windows: a reopened one paints its meter from silence.
+#[test]
+fn a_reopened_window_paints_its_meter_from_silence() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.meters.update(rig.time, [1.0, 1.0]);
+    assert_eq!(rig.app.meters.output, [1.0, 1.0]);
+    rig.app.detach();
+    rig.app.attach(GuiContext::new(rig.host.clone()));
+    rig.press(Vec::new());
+    assert_eq!(rig.app.meters.output, [0.0, 0.0]);
+}
+
 /// MOVE held and stepped once on band 1: a keyboard gesture left open.
 fn open_a_move(rig: &mut Rig) {
     rig.press(vec![

@@ -247,6 +247,8 @@ impl EqApp {
             while consumer.pop().is_ok() {}
         }
         self.spectrum.restart();
+        // nice-plug keeps this editor between windows: the display starts from silence too.
+        self.meters = column::MeterDisplay::default();
         self.telemetry.connect(true);
     }
 
@@ -450,6 +452,16 @@ impl EqApp {
 
     /// A 0 dB bell in the lowest Off slot, selected; `None` when every slot is in use.
     pub(crate) fn insert_at(&mut self, freq: f32) -> Option<usize> {
+        self.insert(freq, false)
+    }
+
+    /// The same bell, its fields opened in the gesture that follows — a drag from the line — so
+    /// making it and moving it are one action, and BACK takes it away leaving nothing to undo.
+    pub(crate) fn insert_opened(&mut self, freq: f32) -> Option<usize> {
+        self.insert(freq, true)
+    }
+
+    fn insert(&mut self, freq: f32, opened: bool) -> Option<usize> {
         let slot = self.free_slot()?;
         let freq = self.clamp_freq(freq);
         let writes = self.slot_writes(
@@ -464,7 +476,13 @@ impl EqApp {
             },
         );
         self.close_open();
-        self.instant(&writes);
+        if opened {
+            for (index, value) in writes {
+                self.send(index, value);
+            }
+        } else {
+            self.instant(&writes);
+        }
         self.selected = Some(slot);
         self.edge = None;
         self.focus_freq = freq;
@@ -592,12 +610,17 @@ impl EqApp {
                 self.end_gesture(true);
                 self.walk(direction, coarse);
             }
+            // The start edge (←) or the end (→); the language gives ↑ ↓ no edge.
             Output::Within { direction } => {
-                if self.selected.is_some_and(|slot| self.has_q(slot)) {
-                    self.edge = Some(match direction {
-                        Direction::Left | Direction::Down => Edge::Start,
-                        Direction::Right | Direction::Up => Edge::End,
-                    });
+                let edge = match direction {
+                    Direction::Left => Some(Edge::Start),
+                    Direction::Right => Some(Edge::End),
+                    Direction::Up | Direction::Down => None,
+                };
+                if let Some(edge) = edge
+                    && self.selected.is_some_and(|slot| self.has_q(slot))
+                {
+                    self.edge = Some(edge);
                 }
             }
             Output::Step {

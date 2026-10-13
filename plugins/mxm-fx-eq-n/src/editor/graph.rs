@@ -320,13 +320,14 @@ impl EqApp {
                 .filter(|origin| axes.rect.contains(*origin))
                 .or(pointer);
             if let Some(origin) = origin {
+                self.close_open();
+                // From the line, the new band is made inside the drag's gesture.
                 let slot = hit(origin).or_else(|| {
                     (curves.distance(axes, origin) <= LINE_HIT)
-                        .then(|| self.insert_at(axes.freq(origin.x)))
+                        .then(|| self.insert_opened(axes.freq(origin.x)))
                         .flatten()
                 });
                 if let Some(slot) = slot {
-                    self.close_open();
                     self.select(slot);
                     let band = self.params.bands[slot].band();
                     self.drag = Some(Drag {

@@ -446,7 +446,8 @@ engine `mxm-keys`, the keymap in use in the folder newDAWn and every editor shar
   value as one gesture that OUT keeps and BACK cancels, F1 shows the keys.
 - **The graph is a surface** (`navigation::surface`, added to mxm-kit for this editor): with the
   cursor on it, the language's outputs come to the editor, and they act on the bands.
-  - ← → select the previous or next band by frequency, and step along the line where there is none.
+  - ← → select the previous or next band by frequency, and step along the line where there is none;
+    COARSE + ← → leaves the bands and walks the line an octave a press.
   - **MOVE** + ← → frequency (a semitone; COARSE an octave, MICRO a cent), ↑ ↓ gain (0.5 dB; 3, 0.1).
   - **VALUE** + ↑ ↓ gain. **EXTENT** + ← → narrower or wider (Q).
   - **MICRO** + ← → takes the band's start or end edge, which MOVE then moves alone, the other edge
