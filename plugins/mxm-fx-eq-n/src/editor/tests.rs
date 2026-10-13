@@ -866,6 +866,134 @@ fn vertical_extent_changes_nothing() {
     assert_eq!(rig.depth(), depth);
 }
 
+/// BACK puts back only its own gesture, though the host has not applied the one before it.
+#[test]
+fn back_cancels_only_its_own_gesture_before_the_host_applies_the_last() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    rig.host.delay(true);
+    rig.hold(&[MOVE, COARSE], &[Key::ArrowRight]);
+    let kept = rig.app.band_now(0).freq;
+    assert!((kept - 2_000.0).abs() < 1.0, "{kept}");
+    open_a_move(&mut rig);
+    back_and_let_go(&mut rig);
+    assert!(
+        (rig.app.band_now(0).freq - kept).abs() < 0.01,
+        "{}",
+        rig.app.band_now(0).freq
+    );
+    rig.host.flush();
+    rig.press(Vec::new());
+    assert!(
+        (rig.band(0).freq - kept).abs() < 0.01,
+        "{}",
+        rig.band(0).freq
+    );
+}
+
+/// A write applied and put back by automation between two frames reads as pending only up to
+/// the bound, then as what the host has.
+#[test]
+fn a_write_put_back_between_frames_is_pending_only_up_to_the_bound() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.host.delay(true);
+    rig.type_keys(&[job_key(ADD)]);
+    rig.host.flush();
+    // SAFETY: the test owns the parameter for the whole call.
+    unsafe { rig.app.pointers[band_index(0, Field::Type)]._internal_set_normalized_value(0.0) };
+    for _ in 0..=history::PENDING_FRAMES {
+        rig.press(Vec::new());
+    }
+    assert_eq!(rig.app.band_now(0).shape, None);
+    assert_eq!(rig.app.selected, None);
+}
+
+/// A shared control held as the window closes is ended through the recorder, kept.
+#[test]
+fn closing_the_editor_ends_a_column_control_s_gesture() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let depth = rig.depth();
+    let gui = rig.app.gui.clone().unwrap();
+    let setter = gui.param_setter();
+    let params = rig.app.params.clone();
+    let output = params.erased()[OUTPUT_INDEX];
+    output.begin(&setter);
+    output.set(&setter, 0.3);
+    rig.app.detach();
+    assert!(rig.gestures_balanced());
+    assert_eq!(rig.depth(), depth + 1, "kept, as one action");
+}
+
+/// At the minimum window the surface scrolls sideways and the column down: the cursor's target is
+/// brought into view as it moves there.
+#[test]
+fn the_cursor_s_target_is_scrolled_into_view() {
+    let mut rig = Rig::new();
+    let size = egui::vec2(MINIMUM.0 as f32, MINIMUM.1 as f32);
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+    let frame = |rig: &mut Rig, events: Vec<egui::Event>| {
+        rig.frame(size, events);
+    };
+    for _ in 0..3 {
+        frame(&mut rig, Vec::new());
+    }
+    assert!(rig.app.cursor_on_graph());
+    let target = |rig: &Rig| {
+        mxm_ui::navigation::spots(&rig.ctx)
+            .into_iter()
+            .find(|spot| {
+                Some(spot.card) == rig.app.nav.card()
+                    && Some(spot.key.as_str()) == rig.app.nav.parameter()
+            })
+            .map(|spot| spot.rect)
+    };
+    frame(
+        &mut rig,
+        vec![
+            key(job_key(VIEW), true, NONE),
+            key(Key::ArrowRight, true, NONE),
+            key(Key::ArrowRight, false, NONE),
+            key(job_key(VIEW), false, NONE),
+        ],
+    );
+    // egui animates a scroll; half a second covers it.
+    for _ in 0..30 {
+        frame(&mut rig, Vec::new());
+    }
+    assert!(!rig.app.cursor_on_graph(), "on a column card");
+    let rect = target(&rig).expect("drawn");
+    assert!(
+        rect.min.x >= window.min.x - 0.5 && rect.max.x <= window.max.x + 0.5,
+        "{rect:?} inside {window:?}"
+    );
+    for _ in 0..12 {
+        frame(
+            &mut rig,
+            vec![
+                key(Key::ArrowDown, true, NONE),
+                key(Key::ArrowDown, false, NONE),
+            ],
+        );
+        for _ in 0..30 {
+            frame(&mut rig, Vec::new());
+        }
+        if rig.app.nav.bar().is_some() {
+            break;
+        }
+        let rect = target(&rig).expect("drawn");
+        assert!(
+            rect.max.y <= window.max.y + 0.5 && rect.min.y >= window.min.y - 0.5,
+            "{:?}: {rect:?} inside {window:?}",
+            rig.app.nav.parameter()
+        );
+    }
+}
+
 /// MOVE held and stepped once on band 1: a keyboard gesture left open.
 fn open_a_move(rig: &mut Rig) {
     rig.press(vec![

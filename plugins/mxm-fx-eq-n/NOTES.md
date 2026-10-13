@@ -126,7 +126,23 @@ and `audition.rs`'s tests hold the lifecycle.
   applied: an ADDed band stays selected and takes its slot, MOVE moves it from where it was made,
   DUPLICATE's first arrow carries the copy. Each frame first retires a value whose readback has
   moved (`History::settle`), so automation that puts a parameter back where it was is not taken for
-  the edit still on its way. The tests run this on a host that applies writes only when told. The history is the instance's and survives the editor closing; it keeps 256 actions.
+  the edit still on its way, and none stays pending past `PENDING_FRAMES` (half a second at 60 Hz,
+  for a write applied and put back between two frames, which no readback can tell from one on its
+  way). A gesture's starting value comes the same way, so BACK puts back only its own. The tests run
+  this on a host that applies writes only when told. **A known limit**: the column's controls are
+  mxm-kit's shared binding, which reads the parameter itself in every editor of the collection, so a
+  slider pressed inside the same host buffer as a graph edit starts from the value before it. No
+  person crosses from the graph to a slider that fast; a pending-aware read in the binding would
+  close it for every editor (plan §7, kit follow-up).
+
+  **The narrow layout scrolls the cursor's target into view** the frame it moves there
+  (`scroll_to_rect` on its last drawn rectangle), asked inside each scroll area, since one takes
+  only the requests made inside it: down the column, then sideways for the surface. With no band
+  selected the Band card holds no control and is no stop of the cursor's (`bar_card_absent`):
+  VIEW from the graph would land on nothing and fall back, and at the minimum window it is the
+  card nearest the graph's middle.
+  **Closing the editor** ends, besides its own gestures, whatever a shared control still held
+  open, through the recorder, kept as one action. The history is the instance's and survives the editor closing; it keeps 256 actions.
 - **The analyser** (`editor/spectrum.rs`, on mxm-kit's `mxm-fft`, plan §4): band power over a twelfth
   of an octave per drawn point, averaged over the channels, so a full-scale sine reads 0 dB and
   noise reads alike whatever the window. A short window of about 85 ms at the full rate, and below

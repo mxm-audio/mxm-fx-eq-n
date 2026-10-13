@@ -184,6 +184,10 @@ pub struct EqApp {
     pub(crate) spectrum: spectrum::Spectrum,
     /// The analyser's switch last frame: coming back on starts the spectrum from silence.
     analyser_on: bool,
+    /// Where the cursor was last frame, so a move scrolls its target into view.
+    last_target: (Option<usize>, Option<u64>, Option<String>),
+    /// The cursor's new target, to scroll into view when the surface is drawn.
+    scroll_to: Option<Rect>,
     pub(crate) text: HashMap<&'static str, Option<String>>,
     pub(crate) presets: mxm_preset::PresetUi,
     pub(crate) meters: column::MeterDisplay,
@@ -225,6 +229,8 @@ impl EqApp {
             solo_blocked: false,
             spectrum,
             analyser_on: false,
+            last_target: (None, None, None),
+            scroll_to: None,
             text: HashMap::new(),
             presets,
             meters: column::MeterDisplay::default(),
@@ -255,6 +261,16 @@ impl EqApp {
     /// The editor closes: every open gesture ends, solo ends, and the analyser stops.
     pub fn detach(&mut self) {
         self.close_open();
+        // A shared control held as the window closes never sends its own end: whatever the
+        // recorder still holds open is ended through it, kept as one action.
+        if let Some(gui) = self.gui.clone() {
+            let setter = gui.param_setter();
+            let params = self.params.clone();
+            let open = history::lock(&self.history).open_params();
+            for index in open {
+                params.erased()[index].end(&setter);
+            }
+        }
         self.copy = None;
         self.end_solo();
         self.drag = None;
@@ -343,8 +359,9 @@ impl EqApp {
         let params = self.params.clone();
         let param = params.erased()[index];
         if !self.open.holds(index) {
+            // Where the previous gesture left it, though the host may not have applied that yet.
+            let before = self.normalised_now(index);
             param.begin(&setter);
-            let before = param.normalised();
             self.open.params.push((index, before));
             self.open.before.push((index, before));
         }

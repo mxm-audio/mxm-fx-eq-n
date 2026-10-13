@@ -23,6 +23,7 @@ use mxm_fx_eq_n_dsp::{
 };
 use mxm_ui::theme::Tokens;
 use mxm_ui::visual::{AXIS_STROKE, CANVAS_RADIUS, EMPHASIS_STROKE};
+use nice_plug::prelude::Param;
 
 use super::spectrum::FLOOR_DB;
 use super::{Edge, EqApp, Field, band_index, graph_id};
@@ -99,7 +100,10 @@ pub struct Curves {
 impl Curves {
     pub fn compute(app: &EqApp, axes: &Axes) -> Curves {
         let sample_rate = app.sample_rate();
-        let scale = app.params.gain_scale.value();
+        let scale = app
+            .params
+            .gain_scale
+            .preview_plain(app.normalised_now(super::GAIN_SCALE_INDEX));
         let cascades = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
             let shape = band.shape.filter(|_| !band.bypass)?;
@@ -204,7 +208,10 @@ impl EqApp {
 
     /// Where slot `slot`'s point is drawn: at its own gain, at the frequency it runs at.
     pub(crate) fn point_position(&self, axes: &Axes, band: &Band) -> Pos2 {
-        let scale = self.params.gain_scale.value();
+        let scale = self
+            .params
+            .gain_scale
+            .preview_plain(self.normalised_now(super::GAIN_SCALE_INDEX));
         let db = match band.shape {
             Some(shape) if shape.has_gain() => band.gain_db * scale,
             _ => 0.0,
@@ -349,7 +356,10 @@ impl EqApp {
             self.send(freq_index, self.normalised(freq_index, freq));
             self.focus_freq = freq;
             let band = self.band_now(slot);
-            let scale = self.params.gain_scale.value();
+            let scale = self
+                .params
+                .gain_scale
+                .preview_plain(self.normalised_now(super::GAIN_SCALE_INDEX));
             if band.shape.is_some_and(Shape::has_gain) && scale > f32::EPSILON {
                 let range = GAIN_RANGE as f32;
                 let gain = (axes.db(pos.y) / scale).clamp(-range, range);

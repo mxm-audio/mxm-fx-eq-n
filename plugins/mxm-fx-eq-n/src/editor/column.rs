@@ -273,7 +273,18 @@ impl EqApp {
     /// The column's three cards, top to bottom, each one of the cursor's.
     pub(crate) fn column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         let title = band_title(self);
-        self.card(ui, tokens, BAND_CARD, &title, |app, _| band_tree(app), true);
+        // With no band selected the Band card has no controls, so it is no stop of the cursor's:
+        // VIEW from the graph would land on nothing and fall back to the graph.
+        let band = self.selected.is_some();
+        self.card(
+            ui,
+            tokens,
+            BAND_CARD,
+            &title,
+            |app, _| band_tree(app),
+            true,
+            band,
+        );
         ui.add_space(SPACE_3);
         self.card(
             ui,
@@ -282,6 +293,7 @@ impl EqApp {
             OUTPUT_TITLE,
             |app, _| output_tree(app),
             false,
+            true,
         );
         ui.add_space(SPACE_3);
         self.card(
@@ -291,11 +303,14 @@ impl EqApp {
             ANALYSER_TITLE,
             |_, _| analyser_tree(),
             false,
+            true,
         );
     }
 
     /// One card: its tree drawn in a module card the cursor knows (`navigation::bar_card`), with
-    /// its outline. `reserved` keeps the body as tall as its tallest alternative.
+    /// its outline, or, not a `stop`, out of the cursor's sequence. `reserved` keeps the body as
+    /// tall as its tallest alternative.
+    #[allow(clippy::too_many_arguments)]
     fn card(
         &mut self,
         ui: &mut Ui,
@@ -304,28 +319,44 @@ impl EqApp {
         title: &str,
         tree: impl Fn(&EqApp, &Ui) -> Node<Leaf>,
         reserved: bool,
+        stop: bool,
     ) {
+        if !stop {
+            navigation::bar_card_absent(ui.ctx(), key);
+            self.card_body(ui, tokens, title, tree, reserved);
+            return;
+        }
         navigation::bar_card(ui, key, |ui| {
-            let rect = ui
-                .scope(|ui| {
-                    mxm_ui::ModuleCard::new(title).show(ui, tokens, |ui| {
-                        let body = tree(self, ui);
-                        let drawn = tree::show(ui, tokens, &body, |ui, leaf, rect| {
-                            self.paint_leaf(ui, tokens, *leaf, rect);
-                        });
-                        if reserved {
-                            // Reserved to the tallest shape, so nothing below moves when the band
-                            // or its shape changes: what is not shown leaves its room at the foot.
-                            let reserved = body.reserved_height(ui, drawn.width());
-                            ui.add_space((reserved - drawn.height()).max(0.0));
-                        }
-                    });
-                })
-                .response
-                .rect;
+            let rect = self.card_body(ui, tokens, title, tree, reserved);
             navigation::paint_card(ui, tokens, key, rect);
             rect
         });
+    }
+
+    fn card_body(
+        &mut self,
+        ui: &mut Ui,
+        tokens: &Tokens,
+        title: &str,
+        tree: impl Fn(&EqApp, &Ui) -> Node<Leaf>,
+        reserved: bool,
+    ) -> Rect {
+        ui.scope(|ui| {
+            mxm_ui::ModuleCard::new(title).show(ui, tokens, |ui| {
+                let body = tree(self, ui);
+                let drawn = tree::show(ui, tokens, &body, |ui, leaf, rect| {
+                    self.paint_leaf(ui, tokens, *leaf, rect);
+                });
+                if reserved {
+                    // Reserved to the tallest shape, so nothing below moves when the band
+                    // or its shape changes: what is not shown leaves its room at the foot.
+                    let reserved = body.reserved_height(ui, drawn.width());
+                    ui.add_space((reserved - drawn.height()).max(0.0));
+                }
+            });
+        })
+        .response
+        .rect
     }
 
     pub(crate) fn paint_leaf(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf, _rect: Rect) {

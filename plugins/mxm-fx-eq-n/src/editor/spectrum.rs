@@ -117,6 +117,11 @@ impl Window {
             matches!(show, Show::Pre | Show::Both),
             matches!(show, Show::Post | Show::Both),
         ];
+        for (analysed, shown) in self.analysed.iter_mut().zip(shown) {
+            if !shown {
+                *analysed = false;
+            }
+        }
         let revealed = (0..2).any(|out| shown[out] && !self.analysed[out]);
         if !self.ready() || (!revealed && self.since < self.hop) {
             return;
@@ -200,6 +205,13 @@ impl LowPass {
     }
 
     fn tick(&mut self, x: f64) -> f64 {
+        // A non-finite sample is silence here, and a state gone non-finite starts again: one bad
+        // sample costs the long window a window, not the low bands for good.
+        let x = if x.is_finite() { x } else { 0.0 };
+        if !(self.z1.is_finite() && self.z2.is_finite()) {
+            self.z1 = 0.0;
+            self.z2 = 0.0;
+        }
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;
         self.z2 = self.b2 * x - self.a2 * y;
@@ -734,6 +746,53 @@ mod tests {
             (std::f32::consts::TAU * 100.0 * n as f32 / rate).sin()
         });
         nice_assert_no_alloc::assert_no_alloc(|| spectrum.analyse(&freqs, 1.0 / 60.0, &both));
+    }
+
+    #[test]
+    fn a_stream_hidden_and_shown_inside_one_hop_is_analysed_again() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let both = ViewSettings {
+            show: Show::Both,
+            resolution: Resolution::High,
+            ..flat()
+        };
+        spectrum.set_resolution(both.resolution);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        let mut tone = |n: usize| (std::f32::consts::TAU * 60.0 * n as f32 / rate).sin();
+        feed(&mut spectrum, &mut seq, 2.0, &mut tone);
+        spectrum.analyse(&[60.0], 0.0, &both);
+        let post = ViewSettings {
+            show: Show::Post,
+            ..both
+        };
+        feed(&mut spectrum, &mut seq, 0.02, &mut tone);
+        spectrum.analyse(&[60.0], 1.0 / 60.0, &post);
+        let long = |spectrum: &Spectrum| spectrum.long.as_ref().unwrap().window.analysed;
+        assert!(!long(&spectrum)[0], "hidden: its sums fall behind");
+        spectrum.analyse(&[60.0], 2.0 / 60.0, &both);
+        assert!(long(&spectrum)[0], "shown again: analysed at once");
+    }
+
+    #[test]
+    fn one_bad_sample_costs_the_low_bands_a_window_not_for_good() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let high = ViewSettings {
+            resolution: Resolution::High,
+            ..flat()
+        };
+        spectrum.set_resolution(high.resolution);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        feed(&mut spectrum, &mut seq, 3.0, &mut |n| {
+            if n == 10 {
+                f32::NAN
+            } else {
+                (std::f32::consts::TAU * 60.0 * n as f32 / rate).sin()
+            }
+        });
+        spectrum.analyse(&[60.0], 0.0, &high);
+        assert!(spectrum.pre_db[0] > -10.0, "{}", spectrum.pre_db[0]);
     }
 
     #[test]

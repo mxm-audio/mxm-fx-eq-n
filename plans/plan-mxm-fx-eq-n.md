@@ -523,6 +523,11 @@ the band pool and the analysis layer, not beside them.
 | F7 | **Candidates**: character/saturation, auto-gain, band modulation, cross-instance collision | Research §13–§15, §12 | Each one is the owner's call |
 | F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
 
+**Kit follow-up, not a phase**: mxm-kit's shared binding (`mxm_params::binding::Bound`) reads a
+parameter itself, so in any editor a control pressed within one host buffer of another write to
+the same parameter starts from the value before it. A pending-aware read there, like this editor's
+`normalised_now`, would close it for every editor (round 4 of the E3 code review, 2026-10-13).
+
 ## 8. What must not break
 
 | Property | Proved by |

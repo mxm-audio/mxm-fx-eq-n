@@ -24,6 +24,12 @@ use nice_plug::prelude::PluginState;
 /// How many actions undo keeps.
 pub const LENGTH: usize = 256;
 
+/// How many frames a value sent stays pending at most ([`History::settle`]): half a second at
+/// 60 Hz, far longer than a host buffer or a requested flush takes. nice-plug tells the editor
+/// nothing when a write is applied, so this bound is what keeps a write applied and then put back
+/// by automation between two frames from reading as pending for ever.
+pub const PENDING_FRAMES: u32 = 30;
+
 /// One parameter one action changed, as normalised values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Change {
@@ -41,9 +47,9 @@ pub struct History {
     open: Vec<Change>,
     open_params: Vec<usize>,
     /// Values sent that the host may not have applied yet: the parameter, what it read when the
-    /// value was sent, and the value. A gesture that starts before the host catches up starts from
-    /// the value sent, not the stale readback.
-    sent: Vec<(usize, f32, f32)>,
+    /// value was sent, the value, and the frames since. A gesture that starts before the host
+    /// catches up starts from the value sent, not the stale readback.
+    sent: Vec<(usize, f32, f32, u32)>,
     /// Inside the preset bar's calls: what is written there replaces the patch.
     replacing: bool,
     replaced: bool,
@@ -61,7 +67,7 @@ impl History {
     /// the host has not applied it yet, otherwise the readback.
     fn current(&mut self, index: usize, readback: f32) -> f32 {
         if let Some(at) = self.sent.iter().position(|(sent, ..)| *sent == index) {
-            let (_, then, value) = self.sent[at];
+            let (_, then, value, _) = self.sent[at];
             if readback == then && readback != value {
                 return value;
             }
@@ -76,23 +82,31 @@ impl History {
     /// so what the editor just wrote reads back unchanged until then.
     pub fn pending(&self, index: usize, readback: f32) -> f32 {
         match self.sent.iter().find(|(sent, ..)| *sent == index) {
-            Some(&(_, then, value)) if readback == then && readback != value => value,
+            Some(&(_, then, value, _)) if readback == then && readback != value => value,
             _ => readback,
         }
     }
 
     /// Once a frame, before anything reads: a value sent whose readback has moved — applied, or
-    /// overridden by the host — is no longer pending. Without this, automation returning a
-    /// parameter to where it was before the edit would read as the edit still on its way.
+    /// overridden by the host — is no longer pending, and none is after [`PENDING_FRAMES`].
+    /// Without this, automation returning a parameter to where it was before the edit would read
+    /// as the edit still on its way.
     pub fn settle(&mut self, readback: impl Fn(usize) -> f32) {
-        self.sent
-            .retain(|&(index, then, _)| readback(index) == then);
+        self.sent.retain_mut(|(index, then, _, frames)| {
+            *frames += 1;
+            readback(*index) == *then && *frames <= PENDING_FRAMES
+        });
+    }
+
+    /// Every parameter a gesture holds open, once per `begin`.
+    pub fn open_params(&self) -> Vec<usize> {
+        self.open_params.clone()
     }
 
     fn note_sent(&mut self, index: usize, readback: f32, value: f32) {
         self.sent.retain(|(sent, ..)| *sent != index);
         if readback != value {
-            self.sent.push((index, readback, value));
+            self.sent.push((index, readback, value, 0));
         }
     }
 
@@ -573,6 +587,16 @@ mod tests {
         // The host applied it, then automation put the old value back: that is not the edit.
         history.settle(|_| 0.8);
         assert_eq!(history.pending(1, 0.2), 0.2);
+
+        // Never applied, as far as the readback shows: pending only up to the bound.
+        let mut history = History::default();
+        history.set(1, 0.8, 0.2);
+        for _ in 0..PENDING_FRAMES {
+            history.settle(|_| 0.2);
+        }
+        assert_eq!(history.pending(1, 0.2), 0.8);
+        history.settle(|_| 0.2);
+        assert_eq!(history.pending(1, 0.2), 0.2, "retired after the bound");
     }
 
     #[test]

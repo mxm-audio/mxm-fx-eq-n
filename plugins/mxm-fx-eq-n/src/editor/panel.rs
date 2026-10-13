@@ -107,6 +107,24 @@ impl EqApp {
         for output in navigation::surface_outputs(&ctx) {
             self.on_surface(output);
         }
+        // The narrow layout scrolls, sideways and down the column: the frame the cursor moves, its
+        // target (where it was drawn last frame) is scrolled into view.
+        let target = (
+            self.nav.bar(),
+            self.nav.card(),
+            self.nav.parameter().map(str::to_owned),
+        );
+        if target != self.last_target {
+            if let (None, Some(card), Some(key)) = &target
+                && navigation::shown(&ctx)
+                && let Some(spot) = navigation::spots(&ctx)
+                    .into_iter()
+                    .find(|spot| spot.card == *card && spot.key == *key)
+            {
+                self.scroll_to = Some(spot.rect);
+            }
+            self.last_target = target;
+        }
         if !inert {
             self.handle_shortcuts(&ctx);
         }
@@ -236,9 +254,17 @@ impl EqApp {
                         .show(ui, |ui| {
                             self.column(ui, tokens);
                             self.column_extent = (ui.min_rect().height(), height);
+                            // A scroll area takes only the requests made inside it, both axes.
+                            if let Some(rect) = self.scroll_to {
+                                ui.scroll_to_rect(rect, None);
+                            }
                         });
                 },
             );
+            // Again for the surface's sideways area, which the column's has not passed it on to.
+            if let Some(rect) = self.scroll_to.take() {
+                ui.scroll_to_rect(rect, None);
+            }
         });
     }
 
