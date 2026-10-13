@@ -1,0 +1,594 @@
+# plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
+
+**Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
+monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
+crate unchanged, the shell onto nice-plug 0.4.2, the editor onto the kit's keyboard language
+(`mxm_ui::navigation`, `mxm-keys`) in place of the archive's `held` layer, and the analyser on the
+kit's new `mxm-fft`. Paths below that name `crates/ui`, `crates/mxm-preset` and the like are the
+kit's crates; the archive's revision history is kept as it was.
+
+The plan's own agent-loop review was stopped by the owner at revision 16, unapproved (2026-10-12, *"yes stop the review now"*). Rounds 1–12 reviewed revisions up to 15, and round 13 was cancelled mid-round.
+Round 13's six filed findings are answered here: the solo path, Space ownership, the end-to-end
+budget, the column's vertical scroll, and two about undo provenance that plain undo makes moot. So
+are the owner's last rulings: plain undo, and the plan cut back to requirements. **Those changes are
+unreviewed.** Written from the
+owner's rulings of 2026-10-12 and the evidence base `research:effects/parametric-equalizers.md`.
+**Built so far:** E0, the brief, signed; E0.5, the hand-judged interaction probe, code-reviewed and
+approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by the agent-loop in round 6; **E2, the plugin shell** (2026-10-13), bundled, `clap-validator` clean, and its code approved by the agent-loop in round 1; **E3, the editor** (2026-10-13), not yet reviewed. E4 is next.
+
+| Rev | Change |
+|---|---|
+| 1 | First draft. The owner's rulings of 2026-10-12: bands made on demand by clicking the curve, FabFilter Pro-Q as the functional benchmark but kept simple, the selected band's details beside the graph rather than under it, an animated spectrum, newDAWn's held-key keyboard model, and *"as flexible and usefull as possible"* delivered in phases. Architecture proposed: a fixed pool of permanent band slots as host parameters, a series cascade of trapezoidal-SVF bands, a GUI-side analysis layer that writes ordinary bands, and a side column after `mxm-fx-curve`'s canvas exception. |
+| 2 | **Round 1 (7).** Neutral line-click insert; no stacked layout; undo as per-parameter writes; drawn curve = shipped response; F1 band path gated on E1; fixed stepped domains. Owner: 24 bands, right column, K1, shared `mxm-fft`. |
+| 3 | **Round 2 (6).** Physical keys via egui-baseview; undo required and action-based; structural changes wait as one pending target; fixed domains for every stepped parameter. |
+| 4 | **Round 3 (6).** Analyser blocks through a bounded queue, decimated long windows under a budget, settings as view state; only Off slots skipped. |
+| 5 | **Round 4 (5).** Completed-gesture observer in `mxm-preset`; keyboard creation from an empty Init; first slot-ownership mechanism (later removed, rev 8). |
+| 6 | **Round 5 (5).** Undo provenance from host events, not values; one-card minimum with horizontal scroll; view settings mark dirty. |
+| 7 | **Round 6 (5).** nice-plug host-event counter for undo; slope is structural; ownership mechanism collapsed (later removed, rev 8). |
+| 8 | **Round 7 (5, all slot ownership), answered by owner decision 10, option A:** automation belongs to the slot number; ownership machinery removed. |
+| 9 | **Round 8 (4).** Wheel edits Q only with focus or a modifier; the observer also reports every whole-patch replacement (presets, Init), so undo cannot cross one; a per-shape semantics table is an E0 deliverable; a cramping hybrid must stay continuous across its crossover. |
+| 10 | **Round 9 (4 standing).** Decision rows 2–8, overwritten by a table edit in revision 9, restored with alternatives; host state restore starts the undo epoch through the persisted view-state field; undo history belongs to the plugin instance and survives the editor closing; identity bands park and re-enter from a cleared state through the creation fade, which meets the idle rule without a frozen-state click. |
+| 11 | **Round 10 (3), unreviewed.** Telemetry keeps every channel and v1 shows their power average; undo is conservative on a host that echoes GUI writes, with no value- or revision-based fallback claimed; band solo enters v1 as an audition route, and a workflow phase F8 (multi-selection, copy and paste, global transforms) is added, with v1's selection and commands built as sets. The loop stopped at its round cap. |
+| 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
+| 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
+| 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 20 | **Moved to its own repository**, `mxm-audio/mxm-fx-eq-n` (2026-10-13): the archive was the wrong home. The DSP crate came across unchanged (50 tests, on 1.87 too); the FFT became mxm-kit's `mxm-fft`; the shell and the editor are ported onto the live kit, the editor's keys onto its keyboard language. |
+| 19 | **E3 built** (2026-10-13): the graph, the column of tree cards, the Out meter, the held-key keyboard (`crates/ui`'s `held`), plain undo with epochs, held solo, the analyser on `crates/mxm-fft` (X0, X1) within a 2 ms budget, accessibility, the editor checks; the probe deleted. Undo records at the editor's own host context, so §5.4's binding observer and §6's `mxm-preset` change were not needed. |
+| 18 | **E2 built** (2026-10-13): `plugins/mxm-fx-eq-n`, 146 permanent parameters with reserved stepped domains, the empty-EQ Init, the preset seam, solo as a transient command, the analyser ring and the Out meter, no editor yet. `clap-validator`'s parameter fuzz found a subnormal output, now flushed in the DSP. |
+| 17 | **E1 built** (2026-10-13), after the owner moved past the open E0.5 items (*"no continue the plan"*). The cramping method is chosen: **matched designs** (Vicanek's impulse-invariant poles, numerators fitted to the analogue magnitude) realised in the SVF itself, so the modulation and precision case for the SVF stands. Precision: `f64` state. The measurements are in `crates/mxm-fx-eq-n-dsp/AGENTS.md`. |
+| 16 | **Owner: "simplify undo", then "stop the review now".** Undo is plain: it restores the action's parameters, with no provenance tracking, so the nice-plug patch, echo matching and decision 11 are gone. Solo and the analyser handoff are stated as requirements, leaving mechanism to implementation. Round 13 (cancelled) answered: solo-off is always delivered and the shell ends solo itself; Space belongs to the field in text entry and to the host otherwise; one end-to-end audio budget includes the analyser handoff; the column scrolls vertically. Unreviewed. |
+
+---
+
+## Governing decisions
+
+Everything an implementer must not settle alone, in one place; the sections below hold the reasoning.
+
+| # | Decision | Status | Gates |
+|---|---|---|---|
+| — | Bands are made on demand: clicking the curve adds one; *"Only the ones you need, but all of the ones you need"* | Owner ruling, 2026-10-12 | — |
+| — | FabFilter Pro-Q is the gold standard for function and interaction, *"But I want it simple"* | Owner ruling, 2026-10-12 | — |
+| — | The selected band's parameters sit **to the left or right of the graph, never under it** | Owner ruling, 2026-10-12 | — |
+| — | An **animated spectrum** of the sound is part of v1 | Owner ruling, 2026-10-12 | — |
+| — | The keyboard follows **newDAWn's held-key model**: arrows alone navigate, a held key plus arrows edits | Owner ruling, 2026-10-12 | — |
+| — | Scope is *"as flexible and usefull as possible"*: v1 is the simple core, the rest are later phases of this plan | Owner ruling, 2026-10-12 | — |
+| 1 | Band cap: **24 slots**, Pro-Q's | **Settled** (owner, 2026-10-12) | — |
+| 2 | Init is the neutral, empty EQ, an exception to "an effect opens engaged" (`plugins/AGENTS.md`), as `mxm-fx-curve` got; the alternative is opening with a default band | **Settled** (owner, 2026-10-12): neutral | — |
+| 3 | The side column is on the **right** | **Settled** (owner, 2026-10-12) | — |
+| 4 | The starting keymap is **K1**, newDAWn's meanings (§5.3) | **Settled** (owner, 2026-10-12) | — |
+| 5 | The held-key command layer lives in **`crates/ui`**, the shared interface crate that already holds the keyboard standard (`src/navigation.rs`), as an opt-in module the later migration reuses (§5.3) | **Settled** (owner, 2026-10-12: *"it should follow the standard"*) | — |
+| 6 | The analyser's FFT comes from a **shared `crates/mxm-fft`** built on `realfft`, and the collection's four in-house FFTs move to it, under its own plan (`plans/plan-mxm-fft.md`) | **Settled** (owner, 2026-10-12: *"make a shared fft crate. Havine 3 or for implementations is non DRY"*) | E3 |
+| 7 | A plugin-owned undo/redo for band edits | **Required, not open.** The design system puts Undo and Redo in every app bar (§3.1) and makes a destructive action recoverable (§7.2); deleting a band is destructive | — |
+| 8 | **No dry/wet Mix; a gain scale** that scales every band's gain together (§1.1) | **Settled** (owner, 2026-10-12) | — |
+| 9 | The later phases run in order, F1 to F8 | **Settled** (owner, 2026-10-12) | — |
+| 10 | **Automation belongs to the slot number** (option A): lowest free slot, presets in their saved slots, no ownership protection | **Settled** (owner, 2026-10-12) | — |
+| 11 | ~~Undo on echoing hosts~~ **Moot**: undo is plain (owner, 2026-10-12, *"simplify undo"*), with no provenance tracking (§5.4) | **Settled** | — |
+
+Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
+the state precision (§3.4) and the shape and slope set (§3.2).
+
+## 1. What this is
+
+A standalone CLAP effect: a parametric EQ whose graph starts as a flat line. Clicking the line adds a
+band; dragging it sets frequency and gain; its details sit in a column to the right; an animated
+spectrum runs behind the curve. There is no fixed row of eight or twenty bands.
+
+**The benchmark is Pro-Q, functionally.** It is the most popular EQ plugin by every public measure, and
+its feature set maps what "flexible and useful" means (`research:effects/parametric-equalizers.md`
+§19–§20). It is a list of behaviours to match or deliberately leave out, never a visual target
+(`plans/AGENTS.md` *Images*; `docs/MXM_DESIGN_SYSTEM.md` is normative).
+
+**Product identity.** `mxm-fx-eq-n`, CLAP id `dk.mxm.mxm-fx-eq-n`, named by the owner under the
+`mxm-fx-<effect>` rule (root `AGENTS.md` *Naming*). The `-n` is descriptive — *n* bands — not a box
+number, so the `-<NN>` box-keying clause does not apply. `plugin_name!` is the one literal;
+`bundler.toml` the one external copy.
+
+### 1.1 What it is not
+
+- **Not a copy of any product.** No hardware or software is reproduced; Pro-Q is a benchmark.
+- **Not a graphic EQ** with fixed bands, and **not a multiband compressor** (the research's §22 draws
+  both lines).
+- **Not a resonance suppressor in v1.** Resonance finding arrives in F4 as a helper that writes
+  ordinary, editable bands; continuous spectral suppression is a separate later decision (§7).
+- **Not linear phase in v1.** Zero latency, minimum phase only; F6 adds phase modes.
+- **No dry/wet Mix; a gain scale instead** (decision 8, owner, 2026-10-12). Mixing a minimum-phase EQ
+  with its dry signal comb-filters wherever a band turns the phase (research §5.5), so what is
+  heard leaves the drawn curve. The gain scale gives the "less of this EQ" a Mix is wanted for,
+  without that. It is one automatable, smoothed control that scales every bell, shelf and tilt
+  gain together, and nothing else. 100 % is as drawn; above 100 % exaggerates. **At 0 % every bell,
+  shelf and tilt is flat, while cuts, notches and band passes stay as drawn**, because they have no
+  gain. That is the meaning the owner approved, and Pro-Q's control behaves the same way. It never
+  moves frequency or Q, and the graph draws the scaled curve. Pro-Q has the same control and no Mix.
+- **No cross-instance features in v1** — collision display, an instance list.
+
+## 2. The band model
+
+### 2.1 Bands are a fixed pool of permanent slots
+
+The host sees a fixed array of band slots, every slot's controls permanent automatable parameters.
+The editor shows only the slots in use: the owner's *"only the ones you need"*, while a host still
+sees a stable list. **No slot is ever renumbered**, so a band keeps its number and its automation for
+as long as it exists (Pro-Q's behaviour; research §17.2).
+
+**Automation belongs to the slot number** (decision 10, owner, 2026-10-12: option A, "simple"). This
+is how a plain fixed-slot EQ behaves:
+
+- **A new band takes the lowest slot whose type is Off.** Deleting a band sets its type Off, and the
+  slot is free at once.
+- **Presets and Init write their slots as saved.** A preset's band 3 is slot 3. Init sets every type
+  Off. `crates/mxm-preset` needs no placement hook.
+- **The trade-off is accepted, and the editor does not hide it.** The host keeps a deleted band's
+  lanes, so a new band in that slot, or a preset band, is driven by them. The same goes for a slot a
+  host lane has automated Off. Research §25.8 asks the opposite, and that item is set aside by
+  owner ruling.
+- **No other state exists.** There is no ownership record, no "ever owned" history and no placement
+  protocol, so undo, presets, Init and restore are ordinary parameter writes.
+
+This is within `plugins/AGENTS.md` *Editable models*, whose test is *who can add to the set*. The
+release ships the pool, and the user turns slots on and off but cannot extend it, so its controls are
+parameters. Precedents:
+- `mxm-model-drums`' nested slot arrays with `foo_{n}` ids, and their id-completeness tests
+  (`plugins/mxm-model-drums/src/params.rs`, drum-machine's `nested_slot_ids_are_complete_unique_and_stable`);
+- nice-plug patch 1, which sizes the GUI event queue from the parameter count
+  (`vendor/nice-plug/PATCHES.md`).
+
+A slot's **type** parameter carries its use: one stepped parameter whose first value is *Off* and the
+rest the shapes. Append-only is not enough on its own. Projects and presets store the normalized
+value (`crates/mxm-preset/AGENTS.md`), so growing the range would remap every saved shape. The type
+therefore **reserves a fixed domain from its first release**: unassigned values read as unavailable,
+and a new shape takes the next reserved value. That is `mxm-model-drums`' `model` selector
+(`plugins/mxm-model-drums/src/params.rs`). **The rule covers every stepped per-band parameter**, not
+just the type. The slope will gain Brickwall in F6, and the placement arrives in F2. A test pins
+every shipped stepped value's normalized representation. A separate bypass toggle lets a band be
+heard on and off without losing its shape.
+
+Host parameter names are fixed at load — the wrapper rescans values, never names — so a slot is
+named by its number ("Band 7 frequency"), never by its shape.
+
+**Rejected: bands as persisted state**, as `mxm-fx-curve` keeps its points. It removes the parameter
+clutter but loses automation of frequency, gain and Q, which every surveyed product offers.
+**Rejected: CLAP parameter rescan** to add parameters at runtime. Hosts handle a changing parameter
+list poorly, and an id must be permanent from the release that declares it.
+
+**The cap is 24 slots**, Pro-Q's (decision 1, owner, 2026-10-12; research §17.1).
+
+### 2.2 Signal path
+
+```
+in ──► band 1 ─► band 2 ─► … ─► band N ─► output gain ──► out
+        (each band's gain × the gain scale)
+         (series cascade of the slots in use, in slot order; dB responses add)
+```
+
+- **Series, in dB.** Bands compose by adding their dB responses, so the drawn curve is the sum of the
+  drawn bands (research §3.6). Slot order is irrelevant to the linear result.
+- **Layouts**: mono→mono and stereo→stereo, the two channels processed identically in v1. Per-band
+  stereo placement (L, R, M, S) is F2.
+- **An empty EQ is bit-exact dry**: no slot in use and output gain at 0 dB means output equals input,
+  whatever the gain scale.
+  Decision 2 makes that the Init.
+- **Q follows the half-gain-in-dB convention**, the cookbook's: under it a cut exactly cancels the
+  equal boost (research §3.2–§3.3). Products define Q differently, so a value is never borrowed from
+  another product without converting.
+
+## 3. The DSP — `crates/mxm-fx-eq-n-dsp`
+
+Framework-free, MSRV 1.87, zero runtime dependencies, as every effect DSP crate.
+
+### 3.1 One band is a trapezoidal SVF
+
+Each band is Simper's trapezoidal (TPT) state-variable filter, with the output mix choosing the shape.
+The research measured it against the direct forms (§4.4–§4.5 there):
+- **It is proven stable** under per-sample changes of cutoff and damping (Wishnick 2014; McClellan
+  2026). On a square-wave frequency sweep it peaked at 1.3× the input, against 2.2× for DF1 and 5.2×
+  for TDF2.
+- **It keeps a 20 Hz, Q 10 bell at 192 kHz within 0.002 dB in `f32`.** Direct-form coefficients in
+  `f32` gave +13.6 dB instead of +12.
+- **Its bell and shelf table is the collection's own**, `docs/filters/02-topologies.md` §2.2. The
+  research checked it against Simper's paper and found it correct, which answers that file's "verify
+  before shipping shelves".
+
+Its weak spot is a sudden gain or Q jump, hence smoothing (§3.4). In this bell the damping follows
+the gain, so a dynamic band (F1) moves its poles. Stability holds, but square-wave gain modulation
+left broadband energy at −15.1 dB, against −23.6 dB for DF1. **Measured at E1:** under
+envelope-rate gain modulation the shipped bell puts −89.7 dB above 5 kHz, and Wise's fixed-core
+form, where only a gain moves, −92.6 dB. So F1 inherits the band.
+
+**The drawn curve is the shipped response.** The editor evaluates each band from the DSP crate's own
+design at the current sample rate: the coefficients audio runs, cramping and slopes included, never
+an analogue formula. So the graph cannot show a curve the audio does not have.
+
+### 3.2 Shapes and slopes
+
+v1 offers Pro-Q's core set: **bell, low shelf, high shelf, low cut, high cut, notch, band pass, tilt
+shelf**. Cuts and shelves have a slope; cuts are cascades of second-order sections, with Pro-Q's
+6–96 dB/octave span as the reference (research §3.5). The final set, the slope ladder and the ranges
+are settled at E0 with the owner and written in the brief, not here. Brickwall cuts need linear phase
+and belong to F6.
+
+**Each shape's meanings are part of the public contract.** Saved projects depend on them, so the brief
+fixes them before E2 releases the parameters. It gives a table per shape:
+- what frequency means (a shelf alone has three competing definitions, research §3.4);
+- what Q means (width, resonance or slope);
+- what gain means (gain or depth);
+- what slope means;
+- what solo plays (§5.2);
+- what a shape change keeps.
+
+The bell's half-gain Q (§2.2) is the first row. Inverse curves and matching (F4, F5) rely on it.
+
+### 3.3 Cramping near Nyquist — measured, then chosen
+
+A bilinear bell at +12 dB, Q 1 is 3.3–7.5 dB off the analogue curve at 10–18 kHz at 44.1 and 48 kHz
+(research §4.2). The SVF is a bilinear design, so it cramps the same way. The research measured the
+candidates (§4.3 there):
+
+| Approach | Error near the top | Cost |
+|---|---|---|
+| Matched second-order designs (Vicanek; Orfanidis) | 0.4–1.75 dB | Direct-form coefficients: they bring back the modulation and `f32` problems §3.1 avoids |
+| SVF at 2× oversampling | about 1 dB | Twice the band cost, plus the resampling filters |
+| SVF at 4× oversampling | about 0.25 dB | Four times |
+| SVF plus the cookbook's bandwidth correction | right to about 10 kHz, over-wide skirt above | Free |
+
+E1 chooses against stated criteria, recorded in the DSP crate's `AGENTS.md`: the magnitude error to
+20 kHz at 44.1 and 48 kHz, stability under the modulation test, precision at the bottom of the range,
+cost at the cap, zero added latency, and **continuity under frequency automation across any internal
+regime boundary**. A hybrid, such as matched `f64` direct-form bands above a crossover frequency, is
+allowed only if a sweep across its crossover stays bounded and click-free, for example by
+crossfading the two regimes with hysteresis. Otherwise it is rejected. The fast-automation test in
+§8 sweeps across it.
+
+**Chosen at E1: matched designs in the SVF.** Every section keeps the SVF's structure, with its
+poles placed by impulse invariance and its numerator fitted to the analogue magnitude. The matched
+bell is 0.74–0.84 dB off near the top at 44.1 kHz where the bilinear one is 3.8–7.5 dB, at no
+per-sample cost, with zero latency and no regime boundary: every matched pole is at or below its
+band's frequency. Oversampling was not built, because it fails the zero-latency criterion and the
+steady budget. The figures, and the two shapes the fit cannot place exactly, are in
+`crates/mxm-fx-eq-n-dsp/AGENTS.md`.
+
+### 3.4 Smoothing, transitions and precision
+
+- **Smooth the user's values, recompute the coefficients.** Log-frequency, dB gain and log-Q are smoothed
+  over the collection's 5–20 ms window (`plugins/AGENTS.md`), and the coefficients are recomputed
+  from them. Interpolating coefficients bends the band's shape (research §4.4). A coefficient
+  set costs about 6.6 ns (§4.6 there), so recomputing per sample while a value moves is affordable.
+- **Creating, deleting, bypassing and changing a band's type are click-free.** A bell or shelf ramps
+  its gain to or from 0 dB, where it is the identity. A cut or a type change crossfades the band's
+  old and new outputs. A short linear transition like `mxm-fx-curve`'s 20 ms is the precedent; the
+  length is measured.
+- **A structural change during a transition waits; the newest one wins.** Each band holds at most
+  two filter states, the current one and the one it is fading to. **Structural** means any change
+  that alters a band's topology or section count: type, bypass, slope (and placement, in F2),
+  create and delete. One arriving mid-fade becomes the band's single pending target, and a later one
+  replaces it.
+  It starts when the fade ends. So the worst case is two states per band, and a change is delayed
+  by at most one transition, after `mxm-fx-curve`'s latest-state publication. Frequency, gain and Q
+  are not structural: they smooth continuously and never fade.
+- **Precision.** Coefficients are designed in `f64`, and **the state is `f64`** (chosen at E1).
+  `f32` state was within 0.003 dB on the research's low-frequency cases, and `f64` costs nothing
+  more in a serial cascade, so the repository's default stands.
+- **Denormals are flushed on every state.** Non-finite input becomes zero.
+
+### 3.5 Cost and idle
+
+The SVF costs about 3.5–4 ns per band per sample (research §4.6), so 24 single-section stereo bands at
+48 kHz come to about 1 % of one core (derived). **That is not the worst case.** The worst v1
+configuration is:
+- 24 bands, each a cut at the steepest admitted slope (several sections);
+- every band mid-transition (two states, §3.4);
+- stereo, at 192 kHz;
+- with the chosen cramping method, whose oversampling multiplies the rest;
+- **with an editor open**, so the analyser's audio-side block handoff (§4) runs as well.
+
+**E0's brief declares one end-to-end audio-thread budget for that configuration, before E1
+measures.** E1's cramping and slope choices are accepted only if that whole case fits; later audio-side
+analyser work spends from the same budget. The analyser's FFT runs on the editor thread, so it has its
+own frame budget (§4).
+
+**Doing nothing costs nothing** (`plugins/AGENTS.md`'s idle rule). Three kinds of band run none of
+their processing:
+- an Off slot;
+- a bypassed band, once its fade has finished;
+- a band whose shape is exactly the identity: a bell, shelf or tilt settled at 0 dB.
+
+**Leaving either state never resumes a frozen one**, because a stale state would click as the gain
+moves. The band starts from a cleared state and re-enters through the creation fade (§3.4).
+
+**Every identity band parks, and re-entry is exactly creation.** A band's ring time is about
+2.2·Q/f₀ (research §8.3), seconds for a sharp band at 20 Hz. So a band starting from a cleared state,
+whether newly created or leaving identity, reaches its drawn response only over that time. The plan
+accepts that for creation, and re-entry is the same event:
+- **Click-free.** It comes in through the creation fade.
+- **Settled within the band's ring time.** It is not instantly at the response a never-parked band
+  would have had.
+
+This keeps the idle rule whole, for every identity configuration. Keeping long-ringing bands running
+instead would be an exception to the owner's rule, and only the owner could grant it. Cuts, notches
+and band passes are never the identity, so they always run.
+
+**Tail.** A high-Q band rings for about 2.2·Q/f₀ (research §8.3): seconds for Q 40 at 20 Hz. The
+plugin keeps processing while any band's state is above a measured floor, then zeroes the state and
+reports Normal, so a host can sleep it on real silence.
+
+### 3.6 The realtime contract
+
+`plugins/AGENTS.md`'s `process()` rules, unchanged: no allocation, locks or I/O; everything
+preallocated at `activate()`; `reset()` leaves no tail; bounded internal blocks. Sample-accurate
+automation is enabled, as the three original effects do, and v1 has zero latency (§6).
+
+## 4. The analyser — the animated spectrum
+
+- **The audio-to-editor handoff, as requirements.** How it is built is the implementation's choice.
+  - **Coherent, ordered analysis windows.** A torn or spliced window smears energy into every bin,
+    which a scope can tolerate but an FFT cannot (`plugins/mxm-mono-02/src/telemetry.rs` is the
+    scope precedent). A gap restarts the window and is never spliced over.
+  - **Audio never blocks, allocates or waits on the editor.**
+  - **Every input channel is kept separate,** so F2–F5's L/R/M/S, grab, resonance and matching
+    analysis can be built on the same boundary.
+  - **No editor, no work** (`mxm-fx-curve`'s `connect()` gating).
+  - **v1 displays the power average of the channels,** so anti-phase or side-only energy still shows.
+- **GUI side.** The editor windows its history, runs a real FFT and converts to dB on a log-frequency
+  axis. It smooths across frequency (fractional-octave) and time (ballistics) and draws behind the
+  curve. Pre-EQ and post-EQ are told apart by fill against outline, never by hue alone (`AGENTS.md`
+  *User Preferences*; research §18).
+- **Resolution is a real trade, and it has a budget.** A low-frequency peak needs a long window:
+  0.3–1.4 s to measure a room-mode width to within 20 % (research §8.6). At 192 kHz that is hundreds
+  of thousands of samples.
+  - **Display and analysis rates are separate.** The display animates at its own rate while a long
+    window is recomputed at a hop proportional to its length.
+  - **The long windows run on a decimated signal.** Low-frequency resolution analyses the
+    low-passed, decimated signal rather than the full rate.
+  - **The cost is measured.** Every resolution × pre/post/both × sample rate fits a budget stated at
+    E3 (§8): **2 ms of a 60 Hz frame on the GUI thread**, measured at 0.35 ms at worst (192 kHz,
+    High, both), in the plugin's `AGENTS.md`.
+- **Settings are view state** — on/off, pre, post or both, resolution, speed and tilt (exact set at
+  E3). They are not parameters, so they have no ids and no automation. They are saved with the
+  project, and a change marks it dirty through `mxm-fx-curve`'s dirty-only state transaction
+  (`plugins/mxm-fx-curve/AGENTS.md` *Editor transactions and history*). Presets, Init and undo leave
+  them alone. A tilt makes typical music read level; the corpus average slope is about
+  −4.5 dB/octave (research §10.6).
+- **Motion rules.** `docs/MXM_DESIGN_SYSTEM.md` §9: a measurement display is appropriate motion. It stops
+  when the editor closes, yields before audio is at risk, and honours the operating system's
+  reduced-motion setting, or offers its own option where there is none.
+- **The FFT is the shared `crates/mxm-fft`** on `realfft` (decision 6), owned by
+  `plans/plan-mxm-fft.md` with its migration of the collection's in-house FFTs. It is used GUI-side
+  only, so this plugin's DSP crate takes no dependency on it. E3 needs the crate (step X0 there), not
+  the migration.
+- **The analysis layer writes ordinary bands.** Spectrum grab (F3), the resonance finder (F4) and
+  matching (F5) all run here, on the GUI side. Their output is band-parameter edits, made like any
+  other edit, so the DSP stays a plain band cascade.
+
+## 5. The editor
+
+### 5.1 Layout — graph and side column
+
+This follows `mxm-fx-curve`'s named exception to the cards contract (`plugins/mxm-fx-curve/AGENTS.md`
+*Identity and host surface*; `plans/plan-editor-standard.md`):
+
+- **Wide.** The graph takes every spare pixel horizontally and vertically, with an Out meter rail beside
+  it (the shared `shell::vertical_level_meter`). A fixed-width column of natural height sits to the
+  **right** (decision 3, owner, 2026-10-12).
+- **What the column holds.** A **Band** card shows the selected band's controls: number, bypass, shape,
+  frequency, gain, Q, slope and delete. Below it, **Output** (output gain and gain scale) and **Analyser** cards.
+- **There is no stacked layout, and the window still narrows to one card.** The column stays to the
+  graph's right at every size; it never moves under the graph. Narrowing first shrinks the graph to
+  its floor. Below graph-plus-column, the whole surface scrolls horizontally, with the column still
+  beside the graph, as `mxm-fx-curve`'s narrow flow already scrolls horizontally.
+  **Vertically, the column scrolls on its own** when its cards are taller than the space, at any zoom
+  up to 200 %. The graph keeps the height, and the column stays to its right.
+  The minimum is one card wide, never narrower than the app bar's last compact step (`plugins/AGENTS.md`;
+  design system §4.3), so a narrow host tile keeps every control reachable; a narrow-window
+  reachability test holds it.
+- **Why a column, not a bottom panel:** the owner's reason. The details panel never moves with the
+  band count, so a variable number of bands cannot reflow anything (*"This will be too difficult to
+  design with a variable amount of bands"*). Pro-Q floats its band panel under the graph; this
+  is a deliberate difference from the benchmark.
+- **The standard checks still apply:** opening size inside the quarter-4K budget, the minimum at 200 %
+  zoom, tree checks on every card body, and the shared `opening_size` check `mxm-fx-curve` lacks.
+- **With nothing selected,** the Band card has no subject. How it shows that is settled at E0.5 under
+  the no-help-text rule (`plugins/AGENTS.md`): no sentence on the panel saying "select a band".
+
+### 5.2 The graph — mouse
+
+From Pro-Q and the collection's own canvas (research §17.2; `plugins/mxm-fx-curve/src/canvas.rs`):
+
+- **Clicking the line adds a band there:** a bell at that frequency at **0 dB**, so the sound does
+  not change until it is dragged. Bands add in dB (§2.2), so a bell started at the curve's height
+  would count that height twice. This is the intent of `mxm-fx-curve`'s line-click insertion,
+  which the owner accepted.
+- **Where a point is drawn is decided at E0.5.** One option is at its own gain, Pro-Q's convention,
+  with the composite curve drawn separately. The other is on the composite curve, where a drag
+  changes the band's gain by the drag's distance. Either keeps insertion neutral.
+- **Dragging a point** sets frequency (x) and gain (y). **The wheel changes Q only with focus or a
+  modifier** (design system §7.1): over the selected point while the graph has focus, or with the
+  modifier settled at E0.5. Otherwise the wheel scrolls the view, as the narrow layout needs.
+- **Clicking a point selects it,** and the column follows. A right-click opens shape and delete.
+- **Delete removes the selected band.**
+- **Band solo is v1, the owner's sweep made into a feature** (research §17.3). Holding solo plays what
+  the band is about, so sweeping it hunts a resonance by ear.
+  - **What it plays per shape** is a column of the E0 semantics table (§3.2). The proposal:
+    - a bell, notch or band pass, a 0 dB bell included, plays a band-pass at its frequency and Q;
+    - a cut plays what it removes;
+    - a shelf plays the region it changes.
+  - **While soloing,** frequency, gain and Q stay editable. Latching or momentary is settled at E0.5.
+  - **It is an audition route, not a band edit.** It touches no parameter and no history, and it
+    crosses the collection's transient-command path (`plugins/AGENTS.md`), so the DSP reads no editor
+    state. The plugin's `AGENTS.md` says why saving or automating an audition would be false.
+  - **Requirements on that path:**
+    - turning solo off is always delivered, and no full path can reject it;
+    - the shell ends solo on editor close, reset, a state restore or deactivation, without depending
+      on the editor;
+    - solo never runs in an offline render and is never saved;
+    - the races are defined and tested.
+
+    How the path is built is the implementation's choice.
+- **v1 must not preclude the workflow phase (F8).** Selection is a set of bands, even though v1
+  selects one at a time. Commands take their target set, and an undo action may span several bands.
+
+Modifier gestures (fine drag, axis lock) are settled at E0.5 by hand, as `mxm-fx-curve`'s C0.5
+probe settled its own.
+
+**Band identity without hue.** Every point carries its slot number. The selected point is marked by
+shape (a ring) as well as colour. Hue may add to that but never carries it alone. The owner is
+red-green colour-blind; the research found one maker-documented colour-blind scheme (Eventide's)
+and notes that Pro-Q draws right in red and mid in green (§18 there).
+
+### 5.3 The keyboard — newDAWn's held-key model
+
+The owner's ruling (2026-10-12): *"follow newDAWn's held-key model"*. The model is
+`01-newDAWn/AGENTS.md` *Keyboard*, and it is built in **`crates/ui`** (decision 5: *"it should follow
+the standard"*), as an opt-in module beside the existing cursor (`src/navigation.rs`), which stays
+untouched.
+
+**The model:**
+- **Arrows alone move focus.** On the graph, ←/→ select the previous or next band by frequency (*"l
+  r is selecting a point on the line"*). Focus is a position on the line, so on an empty graph, or
+  past the outermost band, ←/→ step along it.
+- **Shift+arrows** move between views: graph, column, app bar.
+- **A held left-hand key plus arrows** does that key's job, on the Q W E / A S D / Z X C grid. The
+  columns are *start, whole, end*; the rows are *coarse, normal, fine*.
+- **Tapping a grid key alone is an action.** `item.insert` adds a 0 dB bell at the focus, so a
+  keyboard user starts from an empty Init. `item.delete` removes the selected band, as Delete does.
+  The keys are settled at E0.5.
+- **Well-known shortcuts keep their meanings.**
+
+**K1 for the selected band** (decision 4):
+
+| Held key | ←/→ | ↑/↓ |
+|---|---|---|
+| S (W coarse, X fine) | frequency, so the point moves where it is drawn | gain |
+| A / D (Q/E, Z/C) | the lower / upper edge, which changes the width (Q) | — |
+
+Steps are in natural units: dB, and semitones and octaves for frequency. Elsewhere they are ±10 %,
+±1 % and ±0.1 % of travel, and never less than one of the parameter's own steps. In the column,
+arrows move between parameters and the held keys change the focused value.
+
+**Contracts:**
+- **A held edit is one host gesture** from press to release (`crates/ui/AGENTS.md`).
+- **Keys are physical positions,** so the grid holds on AZERTY and Dvorak. egui-baseview publishes
+  `physical_key: None` today (`vendor/egui-baseview/src/window.rs`), and its existing patch grows to
+  carry the key code.
+- **The editor tracks held keys itself,** ignoring OS repeat for letters; **focus loss releases every
+  held key**, because egui clears them without a key-up.
+- **The keyboard is claimed only while the editor has focus**, or a DAW may also act on "S".
+  **Space has one owner per mode.** Outside text entry it always passes to the host, for transport.
+  In text entry the field owns it, so names can contain spaces and transport never fires while
+  typing; design system §11 forbids only trapping transport *unexpectedly*. The other transport keys
+  are never claimed. MXM Player's computer-keyboard piano takes letters only while
+  its own window is focused (`apps/mxm-player/src/ui/mod.rs`); E0.5 confirms it.
+- **Typing is a separate mode** (newDAWn). It begins when a text field takes focus (a preset name or
+  search, or Enter on a value) and ends on Enter, Escape or focus loss. While it lasts the command
+  layer is inert, as the shared cursor already is around a text field.
+- **Holding a key shows the 3×3 map** of what the arrows do, taking no layout space.
+
+**Named commands.** Every action is a named command (`focus.move`, `item.move`, `edge.end.move`, in
+newDAWn's names where it has them), and one plain table maps keys to commands. newDAWn's shared
+keymap format replaces that table when it exists; no format is invented here.
+
+**An exception to design system §11 until the migration.** The design system says so in one line,
+naming this plan. The shared `keyboard_checks` assume the old cursor, so this plugin has its own
+coverage test: every band and column parameter is reachable and operable through the commands.
+
+### 5.4 Undo, presets, accessibility
+
+- **Undo is required, and plain** (owner, 2026-10-12: *"simplify undo"*). The app bar has Undo and Redo
+  (`docs/MXM_DESIGN_SYSTEM.md` §3.1), and so do Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z. They make deleting a
+  band recoverable without a dialog (§7.2).
+  - **What the history is.** A bounded list of editor actions, each the parameters one gesture changed,
+    before and after. It belongs to the plugin instance, so it survives the editor closing
+    (`mxm-fx-curve`'s precedent).
+  - **What undo does.** It writes the action's "before" values back, as Pro-Q's undo does. If the host
+    automates one of those parameters, the host's next automation point puts its own value back. A
+    host writing automation records the undo like any other edit. No provenance tracking is
+    attempted.
+  - **Every editor write is seen at the editor's own host context**, a recorder that passes each
+    write to the host (E3). It sees the graph's and the keyboard's writes as well as the column's,
+    which an observer at the shared binding would not, and needs no shared change. Whole-patch
+    replacements are what the preset bar writes, and a host restore is counted by the persisted
+    view field.
+  - **Epochs.** A host restore, a preset load or Init starts a new epoch, so an undo never reaches back
+    across a replaced patch.
+- **Presets** use `crates/mxm-preset` with parameters only. The slots are parameters, so a preset
+  has no custom state, no fingerprint and no dirty-only transaction; its bands land in their saved
+  slots (§2.1). Init is generated from the defaults, with every slot Off. The factory set is whatever
+  the brief justifies; the fifty-preset floor is for instruments.
+- **Accessibility**: every point and control has a name and a text value (`canvas.rs`'s `widget_info`
+  is the precedent). Hover text follows the collection's rules for the player.
+
+## 6. Contracts this touches, by owner
+
+| Owner | What changes |
+|---|---|
+| Root `AGENTS.md` | *Naming* (`mxm-fx-eq-n` added to the effect names), DOX count and list, crate and plugin counts, the MSRV table, the Child DOX Index |
+| `plugins/AGENTS.md` | The plugin table and child index. The side-column exception is recorded beside `mxm-fx-curve`'s, and the keyboard exception |
+| `docs/MXM_DESIGN_SYSTEM.md` §11 | One line: this plugin follows newDAWn's model by owner ruling, pending the collection's migration |
+| `docs/briefs/mxm-fx-eq-n.md` | New: the E0 brief |
+| `crates/ui` | A new opt-in held-key command module (decision 5); nothing else |
+| `crates/mxm-fft` | New and shared, owned by `plans/plan-mxm-fft.md`; this plugin's editor is a consumer |
+| `crates/mxm-preset` | Nothing: undo records at the editor's own host context (§5.4, E3) |
+| `vendor/egui-baseview` | Its existing patch grows to carry the physical key code into egui (§5.3). The patch's scope note and drop condition in `vendor/AGENTS.md` change with it |
+| `vendor/nice-plug` | Nothing in v1. F6 makes the collection's first latency report: `set_latency_samples` and `request_restart` exist, but the player's headless restart path is untested (`plugins/mxm-mono-00/AGENTS.md`) |
+| `apps/mxm-player` | `tests/editor_resize.rs` lists the new bundle; AGENTS.md counts |
+| `bundler.toml`, `README.md`, `Cargo.toml` | Bundle name; effects table; both crates in `members` and `default-members` |
+| Control map | None in v1. No role fits on-demand bands, and a map is optional |
+
+## 7. Later phases — the rest of "flexible and useful"
+
+Each later phase is a new revision of this plan, ordered by the owner (decision 9). Each builds on
+the band pool and the analysis layer, not beside them.
+
+| Phase | What | Evidence | What it needs decided first |
+|---|---|---|---|
+| F1 | **Dynamic bands**: threshold, range, attack, release; the band's own filter as side chain; an external side-chain input | Research §7 (Wise 2009: side chains parallel, audio in series, one control across channels); `research:effects/dynamics-processing.md`. The band stays the v1 SVF if E1's gain-modulation measurement passes (§3.1) | Per-slot parameters appended (new permanent ids); an aux input layout |
+| F2 | **Per-band stereo placement**: stereo, L, R, mid, side | Research §6: a minimum-phase band on one channel moves the image | How dynamic bands link across channels |
+| F3 | **Spectrum grab and analyser extras**: freeze, peak labels, drag a peak to create a bell; a reference overlay | Research §11: the gesture is documented, the peak picker is not | Which spectrum is grabbed; how peaks are chosen |
+| F4 | **Resonance finder**, writing ordinary cut bands | Research §8–§9: prominence, persistence and decay tests; professionals removed about a fifth of the excess; a cut does not shorten a ring | Detector and amount. Continuous spectral suppression must first clear oeksound's active patent, US 10,587,238 (research §9.6): a legal and product decision |
+| F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | The reference's source; whether the fit uses free slots |
+| F6 | **Phase modes**: linear, perhaps analogue-matched | Research §5: 100–400 ms pre-ring on narrow low cuts | The collection's first latency report (§6) |
+| F7 | **Candidates**: character/saturation, auto-gain, band modulation, cross-instance collision | Research §13–§15, §12 | Each one is the owner's call |
+| F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
+
+## 8. What must not break
+
+| Property | Proved by |
+|---|---|
+| An empty EQ at 0 dB output is bit-exact dry | A DSP test on noise, silence and NaN-laced input |
+| Band ids are complete, unique and permanent; a slot is never renumbered; a new band takes the lowest Off slot; presets land in their saved slots | A nested-ids test after `mxm-drum-machine`'s, plus create/delete/preset/Init tests on slot numbers |
+| No allocation, locking or I/O in `process()` | The collection's allocation-guard tests, with every slot in use and every type changing |
+| Creating, deleting, bypassing and changing a band's type are click-free, including when changes arrive mid-transition | A transition test that bounds the per-sample step under repeated sample-accurate type, bypass and slope automation, in the style of `mxm-fx-curve`'s transition probe |
+| Fast automation stays bounded | The research's square-wave frequency-modulation and DC-step tests, run against the shipped band |
+| Low-frequency, high-Q precision | The research's 20 Hz / Q 10 / 192 kHz case, as a test |
+| The drawn curve is the audio's response | Drawn curve against the cascade's rendered response, across sample rates, shapes and slopes. Its tolerance is below the audibility thresholds in research §8.8, stated in the DSP `AGENTS.md` |
+| The worst-case configuration (§3.5) fits the budget E0 declared; identity bands cost nothing and re-enter click-free | A release benchmark of that configuration at 44.1–192 kHz, figures recorded in the DSP `AGENTS.md`; tests that park 0 dB bells across the frequency and Q range, confirm no core work, then move their gain: the step is bounded (click-free), and the response matches a newly created band's, settling within the ring time |
+| The analyser does no work with the editor closed; its windows are coherent; its cost is bounded | A telemetry gating test; a sequence-gap test (dropped blocks restart the window, never splice); a cost measurement at every resolution × pre/post/both × sample rate, within the budget stated at E3 |
+| Undo and redo reverse whole editor actions, in order, and never cross a preset load, Init or host restore | Undo tests against a setter that records gestures without applying them (after `crates/mxm-preset/src/binding.rs`'s regression), plus epoch tests |
+| Every parameter is reachable and operable by the held-key commands, starting from an empty Init; a held edit is one gesture; focus loss releases | The plugin's own keyboard coverage test, which starts from Init with no pointer and creates, edits and deletes a band and reaches the column and analyser, plus gesture-balance tests after `plugins/mxm-mono-01/tests/keyboard_editing.rs` |
+| The host keeps its keys | E0.5 and E5: MXM Player plus at least one DAW on Windows. Letters act only while the editor is focused; Space reaches the host outside text entry and goes to the field inside it |
+| Band identity and pre/post spectra readable without hue | Painted checks on the graph |
+| The editor fits the quarter-4K budget at 75–200 % zoom; the graph takes the slack | The shared opening-size check plus `mxm-fx-curve`-style growth tests |
+| Presets and Init round-trip | Preset tests; Init equals the empty EQ |
+| A loadable, valid plugin | The release bundle, `clap-validator`, `host-tests/` through MXM Player (`Harness::with_fx`) |
+
+## 9. Delivery
+
+| Phase | Delivers | Gate |
+|---|---|---|
+| **E0** | `docs/briefs/mxm-fx-eq-n.md`: name, v1 scope, shape and slope set, ranges, the per-shape semantics table (§3.2), the gain scale's range, the worst-case DSP budget (§3.5) | Owner |
+| **E0.5** | A disposable interaction probe in MXM Player: graph and right column, click-to-add, drag, where points are drawn (§5.2), the K1 held-key layer, an analyser stub. Also the key-delivery spike: physical-key down/up in MXM Player and one DAW, under a QWERTY and a non-QWERTY layout, no host double action, Space passing through. **Built** as `apps/mxm-eq-n-probe`, with the egui-baseview physical-key patch, and **deleted at E3** (2026-10-13). Its code was reviewed by the agent-loop and **approved in round 11** (2026-10-12; 30 findings fixed, two rejected with evidence). **Owner so far:** per-band curves are "mostly visual noise", now a switch, off by default; a narrow bell's solo ringing is "fine" (solo stays a band-pass at the band's Q); momentary solo reads *Hold* and holds for as long as it is pressed. **The owner moved on to E1 on 2026-10-13** (*"no continue the plan"*), leaving the rest of the probe unjudged. Those items move to the phases that can judge them. Where points are drawn, latching or momentary solo, which edge a Q key keeps and the K1 keys go to E3's by-eye check. Key delivery in a DAW and on a non-QWERTY layout goes to E5, including whether Space reaches the host on Windows (baseview there ignores the plugin's handled report) | Owner by hand |
+| **E1** | `crates/mxm-fx-eq-n-dsp`: bands, cascade, smoothing, transitions, the cramping choice, precision, cost at the cap, tail and activity, silence/NaN/reset tests; MSRV 1.87 verified. **Built** (2026-10-13), 49 tests; the worst case measures about 20 % steady and up to 57 % with every band crossfading and gliding at 192 kHz. Its code was reviewed by the agent-loop and **approved in round 6** (2026-10-13; 16 findings fixed, none rejected), inside A6's 35 % and 70 % | Measurements in its `AGENTS.md` |
+| **E2** | `plugins/mxm-fx-eq-n` shell: the slot pool, layouts, Init, presets seam, telemetry rings, meters, permanent-id test. **Built** (2026-10-13): 30 tests; the release bundle passes `clap-validator` (33 passed, 0 failed, in debug and release); code **approved by the agent-loop in round 1** | Unit tests; bundle; `clap-validator` |
+| **E3** | The editor: graph, column, analyser, held-key commands with the 3×3 map, undo, band identity, accessibility, every editor check. **Built** (2026-10-13): 25 tests in the editor and its modules, 59 in the plugin, and a release cost measurement; the analyser within its budget; the probe deleted. For the owner's eye: points at their own gain, solo held, an edge key keeps the other edge, K1 as newDAWn has it | Editor tests; owner by eye |
+| **E4** | Factory presets, `host-tests/`, inventories, DOX closeout (§10) | Merge gate |
+| **E5** | Listening, by-eye and DAW checks | Owner sign-off |
+
+v1 is E0–E5. F1–F8 follow in the owner's order.
+
+## 10. DOX closeout
+
+On delivery: new `plugins/mxm-fx-eq-n/AGENTS.md` and `crates/mxm-fx-eq-n-dsp/AGENTS.md`, with their
+contracts and measured figures; the §6 owners updated; `crates/ui/AGENTS.md` for the held-key
+layer. The durable rules then leave this plan for those files: the slot lifecycle,
+the keyboard model, the cramping choice and the side-column exception.
+
+**Evidence:** `research:effects/parametric-equalizers.md`, a comparative survey dated 2026-10-12. Its
+§25 validation programme is what E1–E5 draw on.
