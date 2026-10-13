@@ -64,9 +64,14 @@ impl EqApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
         let tokens = *mxm_ui::theme::tokens(&ctx);
 
+        {
+            let params = self.params.clone();
+            let erased = params.erased();
+            history::lock(&self.history).settle(|index| erased[index].normalised());
+        }
         let restored = history::lock(&self.history).observe_restores(self.params.view.restores());
         if restored {
-            self.abandon_gesture();
+            self.abandon_gesture(&ctx);
         }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
@@ -79,8 +84,9 @@ impl EqApp {
         // ended where the host has it.
         let removed = |app: &Self, slot: Option<usize>| slot.is_some_and(|s| !app.band_in_use(s));
         let dragged = self.drag.as_ref().map(|drag| drag.slot);
-        if (removed(self, self.selected) || removed(self, dragged)) && !self.open.is_empty() {
-            self.abandon_gesture();
+        let open = history::lock(&self.history).gesture_open() || !self.open.is_empty();
+        if (removed(self, self.selected) || removed(self, dragged)) && open {
+            self.abandon_gesture(&ctx);
         }
         if removed(self, self.selected) {
             self.selected = None;
@@ -144,7 +150,7 @@ impl EqApp {
                         setter,
                         &mut self.presets,
                     );
-                    self.finish_replacing();
+                    self.finish_replacing(ui.ctx());
                 }
                 undo = ui
                     .add_enabled(can_undo, egui::Button::new("Undo"))
@@ -169,7 +175,7 @@ impl EqApp {
         if let Some(setter) = setter.as_ref() {
             self.start_replacing();
             mxm_preset::ui::overlays(ui, tokens, self.params.as_ref(), setter, &mut self.presets);
-            self.finish_replacing();
+            self.finish_replacing(ui.ctx());
         }
     }
 
@@ -180,10 +186,10 @@ impl EqApp {
 
     /// Ends [`start_replacing`](Self::start_replacing); a replacement ends any gesture still open,
     /// as a host restore does.
-    pub(crate) fn finish_replacing(&mut self) {
+    pub(crate) fn finish_replacing(&mut self, ctx: &egui::Context) {
         let replaced = history::lock(&self.history).finish_replacing();
         if replaced {
-            self.abandon_gesture();
+            self.abandon_gesture(ctx);
         }
     }
 

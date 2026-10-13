@@ -286,7 +286,37 @@ impl EqApp {
     }
 
     pub(crate) fn band_in_use(&self, slot: usize) -> bool {
-        self.params.bands[slot].band().shape.is_some()
+        self.band_now(slot).shape.is_some()
+    }
+
+    /// A parameter, normalised, as this editor last set it: the open gesture's last value, else
+    /// a value sent that the host has not applied yet ([`history::History::pending`]), else what
+    /// it reads. Every chained edit reads through it.
+    pub(crate) fn normalised_now(&self, index: usize) -> f32 {
+        self.open.sent(index).unwrap_or_else(|| {
+            history::lock(&self.history).pending(index, self.erased(index).normalised())
+        })
+    }
+
+    /// A slot as this editor last set it ([`normalised_now`](Self::normalised_now)'s values).
+    pub(crate) fn band_now(&self, slot: usize) -> mxm_fx_eq_n_dsp::Band {
+        let band = &self.params.bands[slot];
+        let history = history::lock(&self.history);
+        let at = |field: Field| {
+            let index = band_index(slot, field);
+            self.open
+                .sent(index)
+                .unwrap_or_else(|| history.pending(index, self.erased(index).normalised()))
+        };
+        mxm_fx_eq_n_dsp::Band {
+            shape: crate::params::shape_of(band.kind.preview_plain(at(Field::Type))),
+            bypass: band.bypass.preview_plain(at(Field::Bypass)),
+            freq: band.freq.preview_plain(at(Field::Freq)),
+            gain_db: band.gain.preview_plain(at(Field::Gain)),
+            q: band.q.preview_plain(at(Field::Q)),
+            slope: crate::params::slope_of(band.slope.preview_plain(at(Field::Slope)))
+                .unwrap_or(DEFAULT_SLOPE),
+        }
     }
 
     pub(crate) fn select(&mut self, slot: usize) {
@@ -294,7 +324,7 @@ impl EqApp {
             self.edge = None;
         }
         self.selected = Some(slot);
-        self.focus_freq = self.clamp_freq(self.params.bands[slot].freq.value());
+        self.focus_freq = self.clamp_freq(self.band_now(slot).freq);
     }
 
     /// Whether the keyboard's cursor is on the graph.
@@ -395,10 +425,7 @@ impl EqApp {
     /// A host parameter's plain value in the running gesture, or as it reads.
     pub(crate) fn current_plain(&self, index: usize) -> f32 {
         let params = &self.params;
-        let normalised = self
-            .open
-            .sent(index)
-            .unwrap_or_else(|| self.erased(index).normalised());
+        let normalised = self.normalised_now(index);
         if index >= OUTPUT_INDEX {
             return if index == OUTPUT_INDEX {
                 params.output.preview_plain(normalised)
@@ -496,7 +523,7 @@ impl EqApp {
         if self.selected == Some(slot) {
             self.selected = None;
             self.edge = None;
-            self.focus_freq = self.clamp_freq(self.params.bands[slot].freq.value());
+            self.focus_freq = self.clamp_freq(self.band_now(slot).freq);
         }
     }
 
@@ -587,7 +614,7 @@ impl EqApp {
     }
 
     pub(crate) fn offers_solo(&self, slot: usize) -> bool {
-        let band = self.params.bands[slot].band();
+        let band = self.band_now(slot);
         band.shape.is_some_and(Shape::offers_solo) && !band.bypass
     }
 
@@ -652,13 +679,28 @@ impl EqApp {
         }
     }
 
-    /// The patch was replaced under the editor — a host restore, a preset load — while a gesture
-    /// may be open: it ends where the host now has it, writing nothing, so BACK cannot put back a
-    /// value from before. The drag and the copy end with it.
-    pub(crate) fn abandon_gesture(&mut self) {
-        self.close_open();
+    /// The patch was replaced under the editor — a host restore, a preset load — or the band a
+    /// gesture was on went Off: every gesture open, a column control's too, ends where the host now
+    /// has it, writing nothing ([`history::History::abandon_open`]), so BACK cannot put back a value
+    /// from before. The drag, the copy and egui's own drag end with it.
+    pub(crate) fn abandon_gesture(&mut self, ctx: &egui::Context) {
+        let ended = {
+            let mut history = history::lock(&self.history);
+            history.abandon_open();
+            history.take_to_end()
+        };
+        if let Some(host) = self.host.clone() {
+            let setter = host.param_setter();
+            let params = self.params.clone();
+            for index in ended {
+                params.erased()[index].end(&setter);
+            }
+        }
+        self.open = Open::default();
+        self.wheel_until = None;
         self.copy = None;
         self.drag = None;
+        ctx.stop_dragging();
     }
 
     /// The gesture is over: kept as one undo step, or put back.
@@ -675,7 +717,7 @@ impl EqApp {
     }
 
     fn has_q(&self, slot: usize) -> bool {
-        let band = self.params.bands[slot].band();
+        let band = self.band_now(slot);
         band.shape.is_some_and(|shape| shape.has_q(band.slope))
     }
 
@@ -683,7 +725,7 @@ impl EqApp {
     pub(crate) fn by_frequency(&self) -> Vec<(f32, usize)> {
         let mut bands: Vec<(f32, usize)> = (0..SLOTS)
             .filter(|&slot| self.band_in_use(slot))
-            .map(|slot| (self.clamp_freq(self.params.bands[slot].freq.value()), slot))
+            .map(|slot| (self.clamp_freq(self.band_now(slot).freq), slot))
             .collect();
         bands.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         bands
@@ -787,7 +829,7 @@ impl EqApp {
         let up = matches!(direction, Direction::Right | Direction::Up);
         let sign = if up { 1.0 } else { -1.0 };
         let horizontal = matches!(direction, Direction::Left | Direction::Right);
-        let band = self.params.bands[slot].band();
+        let band = self.band_now(slot);
         let Some(shape) = band.shape else {
             return;
         };
@@ -822,7 +864,7 @@ impl EqApp {
                 };
                 self.send_plain(gain_index, (next * size).clamp(-range, range));
             }
-            Verb::Extent if shape.has_q(band.slope) => {
+            Verb::Extent if horizontal && shape.has_q(band.slope) => {
                 // Wider is a lower Q.
                 let q = self.current_plain(q_index) * Self::q_factor(-sign, step);
                 self.send_plain(q_index, q.clamp(Q_MIN as f32, Q_MAX as f32));
@@ -870,7 +912,7 @@ impl EqApp {
         let Some(slot) = self.free_slot() else {
             return false;
         };
-        let band = self.params.bands[original].band();
+        let band = self.band_now(original);
         self.close_open();
         for (index, value) in self.slot_writes(slot, band) {
             self.send(index, value);

@@ -138,8 +138,8 @@ impl MxmFxEqN {
                     );
                 }
                 if metering {
-                    peaks[0] = left.iter().fold(peaks[0], |peak, x| peak.max(x.abs()));
-                    peaks[1] = right.iter().fold(peaks[1], |peak, x| peak.max(x.abs()));
+                    peaks[0] = peak_of(peaks[0], left);
+                    peaks[1] = peak_of(peaks[1], right);
                 }
             } else {
                 self.engine.process_mono(left);
@@ -148,7 +148,7 @@ impl MxmFxEqN {
                     self.tap.capture(tagged, [pre, pre], [left, left]);
                 }
                 if metering {
-                    peaks[0] = left.iter().fold(peaks[0], |peak, x| peak.max(x.abs()));
+                    peaks[0] = peak_of(peaks[0], left);
                     peaks[1] = peaks[0];
                 }
             }
@@ -168,6 +168,19 @@ impl MxmFxEqN {
             ProcessStatus::Normal
         }
     }
+}
+
+/// The largest magnitude in `samples` and `peak`, keeping a non-finite one: `f32::max` drops NaN,
+/// and the meter's policy reads it as a clip.
+fn peak_of(peak: f32, samples: &[f32]) -> f32 {
+    samples.iter().fold(peak, |peak, x| {
+        let magnitude = x.abs();
+        if magnitude.is_nan() || magnitude > peak {
+            magnitude
+        } else {
+            peak
+        }
+    })
 }
 
 impl Plugin for MxmFxEqN {

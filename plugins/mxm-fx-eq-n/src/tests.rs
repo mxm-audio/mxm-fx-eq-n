@@ -359,6 +359,23 @@ fn the_out_meter_reads_only_with_an_editor_and_holds_its_peak() {
 }
 
 #[test]
+fn a_non_finite_output_latches_the_clip() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut plugin = prepared(2);
+        plugin.telemetry.connect(true);
+        // The empty EQ passes the input bit for bit, the bad sample included.
+        let mut buffers = vec![vec![0.25f32; 64], vec![0.25f32; 64]];
+        buffers[0][10] = bad;
+        run(&mut plugin, &mut buffers);
+        assert_eq!(
+            plugin.telemetry.output.each_ref().map(PeakMeter::clipped),
+            [true, false],
+            "{bad}"
+        );
+    }
+}
+
+#[test]
 fn a_ringing_band_keeps_the_host_calling_until_it_has_settled() {
     let mut plugin = prepared(1);
     set_band(

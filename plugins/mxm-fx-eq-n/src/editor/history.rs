@@ -49,6 +49,11 @@ pub struct History {
     replaced: bool,
     /// The host restores this history has seen.
     restores: Option<u64>,
+    /// Parameters whose gesture a replacement or a removal ended at the host while a control
+    /// still held it: what that control sends for one is dropped until it begins anew.
+    abandoned: Vec<usize>,
+    /// Of those, the ones the editor has still to end at the host ([`take_to_end`](Self::take_to_end)).
+    to_end: Vec<usize>,
 }
 
 impl History {
@@ -65,6 +70,25 @@ impl History {
         readback
     }
 
+    /// Where a parameter is as this history last sent it, without forgetting anything: the value
+    /// sent while the host has not applied it yet, otherwise the readback. nice-plug changes a
+    /// parameter only when its queued event is written, at the end of a process cycle or a flush,
+    /// so what the editor just wrote reads back unchanged until then.
+    pub fn pending(&self, index: usize, readback: f32) -> f32 {
+        match self.sent.iter().find(|(sent, ..)| *sent == index) {
+            Some(&(_, then, value)) if readback == then && readback != value => value,
+            _ => readback,
+        }
+    }
+
+    /// Once a frame, before anything reads: a value sent whose readback has moved — applied, or
+    /// overridden by the host — is no longer pending. Without this, automation returning a
+    /// parameter to where it was before the edit would read as the edit still on its way.
+    pub fn settle(&mut self, readback: impl Fn(usize) -> f32) {
+        self.sent
+            .retain(|&(index, then, _)| readback(index) == then);
+    }
+
     fn note_sent(&mut self, index: usize, readback: f32, value: f32) {
         self.sent.retain(|(sent, ..)| *sent != index);
         if readback != value {
@@ -73,6 +97,8 @@ impl History {
     }
 
     pub fn begin(&mut self, index: usize, readback: f32) {
+        // A new gesture: whatever was abandoned of this parameter is over.
+        self.abandoned.retain(|&abandoned| abandoned != index);
         if self.replacing {
             self.replaced = true;
             return;
@@ -142,12 +168,49 @@ impl History {
         self.redo.clear();
     }
 
-    /// Clears everything: the patch was replaced.
+    /// Clears everything: the patch was replaced. A gesture still open is abandoned.
     pub fn new_epoch(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.abandon_open();
+    }
+
+    /// Every gesture still open ends, unrecorded, whichever control opened it — the graph, the
+    /// keyboard or a shared control in the column: the patch it was editing is gone. Its
+    /// parameters wait for the editor to end them at the host, and what a control still sends for
+    /// one is dropped until it begins anew.
+    pub fn abandon_open(&mut self) {
+        let mut open = std::mem::take(&mut self.open_params);
+        open.sort_unstable();
+        open.dedup();
+        for index in open {
+            if !self.abandoned.contains(&index) {
+                self.abandoned.push(index);
+                self.to_end.push(index);
+            }
+        }
         self.open.clear();
-        self.open_params.clear();
+    }
+
+    /// The abandoned parameters still to end at the host, once each.
+    pub fn take_to_end(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.to_end)
+    }
+
+    fn is_abandoned(&self, index: usize) -> bool {
+        self.abandoned.contains(&index)
+    }
+
+    /// An abandoned parameter's own end arrived: the host had it already.
+    fn take_abandoned_end(&mut self, index: usize) -> bool {
+        let at = self
+            .abandoned
+            .iter()
+            .position(|&abandoned| abandoned == index);
+        if let Some(at) = at {
+            self.abandoned.remove(at);
+        }
+        at.is_some()
     }
 
     /// The host replaced the patch itself, unseen by this history: nothing sent before is pending
@@ -304,18 +367,27 @@ impl GuiContextInner for Recorder {
 
     unsafe fn raw_set_parameter_normalized(&self, param: ParamPtr, normalized: f32) {
         if let Some(index) = self.index(param) {
+            let mut history = lock(&self.history);
+            // An abandoned gesture's later writes would land on the patch that replaced it.
+            if history.is_abandoned(index) {
+                return;
+            }
             // SAFETY: as above.
             let readback = unsafe { param.unmodulated_normalized_value() };
-            lock(&self.history).set(index, normalized, readback);
+            history.set(index, normalized, readback);
         }
         // SAFETY: forwarded unchanged.
         unsafe { self.host.raw_set_parameter_normalized(param, normalized) };
     }
 
     unsafe fn raw_end_set_parameter(&self, param: ParamPtr) {
+        let index = self.index(param);
+        if index.is_some_and(|index| lock(&self.history).take_abandoned_end(index)) {
+            return;
+        }
         // SAFETY: forwarded unchanged.
         unsafe { self.host.raw_end_set_parameter(param) };
-        if let Some(index) = self.index(param) {
+        if let Some(index) = index {
             lock(&self.history).end(index);
         }
     }
@@ -332,7 +404,18 @@ impl GuiContextInner for Recorder {
     /// dirty.
     fn set_state(&self, state: PluginState) {
         if !state.params.is_empty() {
-            lock(&self.history).restored();
+            let ended = {
+                let mut history = lock(&self.history);
+                history.restored();
+                history.take_to_end()
+            };
+            let pointers = (self.pointers)();
+            for index in ended {
+                if let Some(ptr) = pointers.get(index) {
+                    // SAFETY: as above.
+                    unsafe { self.host.raw_end_set_parameter(*ptr) };
+                }
+            }
         }
         self.host.set_state(state);
     }
@@ -456,6 +539,40 @@ mod tests {
         history.end(0);
         assert!(history.observe_restores(1));
         assert_eq!(history.depth(), 0);
+    }
+
+    #[test]
+    fn a_gesture_open_across_an_epoch_is_abandoned_once() {
+        let mut history = History::default();
+        history.begin(3, 0.5);
+        history.set(3, 0.6, 0.5);
+        history.begin(3, 0.5);
+        history.new_epoch();
+        assert!(!history.gesture_open());
+        assert_eq!(history.take_to_end(), vec![3], "once, though begun twice");
+        assert!(history.take_to_end().is_empty());
+        assert!(history.is_abandoned(3));
+        assert!(
+            history.take_abandoned_end(3),
+            "its own end is the host's already"
+        );
+        assert!(!history.is_abandoned(3));
+        assert_eq!(history.depth(), 0, "nothing recorded");
+    }
+
+    #[test]
+    fn a_pending_value_reads_until_the_host_applies_it() {
+        let mut history = History::default();
+        history.set(1, 0.8, 0.2);
+        assert_eq!(history.pending(1, 0.2), 0.8, "not applied yet");
+        assert_eq!(history.pending(1, 0.8), 0.8, "applied");
+        assert_eq!(history.pending(1, 0.4), 0.4, "something else moved it");
+        assert_eq!(history.pending(2, 0.3), 0.3);
+        history.settle(|_| 0.2);
+        assert_eq!(history.pending(1, 0.2), 0.8, "still on its way");
+        // The host applied it, then automation put the old value back: that is not the edit.
+        history.settle(|_| 0.8);
+        assert_eq!(history.pending(1, 0.2), 0.2);
     }
 
     #[test]

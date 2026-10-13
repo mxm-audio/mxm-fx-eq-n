@@ -7,11 +7,30 @@ use mxm_keys::Job;
 use mxm_plugin_test::tree_checks;
 use std::sync::Mutex;
 
-/// A host that applies every write at once and keeps a record of the gestures.
+/// A host that keeps a record of the gestures and applies every write at once, or, `delayed`,
+/// only when told ([`Host::flush`]): a CLAP host changes a parameter only when nice-plug writes its
+/// queued event, at the end of a process cycle or a flush.
 #[derive(Default)]
 pub struct Host {
     pub log: Mutex<Vec<(char, ParamPtr)>>,
     pub states: Mutex<usize>,
+    pub delayed: std::sync::atomic::AtomicBool,
+    queued: Mutex<Vec<(ParamPtr, f32)>>,
+}
+
+impl Host {
+    pub fn delay(&self, delayed: bool) {
+        self.delayed
+            .store(delayed, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The host takes the queued writes.
+    pub fn flush(&self) {
+        for (param, normalized) in self.queued.lock().unwrap().drain(..) {
+            // SAFETY: the test owns the parameter for the whole call.
+            unsafe { param._internal_set_normalized_value(normalized) };
+        }
+    }
 }
 
 // SAFETY: the pointers are only compared, never dereferenced, outside the calls that hand them.
@@ -28,6 +47,10 @@ impl nice_plug::context::gui::GuiContextInner for Host {
     }
     unsafe fn raw_set_parameter_normalized(&self, param: ParamPtr, normalized: f32) {
         self.log.lock().unwrap().push(('s', param));
+        if self.delayed.load(std::sync::atomic::Ordering::Relaxed) {
+            self.queued.lock().unwrap().push((param, normalized));
+            return;
+        }
         // SAFETY: the test owns the parameter for the whole call.
         unsafe { param._internal_set_normalized_value(normalized) };
     }
@@ -703,6 +726,146 @@ fn a_reopened_window_paints_its_meter_from_silence() {
     assert_eq!(rig.app.meters.output, [0.0, 0.0]);
 }
 
+/// Until the host applies a write the parameter reads as before, so the editor chains on what it
+/// sent: an ADDed band stays selected, MOVE moves it from where it was made, DUPLICATE's first
+/// arrow carries the copy, two ADDs take two slots, and a drag from the line sets gain at once.
+#[test]
+fn the_editor_chains_on_what_it_sent_before_the_host_applies_it() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.host.delay(true);
+    rig.hold(&[COARSE], &[Key::ArrowRight]);
+    rig.type_keys(&[job_key(ADD)]);
+    assert_eq!(rig.band(0).shape, None, "the host has not applied it");
+    assert_eq!(rig.app.selected, Some(0), "still selected");
+    assert!((rig.app.band_now(0).freq - 2_000.0).abs() < 0.5);
+
+    rig.hold(&[MOVE], &[Key::ArrowRight]);
+    let moved = rig.app.band_now(0).freq;
+    assert!(
+        (moved / 2_000.0 - 2f32.powf(1.0 / 12.0)).abs() < 1e-3,
+        "{moved}"
+    );
+
+    rig.press(vec![
+        key(job_key(DUPLICATE), true, NONE),
+        key(Key::ArrowRight, true, NONE),
+        key(Key::ArrowRight, false, NONE),
+    ]);
+    rig.press(vec![
+        key(job_key(DUPLICATE), false, NONE),
+        key(job_key(OUT), true, NONE),
+        key(job_key(OUT), false, NONE),
+    ]);
+    rig.press(Vec::new());
+    let copy = rig.app.band_now(1);
+    assert_eq!(copy.shape, Some(Shape::Bell));
+    assert!(
+        (copy.freq / moved - 2f32.powf(1.0 / 12.0)).abs() < 1e-3,
+        "{}",
+        copy.freq
+    );
+    assert!(
+        (rig.app.band_now(0).freq - moved).abs() < 0.01,
+        "the original stays"
+    );
+
+    assert_eq!(rig.app.insert_at(300.0), Some(2));
+    assert_eq!(
+        rig.app.insert_at(400.0),
+        Some(3),
+        "a slot not yet applied is taken"
+    );
+
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let from = egui::pos2(axes.x(150.0), axes.y(0.0));
+    let to = egui::pos2(axes.x(150.0), axes.y(6.0));
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=4 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 4.0), None));
+    }
+    let made = rig.app.band_now(4);
+    assert_eq!(made.shape, Some(Shape::Bell));
+    assert!(
+        made.gain_db > 3.0,
+        "gain from the drag's first frames: {}",
+        made.gain_db
+    );
+    rig.press(pointer(to, Some(false)));
+
+    rig.host.flush();
+    rig.press(Vec::new());
+    assert_eq!(rig.band(1).shape, Some(Shape::Bell));
+    assert_eq!(rig.band(3).shape, Some(Shape::Bell));
+    assert!(rig.gestures_balanced());
+}
+
+/// A shared control's gesture is the history's too: a restore, or its band going Off, ends it at
+/// the host, and what the still-held control sends after is dropped.
+#[test]
+fn a_column_control_s_gesture_ends_with_a_restore_or_its_band() {
+    use nice_plug::params::persist::PersistentField;
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    let gui = rig.app.gui.clone().unwrap();
+    let setter = gui.param_setter();
+    let params = rig.app.params.clone();
+    let output = params.erased()[OUTPUT_INDEX];
+
+    // The Output control mid-drag, as the shared binding writes it; then the host restores.
+    output.begin(&setter);
+    output.set(&setter, 0.3);
+    PersistentField::set(&rig.app.params.view, ViewSettings::default());
+    rig.press(Vec::new());
+    assert!(rig.gestures_balanced(), "ended at the host");
+    let restored = output.normalised();
+    output.set(&setter, 0.9);
+    output.end(&setter);
+    assert_eq!(
+        output.normalised(),
+        restored,
+        "the held control's write is dropped"
+    );
+    assert!(rig.gestures_balanced());
+
+    // The band's frequency control mid-drag, and the band turned Off outside the editor.
+    rig.app.select(0);
+    let freq = params.erased()[band_index(0, Field::Freq)];
+    freq.begin(&setter);
+    freq.set(&setter, 0.7);
+    // SAFETY: the test owns the parameter for the whole call.
+    unsafe { rig.app.pointers[band_index(0, Field::Type)]._internal_set_normalized_value(0.0) };
+    rig.press(Vec::new());
+    assert!(rig.gestures_balanced());
+    freq.end(&setter);
+    assert!(rig.gestures_balanced());
+
+    // A new gesture on it is heard again.
+    output.begin(&setter);
+    output.set(&setter, 0.6);
+    output.end(&setter);
+    assert_eq!(output.normalised(), 0.6);
+    assert!(rig.gestures_balanced());
+}
+
+/// EXTENT is ← → on the graph: ↑ ↓ change nothing.
+#[test]
+fn vertical_extent_changes_nothing() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    let before = rig.band(0);
+    let depth = rig.depth();
+    rig.hold(&[EXTENT], &[Key::ArrowUp]);
+    rig.hold(&[EXTENT], &[Key::ArrowDown]);
+    assert_eq!(rig.band(0), before);
+    assert_eq!(rig.depth(), depth);
+}
+
 /// MOVE held and stepped once on band 1: a keyboard gesture left open.
 fn open_a_move(rig: &mut Rig) {
     rig.press(vec![
@@ -778,7 +941,7 @@ fn a_preset_load_during_a_gesture_ends_it_and_back_puts_nothing_back() {
     rig.app.start_replacing();
     let kind = band_index(2, Field::Type);
     rig.app.instant(&[(kind, rig.app.normalised(kind, 1.0))]);
-    rig.app.finish_replacing();
+    rig.app.finish_replacing(&rig.ctx.clone());
     assert!(rig.app.open.is_empty(), "the gesture ended");
 
     back_and_let_go(&mut rig);

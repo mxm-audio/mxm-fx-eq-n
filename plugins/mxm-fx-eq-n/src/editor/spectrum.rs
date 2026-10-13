@@ -57,12 +57,15 @@ struct Window {
     sums: [Vec<f64>; 2],
     /// Per stream, pre and post: whether its sums are current.
     analysed: [bool; 2],
+    /// One transform's power per bin, kept so a frame allocates nothing.
+    power: Vec<f64>,
     bin_hz: f32,
 }
 
 impl Window {
     fn new(planner: &mut Planner<f32>, len: usize, rate: f32, hop: usize) -> Self {
         let fft = planner.real(len);
+        let bins = fft.spectrum_len();
         // Hann.
         let window: Vec<f32> = (0..len)
             .map(|n| 0.5 - 0.5 * (std::f32::consts::TAU * n as f32 / len as f32).cos())
@@ -83,6 +86,7 @@ impl Window {
             window,
             scale: 4.0 / (len as f32 * energy),
             analysed: [false; 2],
+            power: vec![0.0; bins],
             bin_hz: rate / len as f32,
         }
     }
@@ -123,7 +127,7 @@ impl Window {
                 self.analysed[out] = false;
                 continue;
             }
-            let mut power = vec![0.0f64; self.output.len()];
+            self.power.fill(0.0);
             for channel in 0..channels {
                 let history = &self.history[first + channel];
                 for n in 0..self.len {
@@ -136,13 +140,13 @@ impl Window {
                 {
                     return;
                 }
-                for (bin, value) in power.iter_mut().zip(&self.output) {
+                for (bin, value) in self.power.iter_mut().zip(&self.output) {
                     *bin += f64::from(value.norm_sqr() * self.scale);
                 }
             }
             let sums = &mut self.sums[out];
             sums[0] = 0.0;
-            for (k, bin) in power.iter().enumerate() {
+            for (k, bin) in self.power.iter().enumerate() {
                 sums[k + 1] = sums[k] + bin / channels as f64;
             }
             self.analysed[out] = true;
@@ -707,6 +711,29 @@ mod tests {
         spectrum.analyse(&[1_000.0], 0.0, &post_only);
         assert_eq!(spectrum.pre_db[0], FLOOR_DB, "pre is never computed");
         assert!(spectrum.post_db[0] > -7.0);
+    }
+
+    #[test]
+    fn a_settled_frame_allocates_nothing() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let both = ViewSettings {
+            show: Show::Both,
+            resolution: Resolution::High,
+            ..flat()
+        };
+        spectrum.set_resolution(both.resolution);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        feed(&mut spectrum, &mut seq, 2.0, &mut |n| {
+            (std::f32::consts::TAU * 100.0 * n as f32 / rate).sin()
+        });
+        let freqs: Vec<f32> = (0..200).map(|k| 20.0 * 1.035f32.powi(k)).collect();
+        spectrum.analyse(&freqs, 0.0, &both);
+        // Enough new audio for both windows to transform again, then a frame.
+        feed(&mut spectrum, &mut seq, 1.5, &mut |n| {
+            (std::f32::consts::TAU * 100.0 * n as f32 / rate).sin()
+        });
+        nice_assert_no_alloc::assert_no_alloc(|| spectrum.analyse(&freqs, 1.0 / 60.0, &both));
     }
 
     #[test]

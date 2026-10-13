@@ -186,7 +186,7 @@ pub fn band_tree(app: &EqApp) -> Node<Leaf> {
     let shown = app
         .selected
         .and_then(|slot| {
-            let band = params.bands[slot].band();
+            let band = app.band_now(slot);
             band.shape
                 .map(|shape| band_body(params, slot, shape, band.slope))
         })
@@ -353,7 +353,7 @@ impl EqApp {
             }
             Leaf::Shape => {
                 if let Some(slot) = selected {
-                    let current = self.params.bands[slot].band().shape.unwrap_or(Shape::Bell);
+                    let current = self.band_now(slot).shape.unwrap_or(Shape::Bell);
                     let options = shapes();
                     let options: Vec<&str> = options.iter().map(String::as_str).collect();
                     let mut index = SHAPES
@@ -384,7 +384,7 @@ impl EqApp {
             }
             Leaf::Slope => {
                 if let Some(slot) = selected {
-                    let slope = self.params.bands[slot].band().slope;
+                    let slope = self.band_now(slot).slope;
                     let options = slopes();
                     let options: Vec<&str> = options.iter().map(String::as_str).collect();
                     let mut index = Slope::ALL
@@ -420,7 +420,7 @@ impl EqApp {
             }
             Leaf::Solo => {
                 if let Some(slot) = selected {
-                    let bypassed = self.params.bands[slot].bypass.value();
+                    let bypassed = self.band_now(slot).bypass;
                     let soloed = self.soloed() == Some(slot);
                     let text = match (bypassed, soloed) {
                         (true, _) => "Bypassed",

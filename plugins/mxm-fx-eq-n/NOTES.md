@@ -56,7 +56,8 @@ and `audition.rs`'s tests hold the lifecycle.
   peak max-combined and reset on read, a clip at 0 dBFS latched until acknowledged, a non-finite
   peak a clip and never a level. The shell publishes nothing with no editor connected. Opening
   the editor clears the meter as closing does: a block that read "connected" just before a close
-  can publish after it (`a_block_publishing_across_a_close_is_not_shown_on_reopening`).
+  can publish after it (`a_block_publishing_across_a_close_is_not_shown_on_reopening`). The peak
+  keeps a non-finite sample (`f32::max` would drop NaN), so broken output latches the clip.
 
 ## The editor in full
 
@@ -111,8 +112,21 @@ and `audition.rs`'s tests hold the lifecycle.
   Ctrl+Y, and the app bar's buttons. **Epochs**: whatever the preset bar writes (a load, Init) is a
   whole-patch replacement, and a host restore is counted by the view field's `set`; either clears
   the history, and **ends a gesture still open where the host has it, writing nothing**
-  (`abandon_gesture`), so BACK can put back nothing from before. A restore also forgets the values
-  sent that the host had not applied yet; a load's own writes replace theirs. The history is the instance's and survives the editor closing; it keeps 256 actions.
+  (`abandon_gesture`), so BACK can put back nothing from before. That is every gesture the
+  recorder saw begin, a shared column control's as well as the graph's and the keyboard's: each is
+  ended at the host once, egui's drag is stopped, and what the still-held control sends for it is
+  dropped until it begins anew (`History::abandon_open`). A band turned Off outside the editor does
+  the same for the gesture on it. A restore also forgets the values sent that the host had not
+  applied yet; a load's own writes replace theirs.
+
+  **What was sent is read back** (`normalised_now`, `band_now`). nice-plug's CLAP context changes a
+  parameter only when its queued event is written, at the end of a process cycle or a flush
+  (`nice-plug/src/wrapper/clap/context.rs`), so a parameter the editor just wrote reads as before
+  until then. Every editor read goes through the history's record of values sent and not yet
+  applied: an ADDed band stays selected and takes its slot, MOVE moves it from where it was made,
+  DUPLICATE's first arrow carries the copy. Each frame first retires a value whose readback has
+  moved (`History::settle`), so automation that puts a parameter back where it was is not taken for
+  the edit still on its way. The tests run this on a host that applies writes only when told. The history is the instance's and survives the editor closing; it keeps 256 actions.
 - **The analyser** (`editor/spectrum.rs`, on mxm-kit's `mxm-fft`, plan §4): band power over a twelfth
   of an octave per drawn point, averaged over the channels, so a full-scale sine reads 0 dB and
   noise reads alike whatever the window. A short window of about 85 ms at the full rate, and below
@@ -123,7 +137,8 @@ and `audition.rs`'s tests hold the lifecycle.
   Tilt, defaulting to 1.5 dB/octave, the research's corpus slope on a band-power display. They
   persist with the project, mark it dirty through a parameter-free GUI transaction, and are no
   preset's or undo's. With the analyser off nothing is copied or transformed, and coming back on
-  starts from silence. A stream Show reveals is analysed at once, without waiting for new audio.
+  starts from silence. A stream Show reveals is analysed at once, without waiting for new audio. A
+  settled frame allocates nothing (`a_settled_frame_allocates_nothing`).
 - **The analyser has a budget on the GUI thread**, `spectrum::BUDGET_MS` of a 60 Hz frame.
   Measured on the Threadripper 3970X in release (`analyser_cost`, 450 points): 0.05–0.11 ms at
   44.1 kHz, 0.07–0.16 ms at 48, 0.08–0.19 ms at 96 and 0.13–0.35 ms at 192, the long window adding

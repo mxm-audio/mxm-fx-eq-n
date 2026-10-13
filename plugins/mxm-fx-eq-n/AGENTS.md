@@ -94,7 +94,8 @@ transaction. The factory set is E4's.
   copied with the editor closed or the analyser off; `process` works in pieces of one block
   (`a_hosts_block_sizes_change_nothing`). The consumer goes to the editor once (`MxmFxEqN::editor`).
 - **Out meter** (`telemetry.rs`): mxm-kit's `PeakMeter` per channel, through the field; the shell
-  publishes nothing with no editor connected, and opening or closing the editor clears it.
+  publishes nothing with no editor connected, and opening or closing the editor clears it; a
+  non-finite sample reaches it and latches the clip.
 
 ## Activity and rates
 
@@ -121,8 +122,11 @@ transaction. The factory set is E4's.
   REMOVE and DELETE act on the bands, OUT keeps a gesture as one undo step and BACK reverts it.
 - **Solo is held**: the Hold button, Ctrl/Cmd on a point, or OPEN held on Hold.
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
-  preset bar writes and at a host restore, **each ending an open gesture where the host has it,
-  writing nothing**; the history is the instance's.
+  preset bar writes and at a host restore, **each ending every open gesture, a column control's
+  too, where the host has it, writing nothing**; the history is the instance's.
+- **The editor reads what it sent** (`normalised_now`, `band_now`): nice-plug changes a parameter
+  only when its queued event is written, so every chained edit, the drawing and the column read
+  the history's pending values until the host applies them.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; settings are view state (`view.rs`), persisted, dirty-only;
   within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).

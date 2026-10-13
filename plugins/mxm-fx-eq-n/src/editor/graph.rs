@@ -101,7 +101,7 @@ impl Curves {
         let sample_rate = app.sample_rate();
         let scale = app.params.gain_scale.value();
         let cascades = std::array::from_fn(|slot| {
-            let band = app.params.bands[slot].band();
+            let band = app.band_now(slot);
             let shape = band.shape.filter(|_| !band.bypass)?;
             Some(design(
                 Design {
@@ -179,7 +179,7 @@ pub fn format_freq(freq: f32) -> String {
 impl EqApp {
     /// A band as text: its shape, where it runs, and what it has of gain, Q and slope.
     pub(crate) fn point_text(&self, slot: usize) -> String {
-        let band = self.params.bands[slot].band();
+        let band = self.band_now(slot);
         let mut text = format!(
             "{}   {}",
             band.shape.map_or("", shape_name),
@@ -220,7 +220,7 @@ impl EqApp {
         (0..SLOTS)
             .filter(|&slot| self.band_in_use(slot))
             .map(|slot| {
-                let band = self.params.bands[slot].band();
+                let band = self.band_now(slot);
                 (slot, self.point_position(axes, &band))
             })
             .collect()
@@ -329,7 +329,7 @@ impl EqApp {
                 });
                 if let Some(slot) = slot {
                     self.select(slot);
-                    let band = self.params.bands[slot].band();
+                    let band = self.band_now(slot);
                     self.drag = Some(Drag {
                         slot,
                         pos: self.point_position(axes, &band),
@@ -348,7 +348,7 @@ impl EqApp {
             let freq_index = band_index(slot, Field::Freq);
             self.send(freq_index, self.normalised(freq_index, freq));
             self.focus_freq = freq;
-            let band = self.params.bands[slot].band();
+            let band = self.band_now(slot);
             let scale = self.params.gain_scale.value();
             if band.shape.is_some_and(Shape::has_gain) && scale > f32::EPSILON {
                 let range = GAIN_RANGE as f32;
@@ -404,7 +404,7 @@ impl EqApp {
         let Some(slot) = target.filter(|_| lines != 0.0) else {
             return;
         };
-        let band = self.params.bands[slot].band();
+        let band = self.band_now(slot);
         if !band.shape.is_some_and(|shape| shape.has_q(band.slope)) {
             return;
         }
@@ -426,7 +426,7 @@ impl EqApp {
             ui.close();
             return;
         };
-        let current = self.params.bands[slot].band().shape;
+        let current = self.band_now(slot).shape;
         ui.label(egui::RichText::new(format!("Band {}", slot + 1)).strong());
         for shape in Shape::ALL {
             if ui
@@ -550,7 +550,7 @@ impl EqApp {
 
         // The soloed band's region.
         if let Some(slot) = self.soloed().filter(|&slot| self.band_in_use(slot)) {
-            let band = self.params.bands[slot].band();
+            let band = self.band_now(slot);
             let freq = self.clamp_freq(band.freq);
             let (low, high) = match band.shape {
                 Some(Shape::LowCut | Shape::LowShelf) => (FREQ_MIN as f32, freq),
@@ -595,7 +595,7 @@ impl EqApp {
         if let (Some(edge), Some(slot)) = (self.edge, self.selected)
             && self.cursor_on_graph()
         {
-            let band = self.params.bands[slot].band();
+            let band = self.band_now(slot);
             if band.shape.is_some_and(|shape| shape.has_q(band.slope)) {
                 let ratio = edge_ratio(band.q);
                 let centre = self.clamp_freq(band.freq);
@@ -643,7 +643,7 @@ impl EqApp {
         // Points, numbered; a bypassed band hollow, the selected one ringed.
         let number_font = egui::FontId::proportional(11.0);
         for (slot, at) in self.positions(axes) {
-            let band = self.params.bands[slot].band();
+            let band = self.band_now(slot);
             if self.selected == Some(slot) {
                 painter.circle_stroke(
                     at,
