@@ -31,14 +31,13 @@ impl Default for Telemetry {
 }
 
 impl Telemetry {
-    /// The editor opening or closing. Closing clears the meter, so a reopened editor starts clean.
+    /// The editor opening or closing. Either clears the meter: a block that read "connected" just
+    /// before a close can still publish after it, and a reopened editor must not show that.
     pub fn connect(&self, connected: bool) {
         self.connected.store(connected, Ordering::Release);
-        if !connected {
-            for meter in &self.output {
-                let _ = meter.take();
-                meter.clear_clip();
-            }
+        for meter in &self.output {
+            let _ = meter.take();
+            meter.clear_clip();
         }
     }
 
@@ -77,6 +76,18 @@ mod tests {
         telemetry.output[1].publish(0.25);
         assert!(telemetry.output[0].clipped());
         telemetry.connect(false);
+        assert_eq!(telemetry.output.each_ref().map(PeakMeter::take), [0.0; 2]);
+        assert!(!telemetry.output[0].clipped());
+    }
+
+    #[test]
+    fn a_block_publishing_across_a_close_is_not_shown_on_reopening() {
+        let telemetry = Telemetry::default();
+        telemetry.connect(true);
+        telemetry.connect(false);
+        // The block read "connected" before the close and publishes after it.
+        telemetry.output[0].publish(1.5);
+        telemetry.connect(true);
         assert_eq!(telemetry.output.each_ref().map(PeakMeter::take), [0.0; 2]);
         assert!(!telemetry.output[0].clipped());
     }

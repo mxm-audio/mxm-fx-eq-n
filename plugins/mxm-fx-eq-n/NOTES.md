@@ -54,7 +54,9 @@ and `audition.rs`'s tests hold the lifecycle.
   `editor/spectrum.rs`, below.
 - **Out meter** (`telemetry.rs`): mxm-kit's `PeakMeter` per channel, the collection's one policy: a
   peak max-combined and reset on read, a clip at 0 dBFS latched until acknowledged, a non-finite
-  peak a clip and never a level. The shell publishes nothing with no editor connected.
+  peak a clip and never a level. The shell publishes nothing with no editor connected. Opening
+  the editor clears the meter as closing does: a block that read "connected" just before a close
+  can publish after it (`a_block_publishing_across_a_close_is_not_shown_on_reopening`).
 
 ## The editor in full
 
@@ -75,7 +77,7 @@ and `audition.rs`'s tests hold the lifecycle.
   gain** (Pro-Q's convention, the composite drawn separately); a gainless shape sits on 0 dB.
   Dragging sets frequency and gain as one gesture, Shift at a tenth of the speed. The wheel turns Q
   only over the selected point with the graph focused, or over any point with Alt, one gesture per
-  turn. A right-click opens the shapes and Delete. Identity never rests on hue: every point carries
+  turn, ended by a pause or a press. A right-click opens the shapes and Delete. Identity never rests on hue: every point carries
   its number, the selected one a ring, a bypassed one is hollow; pre is an outline and post a fill.
   Every point has an accessible name and text value.
 - **The keyboard is the collection's keyboard language** (mxm-kit's design system §11, engine
@@ -89,11 +91,13 @@ and `audition.rs`'s tests hold the lifecycle.
   EXTENT + ← → narrows or widens it (a share of Q's logarithmic travel); MICRO + ← → takes its start
   or end edge, which **MOVE then moves alone, the other edge staying put**, so a bell, notch or band
   pass moves its centre too (a shelf's or a cut's edge changes Q alone); DUPLICATE + arrows carries
-  a copy in the lowest Off slot where they go; ADD makes a 0 dB bell at the keyboard's place;
+  a copy in the lowest Off slot where they go (with none free, nothing moves); ADD makes a 0 dB
+  bell at the keyboard's place;
   REMOVE, DELETE and RIPPLE remove the band; BACK with nothing to cancel lets go of the edge, then
   of the band. A gesture is one undo step when OUT or the release keeps it, and BACK puts every
-  parameter it opened back. The keyboard's place is painted only once the keyboard is used
-  (`navigation::shown`).
+  parameter it opened back. A pointer press, or the cursor turning inert, ends a keyboard gesture,
+  kept, through the language's own interrupt. The keyboard's place is painted only once the
+  keyboard is used (`navigation::shown`).
 - **Solo is held, never latched**: from the press to the release of the Band card's Hold button, a
   Ctrl/Cmd press on a point, or OPEN (Enter) held with the cursor on Hold. A bypassed band, the tilt and an Off slot are
   refused, as the DSP refuses them; the editor ends solo when it closes.
@@ -104,7 +108,9 @@ and `audition.rs`'s tests hold the lifecycle.
   "before" values as one gesture, redo their "after" values: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or
   Ctrl+Y, and the app bar's buttons. **Epochs**: whatever the preset bar writes (a load, Init) is a
   whole-patch replacement, and a host restore is counted by the view field's `set`; either clears
-  the history. The history is the instance's and survives the editor closing; it keeps 256 actions.
+  the history, and **ends a gesture still open where the host has it, writing nothing**
+  (`abandon_gesture`), so BACK can put back nothing from before. A restore also forgets the values
+  sent that the host had not applied yet; a load's own writes replace theirs. The history is the instance's and survives the editor closing; it keeps 256 actions.
 - **The analyser** (`editor/spectrum.rs`, on mxm-kit's `mxm-fft`, plan §4): band power over a twelfth
   of an octave per drawn point, averaged over the channels, so a full-scale sine reads 0 dB and
   noise reads alike whatever the window. A short window of about 85 ms at the full rate, and below
@@ -114,7 +120,8 @@ and `audition.rs`'s tests hold the lifecycle.
   **Settings are view state** (`view.rs`): on/off, Show (pre, post, both), Resolution, Speed and
   Tilt, defaulting to 1.5 dB/octave, the research's corpus slope on a band-power display. They
   persist with the project, mark it dirty through a parameter-free GUI transaction, and are no
-  preset's or undo's. With the analyser off nothing is copied or transformed.
+  preset's or undo's. With the analyser off nothing is copied or transformed, and coming back on
+  starts from silence. A stream Show reveals is analysed at once, without waiting for new audio.
 - **The analyser has a budget on the GUI thread**, `spectrum::BUDGET_MS` of a 60 Hz frame.
   Measured on the Threadripper 3970X in release (`analyser_cost`, 450 points): 0.05–0.11 ms at
   44.1 kHz, 0.07–0.16 ms at 48, 0.08–0.19 ms at 96 and 0.13–0.35 ms at 192, the long window adding

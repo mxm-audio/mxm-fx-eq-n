@@ -27,6 +27,11 @@ impl EqApp {
         if (rate - self.spectrum.sample_rate()).abs() > 0.5 {
             self.spectrum = super::spectrum::Spectrum::new(rate);
         }
+        // Back on, it starts from silence: what was drawn before it went off is not what plays.
+        if settings.analyser && !self.analyser_on {
+            self.spectrum.restart();
+        }
+        self.analyser_on = settings.analyser;
         self.spectrum.set_resolution(settings.resolution);
         if let Some(consumer) = &mut self.analyser {
             while let Ok(block) = consumer.pop() {
@@ -58,7 +63,10 @@ impl EqApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
         let tokens = *mxm_ui::theme::tokens(&ctx);
 
-        history::lock(&self.history).observe_restores(self.params.view.restores());
+        let restored = history::lock(&self.history).observe_restores(self.params.view.restores());
+        if restored {
+            self.abandon_gesture();
+        }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
         self.drain_analyser(&settings);
@@ -70,10 +78,11 @@ impl EqApp {
             self.selected = None;
             self.edge = None;
         }
-        if self
-            .wheel_until
-            .is_some_and(|until| ctx.input(|input| input.time) > until)
-        {
+        // A pause in the wheel ends its gesture, and so does a press: a click on the preset bar must
+        // not land inside it. (A keyboard gesture the press ends through the language.)
+        if self.wheel_until.is_some_and(|until| {
+            ctx.input(|input| input.time > until || input.pointer.any_pressed())
+        }) {
             self.close_open();
         }
 
@@ -119,8 +128,7 @@ impl EqApp {
             tokens,
             |ui| {
                 if let Some(setter) = setter.as_ref() {
-                    // Whatever the preset bar writes replaces the patch: a new undo epoch.
-                    history::lock(&self.history).start_replacing();
+                    self.start_replacing();
                     mxm_preset::ui::preset_row(
                         ui,
                         tokens,
@@ -128,7 +136,7 @@ impl EqApp {
                         setter,
                         &mut self.presets,
                     );
-                    history::lock(&self.history).finish_replacing();
+                    self.finish_replacing();
                 }
                 undo = ui
                     .add_enabled(can_undo, egui::Button::new("Undo"))
@@ -151,9 +159,23 @@ impl EqApp {
             self.redo();
         }
         if let Some(setter) = setter.as_ref() {
-            history::lock(&self.history).start_replacing();
+            self.start_replacing();
             mxm_preset::ui::overlays(ui, tokens, self.params.as_ref(), setter, &mut self.presets);
-            history::lock(&self.history).finish_replacing();
+            self.finish_replacing();
+        }
+    }
+
+    /// Around the preset bar's calls: whatever it writes replaces the patch, a new undo epoch.
+    pub(crate) fn start_replacing(&self) {
+        history::lock(&self.history).start_replacing();
+    }
+
+    /// Ends [`start_replacing`](Self::start_replacing); a replacement ends any gesture still open,
+    /// as a host restore does.
+    pub(crate) fn finish_replacing(&mut self) {
+        let replaced = history::lock(&self.history).finish_replacing();
+        if replaced {
+            self.abandon_gesture();
         }
     }
 

@@ -55,7 +55,8 @@ struct Window {
     scratch: Vec<Complex<f32>>,
     /// Prefix sums of the power per bin, pre and post: `sums[s][k]` is bins `0..k`.
     sums: [Vec<f64>; 2],
-    analysed: bool,
+    /// Per stream, pre and post: whether its sums are current.
+    analysed: [bool; 2],
     bin_hz: f32,
 }
 
@@ -81,7 +82,7 @@ impl Window {
             fft,
             window,
             scale: 4.0 / (len as f32 * energy),
-            analysed: false,
+            analysed: [false; 2],
             bin_hz: rate / len as f32,
         }
     }
@@ -89,7 +90,7 @@ impl Window {
     fn restart(&mut self) {
         self.contiguous = 0;
         self.since = 0;
-        self.analysed = false;
+        self.analysed = [false; 2];
     }
 
     fn push(&mut self, frame: [f32; STREAMS]) {
@@ -105,18 +106,21 @@ impl Window {
         self.contiguous >= self.len
     }
 
-    /// Recomputes the power per bin of the shown streams, when enough is new.
+    /// Recomputes the power per bin of the shown streams, when enough is new, or at once for a
+    /// stream Show has just revealed. A hidden stream's sums fall behind, so it is not current.
     fn analyse(&mut self, channels: usize, show: Show) {
-        if !self.ready() || (self.analysed && self.since < self.hop) {
+        let shown = [
+            matches!(show, Show::Pre | Show::Both),
+            matches!(show, Show::Post | Show::Both),
+        ];
+        let revealed = (0..2).any(|out| shown[out] && !self.analysed[out]);
+        if !self.ready() || (!revealed && self.since < self.hop) {
             return;
         }
         self.since = 0;
-        self.analysed = true;
-        for (out, first, shown) in [
-            (0, 0, matches!(show, Show::Pre | Show::Both)),
-            (1, 2, matches!(show, Show::Post | Show::Both)),
-        ] {
-            if !shown {
+        for (out, first) in [(0, 0), (1, 2)] {
+            if !shown[out] {
+                self.analysed[out] = false;
                 continue;
             }
             let mut power = vec![0.0f64; self.output.len()];
@@ -141,6 +145,7 @@ impl Window {
             for (k, bin) in power.iter().enumerate() {
                 sums[k + 1] = sums[k] + bin / channels as f64;
             }
+            self.analysed[out] = true;
         }
     }
 
@@ -397,20 +402,16 @@ impl Spectrum {
         if let Some(long) = &mut self.long {
             long.window.analyse(self.channels, settings.show);
         }
-        let long = self
-            .long
-            .as_ref()
-            .map(|long| &long.window)
-            .filter(|window| window.analysed);
-        let short = self.short.analysed.then_some(&self.short);
+        let long = self.long.as_ref().map(|long| &long.window);
+        let short = &self.short;
         let half = 2f32.powf(BAND_OCTAVES / 2.0);
         let tilt = settings.tilt.db_per_octave();
         for (index, &freq) in self.freqs.iter().enumerate() {
-            let window = match long {
-                Some(long) if freq < CROSSOVER_HZ => Some(long),
-                _ => short,
-            };
             for (out, shown) in [(0, &mut self.pre_db), (1, &mut self.post_db)] {
+                let window = match long {
+                    Some(long) if freq < CROSSOVER_HZ && long.analysed[out] => Some(long),
+                    _ => Some(short).filter(|short| short.analysed[out]),
+                };
                 let current = &mut shown[index];
                 let reading = window.map(|window| {
                     let power = window.band(out, freq / half, freq * half);
@@ -706,5 +707,26 @@ mod tests {
         spectrum.analyse(&[1_000.0], 0.0, &post_only);
         assert_eq!(spectrum.pre_db[0], FLOOR_DB, "pre is never computed");
         assert!(spectrum.post_db[0] > -7.0);
+    }
+
+    #[test]
+    fn a_stream_show_reveals_is_drawn_without_new_audio() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        feed(&mut spectrum, &mut seq, 0.5, &mut |n| {
+            (std::f32::consts::TAU * 1_000.0 * n as f32 / rate).sin()
+        });
+        let post_only = ViewSettings {
+            show: Show::Post,
+            ..flat()
+        };
+        spectrum.analyse(&[1_000.0], 0.0, &post_only);
+        let pre_only = ViewSettings {
+            show: Show::Pre,
+            ..flat()
+        };
+        spectrum.analyse(&[1_000.0], 1.0 / 60.0, &pre_only);
+        assert!(spectrum.pre_db[0] > -7.0, "{}", spectrum.pre_db[0]);
     }
 }

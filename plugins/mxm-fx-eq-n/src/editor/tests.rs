@@ -547,6 +547,227 @@ fn a_restore_or_a_preset_load_starts_an_epoch() {
     assert_eq!(rig.depth(), 0);
 }
 
+/// MOVE held and stepped once on band 1: a keyboard gesture left open.
+fn open_a_move(rig: &mut Rig) {
+    rig.press(vec![
+        key(job_key(MOVE), true, NONE),
+        key(Key::ArrowRight, true, NONE),
+        key(Key::ArrowRight, false, NONE),
+    ]);
+    assert!(!rig.app.open.is_empty(), "the gesture is open");
+}
+
+/// BACK, then MOVE let go.
+fn back_and_let_go(rig: &mut Rig) {
+    rig.press(vec![
+        key(job_key(BACK), true, NONE),
+        key(job_key(BACK), false, NONE),
+    ]);
+    rig.press(vec![key(job_key(MOVE), false, NONE)]);
+    rig.press(Vec::new());
+}
+
+/// A host restore during a held gesture ends it, writing nothing: the next arrow starts from the
+/// restored value, and BACK puts back only what that new gesture changed.
+#[test]
+fn a_restore_during_a_gesture_ends_it_and_back_keeps_the_restored_patch() {
+    use nice_plug::params::persist::PersistentField;
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    open_a_move(&mut rig);
+
+    // The host restores a project with the band at 500 Hz.
+    let freq = band_index(0, Field::Freq);
+    let restored = rig.app.normalised(freq, 500.0);
+    // SAFETY: the test owns the parameter for the whole call.
+    unsafe { rig.app.pointers[freq]._internal_set_normalized_value(restored) };
+    PersistentField::set(&rig.app.params.view, ViewSettings::default());
+    rig.press(Vec::new());
+    assert!(rig.app.open.is_empty(), "the gesture ended");
+    assert!(rig.gestures_balanced());
+
+    rig.press(vec![
+        key(Key::ArrowRight, true, NONE),
+        key(Key::ArrowRight, false, NONE),
+    ]);
+    assert!(
+        (rig.band(0).freq / 500.0 - 2f32.powf(1.0 / 12.0)).abs() < 1e-3,
+        "from the restored value: {}",
+        rig.band(0).freq
+    );
+    back_and_let_go(&mut rig);
+    assert!(
+        (rig.band(0).freq - 500.0).abs() < 0.5,
+        "{}",
+        rig.band(0).freq
+    );
+    assert_eq!(rig.depth(), 0);
+    assert!(rig.gestures_balanced());
+}
+
+/// What the preset bar writes during a held gesture ends it as a restore does: BACK then has
+/// nothing from before the load to put back.
+#[test]
+fn a_preset_load_during_a_gesture_ends_it_and_back_puts_nothing_back() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    open_a_move(&mut rig);
+    let moved = rig.band(0).freq;
+
+    // The bar's write, as the bar's calls are wrapped.
+    rig.app.start_replacing();
+    let kind = band_index(2, Field::Type);
+    rig.app.instant(&[(kind, rig.app.normalised(kind, 1.0))]);
+    rig.app.finish_replacing();
+    assert!(rig.app.open.is_empty(), "the gesture ended");
+
+    back_and_let_go(&mut rig);
+    assert_eq!(rig.band(0).freq, moved);
+    assert_eq!(rig.band(2).shape, Some(Shape::Bell), "the load stands");
+    assert_eq!(rig.depth(), 0);
+    assert!(rig.gestures_balanced());
+}
+
+/// The pointer and the keyboard share no gesture: a press ends a held keyboard gesture, kept as
+/// one undo step, before the press reaches anything.
+#[test]
+fn a_pointer_press_ends_a_keyboard_gesture_and_keeps_it() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    let depth = rig.depth();
+    open_a_move(&mut rig);
+    let moved = rig.band(0).freq;
+
+    let corner = egui::pos2(2.0, 2.0);
+    rig.press(pointer(corner, Some(true)));
+    rig.press(pointer(corner, Some(false)));
+    assert!(rig.app.open.is_empty());
+    assert_eq!(rig.depth(), depth + 1, "kept, as one action");
+
+    back_and_let_go(&mut rig);
+    assert_eq!(rig.band(0).freq, moved, "BACK cancels nothing now");
+    assert!(rig.gestures_balanced());
+}
+
+/// A press ends a wheel gesture at once, kept, as a pause does.
+#[test]
+fn a_pointer_press_ends_a_wheel_gesture_and_keeps_it() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let point = egui::pos2(axes.x(rig.band(0).freq), axes.y(0.0));
+    let depth = rig.depth();
+    let q = rig.band(0).q;
+    rig.press(vec![
+        egui::Event::PointerMoved(point),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: NONE,
+        },
+    ]);
+    assert_ne!(rig.band(0).q, q, "the wheel turned Q");
+    assert!(!rig.app.open.is_empty(), "inside the wheel's pause");
+
+    let corner = egui::pos2(2.0, 2.0);
+    rig.press(pointer(corner, Some(true)));
+    assert!(rig.app.open.is_empty());
+    rig.press(pointer(corner, Some(false)));
+    assert_eq!(rig.depth(), depth + 1, "kept, as one action");
+    assert!(rig.gestures_balanced());
+}
+
+/// With every slot in use DUPLICATE has nowhere to put a copy, and moves nothing either.
+#[test]
+fn duplicate_with_every_slot_in_use_changes_nothing() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    for slot in 0..SLOTS {
+        rig.app.insert_at(50.0 * 1.25f32.powi(slot as i32));
+    }
+    rig.press(Vec::new());
+    rig.app.select(0);
+    let before = rig.band(0);
+    let depth = rig.depth();
+    for arrow in [Key::ArrowRight, Key::ArrowUp] {
+        rig.press(vec![
+            key(job_key(DUPLICATE), true, NONE),
+            key(arrow, true, NONE),
+            key(arrow, false, NONE),
+        ]);
+        rig.press(vec![
+            key(job_key(DUPLICATE), false, NONE),
+            key(job_key(OUT), true, NONE),
+            key(job_key(OUT), false, NONE),
+        ]);
+        rig.press(Vec::new());
+    }
+    assert_eq!(rig.band(0), before);
+    assert_eq!(rig.depth(), depth);
+    assert!(rig.gestures_balanced());
+}
+
+/// The analyser coming back on starts from silence: nothing drawn before it went off stays.
+#[test]
+fn the_analyser_coming_back_on_starts_from_silence() {
+    use super::spectrum::FLOOR_DB;
+    use crate::analyser::{BLOCK_FRAMES, Block};
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let rate = rig.app.spectrum.sample_rate();
+    for seq in 0..(rate as usize / 2 / BLOCK_FRAMES) as u64 {
+        let mut block = Block {
+            seq,
+            generation: 0,
+            sample_rate: rate,
+            channels: 2,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for frame in 0..BLOCK_FRAMES {
+            let n = seq as usize * BLOCK_FRAMES + frame;
+            let value = (std::f32::consts::TAU * 1_000.0 * n as f32 / rate).sin();
+            for channel in 0..2 {
+                block.pre[channel][frame] = value;
+                block.post[channel][frame] = value;
+            }
+        }
+        rig.app.spectrum.ingest(&block);
+    }
+    rig.press(Vec::new());
+    assert!(
+        rig.app
+            .spectrum
+            .post_db
+            .iter()
+            .any(|db| *db > FLOOR_DB + 20.0),
+        "drawn while on"
+    );
+
+    let on = rig.app.params.view.get();
+    rig.app.set_view(ViewSettings {
+        analyser: false,
+        ..on
+    });
+    rig.press(Vec::new());
+    rig.app.set_view(on);
+    rig.press(Vec::new());
+    assert!(
+        rig.app.spectrum.post_db.iter().all(|db| *db <= FLOOR_DB),
+        "nothing has played since it came back on"
+    );
+}
+
 #[test]
 fn solo_is_held_never_latched_refused_where_nothing_is_heard_and_ends_on_close() {
     let mut rig = Rig::new();

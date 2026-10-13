@@ -150,6 +150,14 @@ impl History {
         self.open_params.clear();
     }
 
+    /// The host replaced the patch itself, unseen by this history: nothing sent before is pending
+    /// any more. (A preset load's writes pass through [`set`](Self::set), each replacing its
+    /// parameter's entry, so its own values stay pending.)
+    fn restored(&mut self) {
+        self.new_epoch();
+        self.sent.clear();
+    }
+
     /// Around the preset bar's own calls, whose writes are whole-patch replacements.
     pub fn start_replacing(&mut self) {
         self.replacing = true;
@@ -171,7 +179,7 @@ impl History {
         let seen = self.restores.replace(restores);
         let restored = seen.is_some_and(|seen| seen != restores);
         if restored {
-            self.new_epoch();
+            self.restored();
         }
         restored
     }
@@ -324,7 +332,7 @@ impl GuiContextInner for Recorder {
     /// dirty.
     fn set_state(&self, state: PluginState) {
         if !state.params.is_empty() {
-            lock(&self.history).new_epoch();
+            lock(&self.history).restored();
         }
         self.host.set_state(state);
     }
@@ -448,5 +456,36 @@ mod tests {
         history.end(0);
         assert!(history.observe_restores(1));
         assert_eq!(history.depth(), 0);
+    }
+
+    #[test]
+    fn a_restore_forgets_what_was_sent_before_it_and_a_load_keeps_its_own() {
+        // An edit to 0.6 the host has not applied, then a restore that leaves 0.5.
+        let mut history = History::default();
+        history.observe_restores(0);
+        history.begin(2, 0.5);
+        history.set(2, 0.6, 0.5);
+        history.end(2);
+        assert!(history.observe_restores(1));
+        history.begin(2, 0.5);
+        history.set(2, 0.7, 0.5);
+        history.end(2);
+        assert_eq!(
+            history.take_undo(),
+            Some(vec![(2, 0.5)]),
+            "back to what the restore left, not the edit before it"
+        );
+
+        // A load the host has not applied yet: the next gesture starts from the load's value.
+        let mut history = History::default();
+        history.start_replacing();
+        history.begin(5, 0.0);
+        history.set(5, 0.3, 0.0);
+        history.end(5);
+        assert!(history.finish_replacing());
+        history.begin(5, 0.0);
+        history.set(5, 0.4, 0.0);
+        history.end(5);
+        assert_eq!(history.take_undo(), Some(vec![(5, 0.3)]));
     }
 }

@@ -182,6 +182,8 @@ pub struct EqApp {
     /// The shell ended a solo while a press held it: that press may not bring it back.
     solo_blocked: bool,
     pub(crate) spectrum: spectrum::Spectrum,
+    /// The analyser's switch last frame: coming back on starts the spectrum from silence.
+    analyser_on: bool,
     pub(crate) text: HashMap<&'static str, Option<String>>,
     pub(crate) presets: mxm_preset::PresetUi,
     pub(crate) meters: column::MeterDisplay,
@@ -222,6 +224,7 @@ impl EqApp {
             solo_endings: 0,
             solo_blocked: false,
             spectrum,
+            analyser_on: false,
             text: HashMap::new(),
             presets,
             meters: column::MeterDisplay::default(),
@@ -626,6 +629,15 @@ impl EqApp {
         }
     }
 
+    /// The patch was replaced under the editor — a host restore, a preset load — while a gesture
+    /// may be open: it ends where the host now has it, writing nothing, so BACK cannot put back a
+    /// value from before. The drag and the copy end with it.
+    pub(crate) fn abandon_gesture(&mut self) {
+        self.close_open();
+        self.copy = None;
+        self.drag = None;
+    }
+
     /// The gesture is over: kept as one undo step, or put back.
     fn end_gesture(&mut self, keep: bool) {
         if keep {
@@ -733,8 +745,9 @@ impl EqApp {
 
     /// One arrow of a verb's gesture on the selected band.
     fn step(&mut self, verb: Verb, step: Size, direction: Direction) {
-        if verb == Verb::Duplicate && self.copy.is_none() {
-            self.start_copy();
+        // A copy that cannot be made, with every slot in use, moves nothing either.
+        if verb == Verb::Duplicate && self.copy.is_none() && !self.start_copy() {
+            return;
         }
         let Some(slot) = self.selected else {
             // No band: MOVE walks the keyboard's place along the line.
@@ -826,13 +839,13 @@ impl EqApp {
 
     /// DUPLICATE's first arrow: the selected band, copied into the lowest Off slot inside the
     /// gesture, and the copy selected so the arrows take it. Its end keeps the copy; BACK takes it
-    /// away again.
-    fn start_copy(&mut self) {
+    /// away again. Whether a copy was made.
+    fn start_copy(&mut self) -> bool {
         let Some(original) = self.selected else {
-            return;
+            return false;
         };
         let Some(slot) = self.free_slot() else {
-            return;
+            return false;
         };
         let band = self.params.bands[original].band();
         self.close_open();
@@ -842,6 +855,7 @@ impl EqApp {
         self.copy = Some((slot, original));
         self.selected = Some(slot);
         self.edge = None;
+        true
     }
 
     /// The analyser's settings change: saved with the project, which is marked dirty.
