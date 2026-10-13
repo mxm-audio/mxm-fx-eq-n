@@ -499,8 +499,8 @@ and a cut's.
 | `plugins/AGENTS.md` | The plugin table and child index. The side-column exception is recorded beside `mxm-fx-curve`'s, and the keyboard exception |
 | mxm-kit `docs/MXM_DESIGN_SYSTEM.md` §11, `docs/plugin-conventions.md` | An editor's own view of items joins the cursor as a surface; the EQ's row, its Init exception and its layout exception |
 | `docs/briefs/mxm-fx-eq-n.md` | New: the E0 brief |
-| mxm-kit `crates/ui` | `navigation::surface` and `surface_outputs`, the sheet naming a surface's jobs (branch `feat/eq-n`) |
-| mxm-kit `crates/mxm-fft` | New and shared (branch `feat/eq-n`); this plugin's editor is its first consumer |
+| mxm-kit `crates/ui` | `navigation::surface` and `surface_outputs`, the sheet naming a surface's jobs (on main since `69083b4`) |
+| mxm-kit `crates/mxm-fft` | New and shared (on main since `69083b4`); this plugin's editor is its first consumer |
 | `crates/mxm-preset` | Nothing: undo records at the editor's own host context (§5.4, E3) |
 | `vendor/nice-plug` | Nothing in v1. F6 makes the collection's first latency report: `set_latency_samples` and `request_restart` exist, but the player's headless restart path is untested (`plugins/mxm-mono-00/AGENTS.md`) |
 | The workspace | `repos.txt` gains the repository once the owner creates it on GitHub |
