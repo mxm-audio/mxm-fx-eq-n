@@ -12,6 +12,7 @@ pub use mxm_preset::{Category, Preset, PresetIdentity};
 
 use crate::params::{
     DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, band_ids, dynamics_ids, is_dynamics_id,
+    is_key_id, key_ids,
 };
 
 impl mxm_preset::Instrument for EqParams {
@@ -20,7 +21,7 @@ impl mxm_preset::Instrument for EqParams {
     }
 
     fn parameters(&self) -> Vec<(&'static str, &dyn mxm_params::ErasedParam)> {
-        let mut out = Vec::with_capacity(SLOTS * (6 + DYNAMICS_FIELDS.len()) + GLOBAL_IDS.len());
+        let mut out = Vec::with_capacity(crate::params::PARAMETERS);
         for (slot, band) in self.bands.iter().enumerate() {
             out.extend(band_ids(slot).iter().copied().zip(band.parameters()));
         }
@@ -34,13 +35,17 @@ impl mxm_preset::Instrument for EqParams {
                     .zip(dynamics.parameters()),
             );
         }
+        for (id, key) in key_ids().iter().zip(&self.keys) {
+            out.push((*id, &key.side_chain as &dyn mxm_params::ErasedParam));
+        }
         out
     }
 
     /// **F1's dynamics are older presets' defaults** (plan §7.1): a preset written before them
     /// leaves every band static, not keeping a Range the instance had.
+    /// The side-chain switches too (plan §7.2): an older preset leaves every band on its own input.
     fn default_missing_legacy_parameter(&self, id: &str) -> bool {
-        is_dynamics_id(id)
+        is_dynamics_id(id) || is_key_id(id)
     }
 
     fn identity(&self) -> &RwLock<PresetIdentity> {
@@ -516,7 +521,7 @@ mod tests {
                 Preset::parse(text, crate::CLAP_ID).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             assert_eq!(&preset.name, name);
             assert_ne!(preset.category, Category::Uncategorised, "{name}");
-            assert_eq!(preset.params.len(), 242, "{name}");
+            assert_eq!(preset.params.len(), crate::params::PARAMETERS, "{name}");
             assert!(preset.resolve(&params).1.is_empty(), "{name} is incomplete");
             assert!(
                 preset.state.is_none(),
@@ -626,7 +631,7 @@ mod tests {
     fn every_host_parameter_is_declared_once_under_its_own_id() {
         let params = EqParams::default();
         let declared = params.parameters();
-        assert_eq!(declared.len(), 242);
+        assert_eq!(declared.len(), crate::params::PARAMETERS);
         let host: Vec<String> = params
             .param_map()
             .into_iter()
@@ -662,7 +667,7 @@ mod tests {
     fn the_init_preset_is_the_parameter_defaults_and_the_empty_eq() {
         let params = EqParams::default();
         let init = Preset::init(&params);
-        assert_eq!(init.params.len(), 242);
+        assert_eq!(init.params.len(), crate::params::PARAMETERS);
         for (id, param) in params.parameters() {
             assert_eq!(
                 init.params[id].v,
@@ -699,7 +704,9 @@ mod dynamics_migration {
     fn an_older_preset_leaves_every_band_static() {
         let params = EqParams::default();
         let mut older = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        older.params.retain(|id, _| !is_dynamics_id(id));
+        older
+            .params
+            .retain(|id, _| !is_dynamics_id(id) && !is_key_id(id));
         assert_eq!(older.params.len(), 146);
         let (writes, problems) = older.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -715,6 +722,18 @@ mod dynamics_migration {
                 .count(),
             SLOTS * DYNAMICS_FIELDS.len()
         );
+        // And one from F1, before the side chain: every band on its own input.
+        let mut f1 = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
+        f1.params.retain(|id, _| !is_key_id(id));
+        assert_eq!(f1.params.len(), 242);
+        let (writes, problems) = f1.resolve(&params);
+        assert!(problems.is_empty(), "{problems:?}");
+        let keys: Vec<f32> = writes
+            .iter()
+            .filter(|(id, _, _)| is_key_id(id))
+            .map(|(_, _, v)| *v)
+            .collect();
+        assert_eq!(keys, vec![0.0; SLOTS]);
     }
 
     /// **A host state from before F1 restores every band static, and its preset stays clean**
@@ -728,7 +747,7 @@ mod dynamics_migration {
             .parameters()
             .into_iter()
             .map(|(id, _)| id)
-            .filter(|id| !is_dynamics_id(id))
+            .filter(|id| !is_dynamics_id(id) && !is_key_id(id))
             .collect();
         let identity = PresetIdentity {
             loaded: Some(LoadedPreset {
@@ -749,8 +768,10 @@ mod dynamics_migration {
                 .into_iter()
                 .collect(),
         };
-        add_dynamics_at_defaults(&mut state);
-        assert_eq!(state.params.len(), 242);
+        // The plugin's own filter: the dynamics, then the side-chain switches Off.
+        <crate::MxmFxEqN as nice_plug::prelude::Plugin>::filter_state(&mut state);
+        assert_eq!(state.params.len(), crate::params::PARAMETERS);
+        assert!(matches!(state.params["key_24"], ParamValue::Bool(false)));
         assert!(matches!(state.params["range_1"], ParamValue::F32(v) if v == 0.0));
         assert!(matches!(state.params["release_24"], ParamValue::F32(v) if v == 150.0));
         assert!(
@@ -758,7 +779,8 @@ mod dynamics_migration {
             "a value the state holds is kept"
         );
         let migrated: PresetIdentity = deserialize_field(&state.fields["preset"]).unwrap();
-        assert_eq!(migrated.baseline.len(), 242);
+        assert_eq!(migrated.baseline.len(), crate::params::PARAMETERS);
+        assert_eq!(migrated.baseline["key_1"], 0.0);
         assert_eq!(
             migrated.baseline["range_1"],
             nice_plug::params::Param::default_normalized_value(&params.dynamics[0].range)

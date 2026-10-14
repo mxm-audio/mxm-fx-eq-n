@@ -102,6 +102,12 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
 - **A band that listens never parks**: Range or a moving part not 0, and the gain scale not 0 %;
   otherwise it parks and re-enters as v1 bands do.
 - **Activity**: a moving part keeps `is_ringing` true, so a host's sleep starts from rest.
+- **The side chain** (plan §7.2): `process_stereo_keyed` and `process_mono_keyed` take the key, and
+  `set_side_chain` points a slot's detector at it; the old calls pass none, and a keyed band with no
+  key hears silence. A switch starts the detector fresh, never steps the gain. The key is read only
+  while something hears it, so with no band keyed the output is F1's, bit for bit; while it is read
+  it counts as input, so a key over a silent input ends no tail. Solo plays what its band listens
+  to; a source switch fades the audition out and back in on the new source, as a shape change does.
 
 ## Numeric and realtime contracts — [NOTES.md § Reasons](NOTES.md#the-numeric-contracts-reasons)
 

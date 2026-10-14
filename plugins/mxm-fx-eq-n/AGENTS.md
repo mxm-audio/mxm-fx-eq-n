@@ -10,7 +10,8 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 [`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E4**: the host
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
-and two presets (F1.1–F1.4). DAW and listening checks are E5's and F1.5's.
+and two presets (F1.1–F1.4), and their side chain (plan §7.2). DAW and listening checks are E5's,
+F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -34,9 +35,11 @@ and two presets (F1.1–F1.4). DAW and listening checks are E5's and F1.5's.
 
 - **`mxm-fx-eq-n`, CLAP id `dk.mxm.mxm-fx-eq-n`**, from `plugin_name!` and `bundler.toml`. The
   `-n` is descriptive (*n* bands), not a box number (root `AGENTS.md`, *Naming*).
-- **Layouts:** stereo→stereo and mono→mono, the two channels processed identically (brief A1).
-  No note port, so no developer channel (`plugins/AGENTS.md`, *A developer channel*).
-- **242 permanent parameters** (`params.rs`):
+- **Layouts** (brief A1; plan §7.2), four and their order permanent, a configuration's id being
+  its index: stereo and mono each with a **"Side chain"** input of the main's channel count, then
+  plain stereo and mono, which MXM Player selects. The two channels are processed identically. No
+  note port, so no developer channel (`plugins/AGENTS.md`, *A developer channel*).
+- **266 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
@@ -44,13 +47,15 @@ and two presets (F1.1–F1.4). DAW and listening checks are E5's and F1.5's.
   - `gainscale`, 0–200 %;
   - F1's dynamics, four per slot after the globals (plan §7.1): `range_<n>`, `threshold_<n>`,
     `attack_<n>` and `release_<n>`, named "Band 7 range" and grouped with their slot; their place
-    in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved.
+    in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved;
+  - the side-chain switches after them (plan §7.2), `key_1` … `key_24`, "Band 7 side chain", from
+    `params::KEY_BASE`.
 
-  `the_ids_are_complete_unique_permanent_and_242` holds them.
-- **A state or preset from before F1 leaves every band static**: a preset through
-  `default_missing_legacy_parameter`, a host state through `filter_state`
-  (`preset::add_dynamics_at_defaults`), which also extends a loaded preset's baseline so it stays
-  clean.
+  `the_ids_are_complete_unique_permanent_and_266` holds them.
+- **A state or preset from before F1 or §7.2 leaves every band static, on its own input**: a preset
+  through `default_missing_legacy_parameter`, a host state through `filter_state`
+  (`preset::add_dynamics_at_defaults`, then mxm-kit's `add_switches_off` for the keys), which also
+  extend a loaded preset's baseline so it stays clean.
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
   and a preset's band 3 is slot 3. No ownership state exists.
 
@@ -151,21 +156,20 @@ transaction.
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
   too, where the host has it, writing nothing**; the history is the instance's.
-- **The editor reads what it sent** (`normalised_now`, `band_now`): nice-plug changes a parameter
-  only when its queued event is written, so the editor's own reads — the graph, the keyboard's
-  edits and the column's own decisions (its menus, Solo) — take the history's pending values until
-  the host applies them. The column's shared controls read the parameter itself, mxm-kit's binding
-  as everywhere ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*; plan §7).
+- **The editor reads what it sent** (`normalised_now`, `band_now`, `dynamics_now`, `key_now`): its
+  own reads take the history's pending values until the host applies them; the column's shared
+  controls read the parameter itself ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*).
 - **Dynamic bands** (plan §7.1): a bell or shelf's Band card has Range, Threshold, Attack and
   Release on the shared binding and a meter of how far it moves now; the graph rings a dynamic
   band's point, draws a line to where its Range would take it, and, while a band moves, the curve
   as heard over the drawn one, faint. Both read `Telemetry::gains`, published only with an editor
-  connected. A new band writes static dynamics into its slot; a copy takes the original's.
+  connected. A new band writes static dynamics and an Off side chain into its slot; a copy takes
+  the original's. The **Side chain** toggle (plan §7.2) sits in the group; a keyed band's ring is
+  dashed, and its solo's hover says it plays the side chain.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
   falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
-  persisted, dirty-only;
-  within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).
+  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).
 
 ## The host tests (`host-tests/`)
 
@@ -174,14 +178,9 @@ transaction.
 - They hold the bundle's boundary (plan §8): discovered as an effect with no map, the editor
   offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
   ringing down to exact silence, a dynamic band cutting the loud note, a state from before F1
-  restored static through the wrapper's own `filter_state`, and the player's bypass bit-exact dry.
-- **They read `target/bundled/`, this repository's own**: with a shared `CARGO_TARGET_DIR` the
-  bundle lands in that target's `bundled/` and must be copied here first.
-
-## Not here, by plan
-
-- **No control map** (plan §6): no collection role fits on-demand bands, and a map is optional.
-- **DAW and listening checks** are E5's.
+  restored static through the wrapper's own `filter_state`, the EQ on the plain stereo
+  configuration, and the player's bypass bit-exact dry. They read this repository's own
+  `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle there first).
 
 # Work Guidance
 
@@ -200,10 +199,8 @@ cargo xtask fetch
 cargo test -p mxm-fx-eq-n-host-tests
 ```
 
-The validator's random parameter fuzz once found a subnormal output, now flushed in the DSP. The
-analyser's cost: `cargo test -p mxm-fx-eq-n --release --lib analyser_cost -- --ignored --nocapture`.
-The pictures: `cargo test -p mxm-fx-eq-n --lib pictures`, into `target/layout-tree/mxm-fx-eq-n/`.
-The factory set: `cargo test -p mxm-fx-eq-n --lib write_the_factory_presets -- --ignored`.
+The analyser's cost, the pictures and the factory set's generator: [NOTES.md § The slower
+checks](NOTES.md#the-slower-checks).
 
 # Child DOX Index
 

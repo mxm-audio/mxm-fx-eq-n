@@ -3,7 +3,7 @@
 **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
-(2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done, SC.1–SC.3 in progress. **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
+(2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), in code review. **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
 all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built; F1.2–F1.4, the shell, the editor and the two presets, built; their code review approved in round 3 (2026-10-14: 6 findings over two rounds, all accepted). F1.5, the owner's listening and DAW checks, is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP

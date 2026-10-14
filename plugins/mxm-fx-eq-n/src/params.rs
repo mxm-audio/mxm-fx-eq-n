@@ -1,10 +1,12 @@
 //! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
-//! **Twenty-four band slots, two globals and each slot's dynamics, 242 parameters.** The slots are
+//! **Twenty-four band slots, two globals, each slot's dynamics and side-chain switch, 266
+//! parameters.** The slots are
 //! nested, so their ids are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`,
 //! `slope_1`, through `slope_24`. The globals are `output` and `gainscale`. F1's dynamics (plan
 //! §7.1) come after them, four per slot: `range_1`, `threshold_1`, `attack_1`, `release_1`, through
-//! `release_24`, so no v1 id moved. Every id is permanent. A host keeps its parameter names from
+//! `release_24`, so no v1 id moved, and the side-chain switches after those (plan §7.2), `key_1`
+//! through `key_24`. Every id is permanent. A host keeps its parameter names from
 //! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
 //! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
@@ -63,6 +65,13 @@ pub const DYNAMICS_FIELDS: [&str; 4] = ["range", "threshold", "attack", "release
 
 /// Where the dynamics start in [`EqParams::erased`]'s order: after every slot and the globals.
 pub const DYNAMICS_BASE: usize = SLOTS * BAND_FIELDS.len() + GLOBAL_IDS.len();
+
+/// Where the side-chain switches start in [`EqParams::erased`]'s order, one per slot: after the
+/// dynamics (plan §7.2).
+pub const KEY_BASE: usize = DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len();
+
+/// Every host parameter.
+pub const PARAMETERS: usize = KEY_BASE + SLOTS;
 
 /// The shape at a type value, or none for Off and for an unassigned value.
 pub fn shape_of(value: i32) -> Option<Shape> {
@@ -293,6 +302,22 @@ impl DynamicsParams {
     }
 }
 
+/// One slot's side-chain switch (plan §7.2): Off, the band's dynamics hear its own input; On, the
+/// side-chain input.
+#[derive(Params)]
+pub struct KeyParams {
+    #[id = "key"]
+    pub side_chain: BoolParam,
+}
+
+impl KeyParams {
+    pub(crate) fn new(index: usize) -> Self {
+        Self {
+            side_chain: BoolParam::new(format!("Band {} side chain", index + 1), false),
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct EqParams {
     #[nested(array, group = "Band")]
@@ -307,6 +332,9 @@ pub struct EqParams {
     /// slots ("Band 7") in a host.
     #[nested(array, group = "Band")]
     pub dynamics: [DynamicsParams; SLOTS],
+    /// The side-chain switches, after the dynamics so that nothing moved (plan §7.2).
+    #[nested(array, group = "Band")]
+    pub keys: [KeyParams; SLOTS],
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
@@ -345,6 +373,7 @@ impl Default for EqParams {
             .with_value_to_string(formatters::v2s_f32_percentage(1))
             .with_string_to_value(formatters::s2v_f32_percentage()),
             dynamics: std::array::from_fn(DynamicsParams::new),
+            keys: std::array::from_fn(KeyParams::new),
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
         }
@@ -354,10 +383,10 @@ impl Default for EqParams {
 impl EqParams {
     /// Every host parameter, in the order the undo history's indices name them: each slot's
     /// fields in [`BAND_FIELDS`] order, slot by slot, then [`GLOBAL_IDS`], then each slot's
-    /// dynamics in [`DYNAMICS_FIELDS`] order from [`DYNAMICS_BASE`].
+    /// dynamics in [`DYNAMICS_FIELDS`] order from [`DYNAMICS_BASE`], then each slot's side-chain
+    /// switch from [`KEY_BASE`].
     pub fn erased(&self) -> Vec<&dyn mxm_params::ErasedParam> {
-        let mut all: Vec<&dyn mxm_params::ErasedParam> =
-            Vec::with_capacity(DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len());
+        let mut all: Vec<&dyn mxm_params::ErasedParam> = Vec::with_capacity(PARAMETERS);
         for band in &self.bands {
             all.extend(band.parameters());
         }
@@ -365,6 +394,9 @@ impl EqParams {
         all.push(&self.gain_scale);
         for dynamics in &self.dynamics {
             all.extend(dynamics.parameters());
+        }
+        for key in &self.keys {
+            all.push(&key.side_chain);
         }
         all
     }
@@ -380,16 +412,17 @@ impl EqParams {
             }
             index if index == SLOTS * FIELDS => &self.output,
             index if index < DYNAMICS_BASE => &self.gain_scale,
-            index => {
-                let at = (index - DYNAMICS_BASE).min(SLOTS * DYNAMICS - 1);
+            index if index < KEY_BASE => {
+                let at = index - DYNAMICS_BASE;
                 self.dynamics[at / DYNAMICS].parameters()[at % DYNAMICS]
             }
+            index => &self.keys[(index - KEY_BASE).min(SLOTS - 1)].side_chain,
         }
     }
 
     /// [`erased`](Self::erased)'s parameters as nice-plug's pointers.
     pub fn pointers(&self) -> Vec<nice_plug::params::internals::ParamPtr> {
-        let mut all = Vec::with_capacity(DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len());
+        let mut all = Vec::with_capacity(PARAMETERS);
         for band in &self.bands {
             all.extend([
                 band.kind.as_ptr(),
@@ -409,6 +442,9 @@ impl EqParams {
                 dynamics.attack.as_ptr(),
                 dynamics.release.as_ptr(),
             ]);
+        }
+        for key in &self.keys {
+            all.push(key.side_chain.as_ptr());
         }
         all
     }
@@ -441,6 +477,21 @@ pub fn dynamics_ids(slot: usize) -> &'static [&'static str; 4] {
 /// Whether `id` is one of F1's dynamics ids, which an older preset or state does not hold.
 pub fn is_dynamics_id(id: &str) -> bool {
     DYNAMICS_IDS.iter().any(|ids| ids.contains(&id))
+}
+
+/// Every slot's side-chain switch id, `key_1` … `key_24` (plan §7.2).
+static KEY_IDS: LazyLock<[&'static str; SLOTS]> = LazyLock::new(|| {
+    std::array::from_fn(|slot| &*Box::leak(format!("key_{}", slot + 1).into_boxed_str()))
+});
+
+/// Every slot's side-chain switch id, slot by slot.
+pub fn key_ids() -> &'static [&'static str; SLOTS] {
+    &KEY_IDS
+}
+
+/// Whether `id` is a side-chain switch, which a preset or state from before §7.2 does not hold.
+pub fn is_key_id(id: &str) -> bool {
+    KEY_IDS.contains(&id)
 }
 
 /// Frequency: 10 Hz to 30 kHz, skewed so the middle of the travel is near 1 kHz, as a log axis
@@ -583,21 +634,23 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_242() {
+    fn the_ids_are_complete_unique_permanent_and_266() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()
             .into_iter()
             .map(|(id, _, _)| id)
             .collect();
-        assert_eq!(ids.len(), 242);
+        assert_eq!(ids.len(), PARAMETERS);
         let mut want: Vec<&str> = (0..SLOTS).flat_map(|slot| *band_ids(slot)).collect();
         want.extend(GLOBAL_IDS);
         want.extend((0..SLOTS).flat_map(|slot| *dynamics_ids(slot)));
-        assert_eq!(want.len(), 242);
+        want.extend(key_ids());
+        assert_eq!(want.len(), 266);
         // In the host's order: every v1 id where it was, the dynamics after them.
         assert_eq!(ids[..DYNAMICS_BASE], want[..DYNAMICS_BASE]);
-        assert_eq!(ids[DYNAMICS_BASE..], want[DYNAMICS_BASE..]);
+        assert_eq!(ids[DYNAMICS_BASE..KEY_BASE], want[DYNAMICS_BASE..KEY_BASE]);
+        assert_eq!(ids[KEY_BASE..], want[KEY_BASE..]);
         for id in &want {
             assert!(ids.iter().any(|other| other == id), "missing {id}");
         }
@@ -620,6 +673,8 @@ mod tests {
         );
         assert_eq!(dynamics_ids(23)[3], "release_24");
         assert!(is_dynamics_id("attack_7") && !is_dynamics_id("gain_7"));
+        assert_eq!((key_ids()[0], key_ids()[23]), ("key_1", "key_24"));
+        assert!(is_key_id("key_7") && !is_key_id("attack_7") && !is_dynamics_id("key_7"));
     }
 
     /// The editor's indices name the same parameters as the host's order.
@@ -627,7 +682,7 @@ mod tests {
     fn the_editor_indices_follow_the_host_order() {
         let params = EqParams::default();
         let erased = params.erased();
-        assert_eq!(erased.len(), 242);
+        assert_eq!(erased.len(), PARAMETERS);
         for (index, param) in erased.iter().enumerate() {
             assert_eq!(params.param(index).name(), param.name(), "{index}");
         }
@@ -636,7 +691,8 @@ mod tests {
             params.param(DYNAMICS_BASE + 4 * 6 + 3).name(),
             "Band 7 release"
         );
-        assert_eq!(params.pointers().len(), 242);
+        assert_eq!(params.param(KEY_BASE + 6).name(), "Band 7 side chain");
+        assert_eq!(params.pointers().len(), PARAMETERS);
     }
 
     #[test]

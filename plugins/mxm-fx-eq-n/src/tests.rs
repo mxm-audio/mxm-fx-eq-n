@@ -79,19 +79,37 @@ fn permanent_identity_and_layouts_are_fixed() {
     assert_eq!(NAME, "mxm-fx-eq-n");
     assert_eq!(CLAP_ID, "dk.mxm.mxm-fx-eq-n");
     mxm_plugin_test::bundle::is_named(env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"), NAME);
-    let layouts: Vec<(u32, u32)> = MxmFxEqN::AUDIO_IO_LAYOUTS
+    // Four, their order permanent: a configuration's id is its index (plan §7.2).
+    let layouts: Vec<(u32, u32, Vec<u32>, &[&str])> = MxmFxEqN::AUDIO_IO_LAYOUTS
         .iter()
         .map(|layout| {
             (
                 layout.main_input_channels.map_or(0, NonZeroU32::get),
                 layout.main_output_channels.map_or(0, NonZeroU32::get),
+                layout
+                    .aux_input_ports
+                    .iter()
+                    .map(|port| port.get())
+                    .collect(),
+                layout.names.aux_inputs,
             )
         })
         .collect();
+    let keyed: &[&str] = &["Side chain"];
     assert_eq!(
         layouts,
-        [(2, 2), (1, 1)],
-        "stereo→stereo and mono→mono (brief A1)"
+        [
+            (2, 2, vec![2], keyed),
+            (1, 1, vec![1], keyed),
+            (2, 2, vec![], &[][..]),
+            (1, 1, vec![], &[][..]),
+        ],
+        "stereo and mono, each with a side chain first, then without (brief A1)"
+    );
+    assert!(
+        MxmFxEqN::AUDIO_IO_LAYOUTS
+            .iter()
+            .all(|layout| layout.aux_output_ports.is_empty())
     );
     assert_eq!(MxmFxEqN::MIDI_INPUT, MidiConfig::None);
 }
@@ -536,4 +554,53 @@ fn the_editor_hears_the_gain_scale_where_it_has_glided() {
     let mut long = vec![vec![0.0f32; 48_000], vec![0.0f32; 48_000]];
     run(&mut plugin, &mut long);
     assert!((plugin.telemetry.heard_scale() - 0.5).abs() < 1e-4);
+}
+
+/// **The shell hands the side chain to a keyed band** (plan §7.2): through the parameters, a loud
+/// key cuts a quiet input, in whatever pieces the host's blocks arrive; with no port the band is as
+/// drawn.
+#[test]
+fn a_keyed_band_hears_the_side_chain_through_the_shell() {
+    let render = |chunk: usize, with_key: bool| {
+        let mut plugin = prepared(2);
+        set_band(
+            &plugin.params.bands[0],
+            Some(Shape::Bell),
+            1_000.0,
+            0.0,
+            2.0,
+            Slope::Db12,
+        );
+        let dynamics = &plugin.params.dynamics[0];
+        set_float(&dynamics.range, -12.0);
+        set_float(&dynamics.threshold, -40.0);
+        set_float(&dynamics.attack, 1.0);
+        set_bool(&plugin.params.keys[0].side_chain, true);
+        let quiet: Vec<f32> = (0..48_000)
+            .map(|i| (0.005 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+            .collect();
+        let loud: Vec<f32> = quiet.iter().map(|sample| sample * 100.0).collect();
+        let mut left = quiet.clone();
+        let mut right = quiet;
+        let mut key_left = loud.clone();
+        let mut key_right = loud;
+        for start in (0..48_000).step_by(chunk) {
+            let end = (start + chunk).min(48_000);
+            let mut channels = [&mut left[start..end], &mut right[start..end]];
+            let keys = [&mut key_left[start..end], &mut key_right[start..end]];
+            plugin.process_keyed(&mut channels, with_key.then_some(&keys[..]));
+        }
+        left
+    };
+    let whole = render(48_000, true);
+    assert!(
+        tone_db(&whole, 1_000.0, 0.005) < -6.0,
+        "the key cuts the quiet input"
+    );
+    assert_eq!(
+        render(300, true),
+        whole,
+        "a host's block sizes change nothing"
+    );
+    assert!(tone_db(&render(48_000, false), 1_000.0, 0.005).abs() < 0.05);
 }

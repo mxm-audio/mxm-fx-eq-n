@@ -63,6 +63,8 @@ pub enum Leaf {
     Tilt,
     /// How far a dynamic band's gain is moving now (plan §7.1).
     Moving,
+    /// Whether a dynamic band listens to the side chain (plan §7.2).
+    SideChain,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -74,6 +76,10 @@ const MOVING_DESCRIPTION: &str =
 const MOVING_HEIGHT: f32 = 10.0;
 const MOVING_SPAN_DB: f32 = 30.0;
 const SOLO_DESCRIPTION: &str = "Plays only what this band works on, until it is pressed again.";
+const SOLO_KEYED_DESCRIPTION: &str =
+    "Plays the side chain as this band hears it, until it is pressed again.";
+const SIDE_CHAIN_DESCRIPTION: &str = "The band moves with the side-chain input, heard through the \
+     band's own range, instead of its own input. With nothing routed there, the band stays as drawn.";
 const NO_BAND_DESCRIPTION: &str =
     "Click a point on the graph to show its band here, or click the line to add one.";
 const GAIN_SCALE_DESCRIPTION: &str =
@@ -231,6 +237,12 @@ pub(crate) fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slo
                 pair.map(|slider| slider_leaf(params, slot, slider)).into(),
             ));
         }
+        rows.push(leaf(
+            Leaf::SideChain,
+            Kind::Toggle {
+                label: "Side chain".to_owned(),
+            },
+        ));
         rows.push(leaf(
             Leaf::Moving,
             Kind::Custom {
@@ -466,6 +478,20 @@ impl EqApp {
                     );
                 }
             }
+            Leaf::SideChain => {
+                if let Some(slot) = selected {
+                    toggle_labelled(
+                        ui,
+                        tokens,
+                        crate::params::key_ids()[slot],
+                        &self.params.keys[slot].side_chain,
+                        "Side chain",
+                        SIDE_CHAIN_DESCRIPTION,
+                        &setter,
+                        0.0,
+                    );
+                }
+            }
             Leaf::Shape => {
                 if let Some(slot) = selected {
                     let current = self.band_now(slot).shape.unwrap_or(Shape::Bell);
@@ -567,7 +593,11 @@ impl EqApp {
                                 "Solo",
                                 &mut on,
                                 false,
-                                SOLO_DESCRIPTION,
+                                if self.key_now(slot) {
+                                    SOLO_KEYED_DESCRIPTION
+                                } else {
+                                    SOLO_DESCRIPTION
+                                },
                                 rect.width(),
                             )
                         })

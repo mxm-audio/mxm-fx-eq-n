@@ -208,6 +208,8 @@ struct BandEngine {
     detector: Filter,
     /// The shape the detector is designed for, while it listens.
     detector_for: Option<Shape>,
+    /// Whether the detector reads the side-chain input instead of the EQ's input (plan §7.2).
+    side_chain: bool,
     /// The loudest detector output this interval, across channels.
     peak: f64,
     /// Whether the band listens this interval: a dynamic shape, Range or a moving part not 0, and
@@ -242,6 +244,7 @@ impl BandEngine {
         moving_db: 0.0,
         detector: Filter::EMPTY,
         detector_for: None,
+        side_chain: false,
         peak: 0.0,
         listening: false,
         dynamics_moved: false,
@@ -478,6 +481,9 @@ struct Solo {
     /// structure is another audition: it fades out, is rebuilt from silence and fades in.
     slot: Option<usize>,
     structure: Option<Structure>,
+    /// Whether the audition built plays the side chain: what its band listens to (plan §7.2). A
+    /// band that changes source is another audition, as another structure is.
+    keyed: bool,
     filter: Filter,
     /// 0 is the EQ, 1 the audition.
     mix: f64,
@@ -491,6 +497,7 @@ impl Solo {
         wanted: None,
         slot: None,
         structure: None,
+        keyed: false,
         filter: Filter::EMPTY,
         mix: 0.0,
         heard: false,
@@ -602,6 +609,25 @@ impl Engine {
                 band.dynamics_changed = true;
             }
         }
+    }
+
+    /// Whether a slot's dynamics listen to the side chain rather than the EQ's input (plan §7.2).
+    /// A switch starts the detector fresh on its new source, as a change of shape does; the moving
+    /// part carries on through the ballistics, so the gain never steps.
+    pub fn set_side_chain(&mut self, slot: usize, keyed: bool) {
+        if let Some(band) = self.bands.get_mut(slot) {
+            if band.side_chain != keyed {
+                band.side_chain = keyed;
+                band.detector_for = None;
+                band.peak = 0.0;
+                band.dynamics_changed = true;
+            }
+        }
+    }
+
+    /// Whether a slot listens to the side chain, as last set.
+    pub fn side_chain(&self, slot: usize) -> Option<bool> {
+        self.bands.get(slot).map(|band| band.side_chain)
     }
 
     /// A slot's dynamics as last set, held inside their ranges.
@@ -797,19 +823,37 @@ impl Engine {
         })
     }
 
-    /// Processes a stereo block in place, both channels identically.
+    /// Processes a stereo block in place, both channels identically, with no side chain: a keyed
+    /// band hears silence.
     pub fn process_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
-        let frames = left.len().min(right.len());
-        self.run::<2>([&mut left[..frames], &mut right[..frames]]);
+        self.process_stereo_keyed(left, right, None);
     }
 
-    /// Processes a mono block in place.
+    /// Processes a mono block in place, with no side chain.
     pub fn process_mono(&mut self, buffer: &mut [f32]) {
-        self.run::<1>([buffer]);
+        self.process_mono_keyed(buffer, None);
+    }
+
+    /// Processes a stereo block in place with the side chain's two channels, `key`, which only a
+    /// keyed band's detector and solo hear (plan §7.2). A key shorter than the block is silence
+    /// past its end.
+    pub fn process_stereo_keyed(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        key: Option<[&[f32]; 2]>,
+    ) {
+        let frames = left.len().min(right.len());
+        self.run::<2>([&mut left[..frames], &mut right[..frames]], key);
+    }
+
+    /// Processes a mono block in place with the side chain's one channel.
+    pub fn process_mono_keyed(&mut self, buffer: &mut [f32], key: Option<&[f32]>) {
+        self.run::<1>([buffer], key.map(|key| [key]));
     }
 
     /// Runs the block, starting a control interval wherever the one in progress ends.
-    fn run<const C: usize>(&mut self, mut channels: [&mut [f32]; C]) {
+    fn run<const C: usize>(&mut self, mut channels: [&mut [f32]; C], key: Option<[&[f32]; C]>) {
         let frames = channels[0].len();
         let mut start = 0;
         while start < frames {
@@ -821,7 +865,7 @@ impl Engine {
             }
             let end = (start + self.countdown).min(frames);
             if !self.dry {
-                self.render::<C>(&mut channels, start, end);
+                self.render::<C>(&mut channels, key, start, end);
             }
             self.countdown -= end - start;
             start = end;
@@ -977,15 +1021,17 @@ impl Engine {
         let valid = self.solo_wanted();
         let bands = &self.bands;
         let solo = &mut self.solo;
+        let matches = |slot: usize, solo: &Solo| {
+            bands[slot].destination == solo.structure && bands[slot].side_chain == solo.keyed
+        };
         let current = solo.slot.is_some()
             && solo.slot == valid
-            && solo
-                .slot
-                .is_some_and(|slot| bands[slot].destination == solo.structure);
+            && solo.slot.is_some_and(|slot| matches(slot, solo));
         if !current && solo.mix <= 0.0 && (solo.slot.is_some() || valid.is_some()) {
             // Faded out: build the audition now wanted, from silence.
             solo.slot = None;
             solo.structure = None;
+            solo.keyed = false;
             solo.filter = Filter::EMPTY;
             if let Some(slot) = valid {
                 let band = &bands[slot];
@@ -995,6 +1041,7 @@ impl Engine {
                     {
                         solo.slot = Some(slot);
                         solo.structure = Some(structure);
+                        solo.keyed = band.side_chain;
                         solo.filter = Filter::fresh(&cascade);
                     }
                 }
@@ -1017,33 +1064,55 @@ impl Engine {
         // Decided after any rebuild, so an audition built this interval starts fading in now.
         solo.heard = solo.slot.is_some()
             && solo.slot == valid
-            && solo
-                .slot
-                .is_some_and(|slot| bands[slot].destination == solo.structure);
+            && solo.slot.is_some_and(|slot| matches(slot, solo));
     }
 
     /// Frames `start..end` of the interval in progress, in place.
-    fn render<const C: usize>(&mut self, channels: &mut [&mut [f32]; C], start: usize, end: usize) {
+    fn render<const C: usize>(
+        &mut self,
+        channels: &mut [&mut [f32]; C],
+        key: Option<[&[f32]; C]>,
+        start: usize,
+        end: usize,
+    ) {
         let solo_target = if self.solo.heard { 1.0 } else { 0.0 };
         let solo_step = 1.0 / f64::from(self.fade);
         let fade = self.fade;
+        // The key is read only when something hears it, and then counts as input: a key that plays
+        // while the EQ's input rests is not the end of a tail.
+        let keyed = self
+            .bands
+            .iter()
+            .any(|band| band.listening && band.side_chain)
+            || (self.solo.keyed && self.solo.slot.is_some());
+        let key = key.filter(|_| keyed);
         let mut heard_input = false;
+        let finite = |sample: f32| {
+            if sample.is_finite() {
+                f64::from(sample)
+            } else {
+                0.0
+            }
+        };
         for index in start..end {
             let mut dry = [0.0f64; C];
             for (value, channel) in dry.iter_mut().zip(channels.iter()) {
-                let sample = channel[index];
-                *value = if sample.is_finite() {
-                    f64::from(sample)
-                } else {
-                    0.0
-                };
+                *value = finite(channel[index]);
                 heard_input |= *value != 0.0;
+            }
+            let mut side = [0.0f64; C];
+            if let Some(key) = &key {
+                for (value, channel) in side.iter_mut().zip(key.iter()) {
+                    *value = channel.get(index).copied().map_or(0.0, finite);
+                    heard_input |= *value != 0.0;
+                }
             }
 
             let mut wet = dry;
             for band in &mut self.bands {
                 if band.listening {
-                    for value in band.detector.process(dry) {
+                    let heard = if band.side_chain { side } else { dry };
+                    for value in band.detector.process(heard) {
                         band.peak = band.peak.max(value.abs());
                     }
                 }
@@ -1061,7 +1130,7 @@ impl Engine {
                 };
             }
             if solo.mix > 0.0 && solo.slot.is_some() {
-                let audition = solo.filter.process(dry);
+                let audition = solo.filter.process(if solo.keyed { side } else { dry });
                 for (out, audition) in wet.iter_mut().zip(audition) {
                     *out += (audition - *out) * solo.mix;
                 }

@@ -72,6 +72,9 @@ impl MxmFxEqN {
         for (slot, dynamics) in self.params.dynamics.iter().enumerate() {
             self.engine.set_dynamics(slot, dynamics.dynamics());
         }
+        for (slot, key) in self.params.keys.iter().enumerate() {
+            self.engine.set_side_chain(slot, key.side_chain.value());
+        }
         self.engine.set_output_gain(self.params.output.value());
         self.engine.set_gain_scale(self.params.gain_scale.value());
         let solo = if self.offline || !self.telemetry.connected() {
@@ -102,7 +105,19 @@ impl MxmFxEqN {
         true
     }
 
+    /// A block with no side chain, as the shell's tests drive one.
+    #[cfg(test)]
     fn process_block(&mut self, channels: &mut [&mut [f32]]) -> ProcessStatus {
+        self.process_keyed(channels, None)
+    }
+
+    /// A block with the side chain's channels, `key`, if the layout has the port (plan §7.2): only
+    /// a keyed band's detector and its solo hear it.
+    fn process_keyed(
+        &mut self,
+        channels: &mut [&mut [f32]],
+        key: Option<&[&mut [f32]]>,
+    ) -> ProcessStatus {
         self.sync();
         self.tap.set_wanted(self.telemetry.analyser_wanted());
         let Some(first) = channels.first() else {
@@ -122,6 +137,11 @@ impl MxmFxEqN {
             let length = end - start;
             let wanted = self.tap.wanted();
             let mut pre = [[0.0f32; BLOCK_FRAMES]; 2];
+            // The key's channels for this piece; a mono key keys both channels.
+            let side = |channel: usize| {
+                key.and_then(|key| key.get(channel).or(key.first()))
+                    .map(|samples| &samples[start.min(samples.len())..end.min(samples.len())])
+            };
             let (left, rest) = channels.split_at_mut(1);
             let left = &mut left[0][start..end];
             if wanted {
@@ -132,7 +152,8 @@ impl MxmFxEqN {
                 if wanted {
                     pre[1][..length].copy_from_slice(right);
                 }
-                self.engine.process_stereo(left, right);
+                let key = side(0).zip(side(1)).map(|(l, r)| [l, r]);
+                self.engine.process_stereo_keyed(left, right, key);
                 if wanted {
                     self.tap.capture(
                         tagged,
@@ -145,7 +166,7 @@ impl MxmFxEqN {
                     peaks[1] = peak_of(peaks[1], right);
                 }
             } else {
-                self.engine.process_mono(left);
+                self.engine.process_mono_keyed(left, side(0));
                 if wanted {
                     let pre = &pre[0][..length];
                     self.tap.capture(tagged, [pre, pre], [left, left]);
@@ -201,7 +222,31 @@ impl Plugin for MxmFxEqN {
     const EMAIL: &'static str = "plugins@mxm.dk";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
+    /// Four layouts, their order permanent (plan §7.2): the keyed ones first, so a host that never
+    /// selects a configuration offers the side chain, then the plain ones MXM Player selects.
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+        AudioIOLayout {
+            main_input_channels: NonZeroU32::new(2),
+            main_output_channels: NonZeroU32::new(2),
+            aux_input_ports: &[new_nonzero_u32(2)],
+            names: PortNames {
+                layout: Some("Stereo with side chain"),
+                aux_inputs: &["Side chain"],
+                ..PortNames::const_default()
+            },
+            ..AudioIOLayout::const_default()
+        },
+        AudioIOLayout {
+            main_input_channels: NonZeroU32::new(1),
+            main_output_channels: NonZeroU32::new(1),
+            aux_input_ports: &[new_nonzero_u32(1)],
+            names: PortNames {
+                layout: Some("Mono with side chain"),
+                aux_inputs: &["Side chain"],
+                ..PortNames::const_default()
+            },
+            ..AudioIOLayout::const_default()
+        },
         AudioIOLayout {
             main_input_channels: NonZeroU32::new(2),
             main_output_channels: NonZeroU32::new(2),
@@ -228,6 +273,8 @@ impl Plugin for MxmFxEqN {
     /// (`preset::add_dynamics_at_defaults`).
     fn filter_state(state: &mut PluginState) {
         preset::add_dynamics_at_defaults(state);
+        // And from before §7.2: every band on its own input.
+        mxm_preset::add_switches_off(state, params::key_ids());
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
@@ -271,10 +318,11 @@ impl Plugin for MxmFxEqN {
     fn process(
         &mut self,
         buffer: &mut Buffer,
-        _aux: &mut AuxiliaryBuffers,
+        aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        self.process_block(buffer.as_slice())
+        let key = aux.inputs.first_mut().map(|key| &*key.as_slice());
+        self.process_keyed(buffer.as_slice(), key)
     }
 }
 

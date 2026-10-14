@@ -472,6 +472,7 @@ fn the_cursor_reaches_and_operates_every_control() {
                 "threshold_1",
                 "attack_1",
                 "release_1",
+                "key_1",
             ][..],
         ),
         (Shape::LowCut, &["q_1", "slope_1"][..]),
@@ -1781,6 +1782,7 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
     let mut rig = Rig::new();
     rig.press(Vec::new());
     set_plain(&rig.app.params.dynamics[0].range, -12.0);
+    set_plain_bool(&rig.app.params.keys[0].side_chain, true);
     rig.press(Vec::new());
     rig.type_keys(&[job_key(ADD)]);
     rig.press(Vec::new());
@@ -1789,6 +1791,11 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
         rig.app.params.dynamics[0].dynamics(),
         mxm_fx_eq_n_dsp::Dynamics::STATIC
     );
+    assert!(
+        !rig.app.params.keys[0].side_chain.value(),
+        "a new band hears its own input"
+    );
+    set_plain_bool(&rig.app.params.keys[0].side_chain, true);
 
     set_plain(&rig.app.params.dynamics[0].range, -9.0);
     set_plain(&rig.app.params.dynamics[0].attack, 3.0);
@@ -1819,6 +1826,10 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
     ] {
         assert!((a - b).abs() < 1e-3, "{copy:?} {original:?}");
     }
+    assert!(
+        rig.app.params.keys[1].side_chain.value(),
+        "a copy of a keyed band is keyed"
+    );
     assert!(rig.gestures_balanced());
 }
 
@@ -1836,6 +1847,7 @@ fn the_dynamics_group_belongs_to_the_bells_and_shelves() {
             column::Leaf::Slider(column::Slider::Attack),
             column::Leaf::Slider(column::Slider::Release),
             column::Leaf::Moving,
+            column::Leaf::SideChain,
         ];
         for leaf in group {
             assert_eq!(
@@ -2006,6 +2018,8 @@ fn undoing_a_dynamics_edit_shows_its_band() {
     assert_eq!(slot_of(OUTPUT_INDEX), None);
     assert_eq!(slot_of(GAIN_SCALE_INDEX), None);
     assert_eq!(slot_of(dynamics_index(5, DynamicsField::Release)), Some(5));
+    assert_eq!(slot_of(key_index(0)), Some(0));
+    assert_eq!(slot_of(key_index(23)), Some(23));
 
     let mut rig = Rig::new();
     rig.press(Vec::new());
@@ -2033,4 +2047,13 @@ fn undoing_a_dynamics_edit_shows_its_band() {
     rig.press(Vec::new());
     assert_eq!(rig.app.selected, Some(0), "and so does redo");
     assert!((rig.app.params.dynamics[0].range.value() + 12.0).abs() < 1e-3);
+}
+
+fn set_plain_bool(param: &BoolParam, plain: bool) {
+    // SAFETY: the test owns the parameters.
+    unsafe {
+        let _ = param
+            .as_ptr()
+            ._internal_set_normalized_value(param.preview_normalized(plain));
+    }
 }

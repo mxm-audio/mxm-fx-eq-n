@@ -84,6 +84,13 @@ fn the_editor_is_offered_through_the_players_effect_path() {
         engine.fx_editor_floating_supported(0),
         "the editor does not support the player's floating effect window"
     );
+    // The player has no side chains: it takes the first configuration with one input, the plain
+    // stereo one, after the two keyed ones (plan §7.2).
+    let selection = &engine.fx_envelope(0).expect("an envelope").selection;
+    assert!(
+        selection.starts_with("configuration 2 "),
+        "the player chose {selection}"
+    );
 }
 
 fn save_state(instance: &mut PluginInstance<MxmHost>) -> Value {
@@ -135,7 +142,7 @@ enum Chain {
 fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     let mut state = save_state(instance);
     let params = state["params"].as_object_mut().expect("parameter map");
-    assert_eq!(params.len(), 242);
+    assert_eq!(params.len(), 266);
     assert_eq!(
         params["type_1"],
         json!({"i32": 0}),
@@ -351,7 +358,7 @@ fn an_older_state_restores_every_band_static_through_the_host() {
     let mut older = dynamic.clone();
     let params = older["params"].as_object_mut().expect("parameter map");
     params.retain(|id, _| {
-        !["range_", "threshold_", "attack_", "release_"]
+        !["range_", "threshold_", "attack_", "release_", "key_"]
             .iter()
             .any(|field| id.starts_with(field))
     });

@@ -43,6 +43,10 @@ fn processing_allocates_and_frees_nothing() {
     let mut left = vec![0.0f32; 2_048];
     let mut right = vec![0.0f32; 2_048];
     let mut mono = vec![0.0f32; 333];
+    // A side chain for every keyed call, made before the guard starts counting.
+    let key: Vec<f32> = (0..2_048)
+        .map(|i| ((i * 13) % 100) as f32 / 50.0 - 1.0)
+        .collect();
 
     OPERATIONS.with(|operations| operations.set(0));
     TRACKING.with(|tracking| tracking.set(true));
@@ -70,6 +74,9 @@ fn processing_allocates_and_frees_nothing() {
                 },
             );
         }
+        for slot in 0..SLOTS {
+            engine.set_side_chain(slot, (block + slot) % 2 == 0);
+        }
         engine.set_solo((block % 3 == 0).then_some(block % SLOTS));
         engine.set_gain_scale((block % 5) as f32 * 0.5);
         engine.set_output_gain(0.5 + (block % 4) as f32 * 0.5);
@@ -78,7 +85,9 @@ fn processing_allocates_and_frees_nothing() {
             *r = -*l;
         }
         engine.process_stereo(&mut left, &mut right);
+        engine.process_stereo_keyed(&mut left, &mut right, Some([&key, &key]));
         engine.process_mono(&mut mono);
+        engine.process_mono_keyed(&mut mono, Some(&key));
         if block % 50 == 0 {
             engine.reset();
         }

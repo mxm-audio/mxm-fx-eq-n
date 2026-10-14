@@ -748,11 +748,20 @@ impl EqApp {
                         Stroke::new(EMPHASIS_STROKE, colour),
                     );
                 }
-                painter.circle_stroke(
-                    at,
-                    POINT_RADIUS + 2.5,
-                    Stroke::new(AXIS_STROKE, tokens.accent),
-                );
+                // Dashed for a band that listens to the side chain (plan §7.2).
+                let ring = Stroke::new(AXIS_STROKE, tokens.accent);
+                if self.key_now(slot) {
+                    let radius = POINT_RADIUS + 2.5;
+                    let points: Vec<Pos2> = (0..=48)
+                        .map(|step| {
+                            let angle = std::f32::consts::TAU * step as f32 / 48.0;
+                            at + vec2(angle.cos(), angle.sin()) * radius
+                        })
+                        .collect();
+                    painter.extend(Painted::dashed_line(&points, ring, 2.0, 2.0));
+                } else {
+                    painter.circle_stroke(at, POINT_RADIUS + 2.5, ring);
+                }
             }
             if self.selected == Some(slot) {
                 painter.circle_stroke(

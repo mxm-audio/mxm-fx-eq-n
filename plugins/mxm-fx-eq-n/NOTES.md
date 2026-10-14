@@ -205,3 +205,14 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
   presence at 3.5 kHz; mud at 300 Hz; air as a 12 kHz shelf; a kick's thump at 60 Hz, box at
   350 Hz and beater at 4 kHz; the telephone band's 300 Hz – 3.4 kHz; mains hum at 50 and 60 Hz
   with three harmonics each, notched at Q 10. E5's listening judges them.
+
+## The slower checks
+
+- The analyser's cost: `cargo test -p mxm-fx-eq-n --release --lib analyser_cost -- --ignored
+  --nocapture`.
+- The pictures: `cargo test -p mxm-fx-eq-n --lib pictures`, into `target/layout-tree/mxm-fx-eq-n/`.
+- The factory set: `cargo test -p mxm-fx-eq-n --lib write_the_factory_presets -- --ignored`.
+- The validator's random parameter fuzz once found a subnormal output, now flushed in the DSP.
+- The editor reads what it sent because nice-plug changes a parameter only when its queued event is
+  written: the graph, the keyboard's edits and the column's own decisions (its menus, Solo) would
+  otherwise read the value from before their own write.

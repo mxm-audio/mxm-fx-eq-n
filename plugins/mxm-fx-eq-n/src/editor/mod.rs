@@ -40,7 +40,7 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_204, 1_016);
+pub const REFERENCE: (u32, u32) = (1_204, 1_048);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
@@ -127,11 +127,19 @@ pub fn dynamics_index(slot: usize, field: DynamicsField) -> usize {
     crate::params::DYNAMICS_BASE + slot * crate::params::DYNAMICS_FIELDS.len() + field as usize
 }
 
-/// The slot a history index belongs to: a band field's or a dynamics field's, none for a global.
+/// A slot's side-chain switch's place in [`EqParams::pointers`] and the history's indices.
+pub fn key_index(slot: usize) -> usize {
+    crate::params::KEY_BASE + slot
+}
+
+/// The slot a history index belongs to: a band field's, a dynamics field's or a side-chain
+/// switch's, none for a global.
 pub fn slot_of(index: usize) -> Option<usize> {
     let dynamics = crate::params::DYNAMICS_BASE;
     if index < OUTPUT_INDEX {
         Some(index / BAND_FIELDS.len())
+    } else if index >= crate::params::KEY_BASE {
+        Some(index - crate::params::KEY_BASE).filter(|&slot| slot < SLOTS)
     } else if index >= dynamics {
         Some((index - dynamics) / crate::params::DYNAMICS_FIELDS.len()).filter(|&slot| slot < SLOTS)
     } else {
@@ -460,6 +468,10 @@ impl EqApp {
     /// The normalised value of a host parameter, as `plain` would set it.
     pub(crate) fn normalised(&self, index: usize, plain: f32) -> f32 {
         let params = &self.params;
+        if index >= crate::params::KEY_BASE {
+            let key = &params.keys[(index - crate::params::KEY_BASE).min(SLOTS - 1)];
+            return key.side_chain.preview_normalized(plain >= 0.5);
+        }
         if index >= crate::params::DYNAMICS_BASE {
             let at = index - crate::params::DYNAMICS_BASE;
             let fields = crate::params::DYNAMICS_FIELDS.len();
@@ -499,6 +511,9 @@ impl EqApp {
     pub(crate) fn current_plain(&self, index: usize) -> f32 {
         let params = &self.params;
         let normalised = self.normalised_now(index);
+        if index >= crate::params::KEY_BASE {
+            return normalised;
+        }
         if index >= crate::params::DYNAMICS_BASE {
             let at = index - crate::params::DYNAMICS_BASE;
             let fields = crate::params::DYNAMICS_FIELDS.len();
@@ -542,7 +557,8 @@ impl EqApp {
         slot: usize,
         band: mxm_fx_eq_n_dsp::Band,
         dynamics: mxm_fx_eq_n_dsp::Dynamics,
-    ) -> [(usize, f32); 10] {
+        keyed: bool,
+    ) -> [(usize, f32); 11] {
         let at = |field| band_index(slot, field);
         let dyn_at = |field| dynamics_index(slot, field);
         [
@@ -580,7 +596,13 @@ impl EqApp {
                 dyn_at(DynamicsField::Release),
                 self.normalised(dyn_at(DynamicsField::Release), dynamics.release_ms),
             ),
+            (key_index(slot), if keyed { 1.0 } else { 0.0 }),
         ]
+    }
+
+    /// Whether a slot listens to the side chain, as this editor last set it.
+    pub(crate) fn key_now(&self, slot: usize) -> bool {
+        self.normalised_now(key_index(slot)) >= 0.5
     }
 
     /// A slot's dynamics as this editor last set them ([`normalised_now`](Self::normalised_now)'s
@@ -622,8 +644,10 @@ impl EqApp {
                 q: 1.0,
                 slope: DEFAULT_SLOPE,
             },
-            // A new band is static, whatever an earlier band in the slot left.
+            // A new band is static and hears its own input, whatever an earlier band in the slot
+            // left.
             mxm_fx_eq_n_dsp::Dynamics::STATIC,
+            false,
         );
         self.close_open();
         if opened {
@@ -1058,8 +1082,9 @@ impl EqApp {
         };
         let band = self.band_now(original);
         let dynamics = self.dynamics_now(original);
+        let keyed = self.key_now(original);
         self.close_open();
-        for (index, value) in self.slot_writes(slot, band, dynamics) {
+        for (index, value) in self.slot_writes(slot, band, dynamics, keyed) {
             self.send(index, value);
         }
         self.copy = Some((slot, original));
