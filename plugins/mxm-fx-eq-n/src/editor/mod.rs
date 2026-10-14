@@ -40,13 +40,13 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_180, 880);
+pub const REFERENCE: (u32, u32) = (1_204, 1_016);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
 pub const MINIMUM: (u32, u32) = (420, 480);
 /// The column's fixed width.
-pub const COLUMN_WIDTH: f32 = 296.0;
+pub const COLUMN_WIDTH: f32 = 320.0;
 /// Below this the graph stops shrinking and the surface scrolls sideways instead (plan §5.1).
 pub const GRAPH_FLOOR: f32 = 320.0;
 /// The Out meter's rail: two channels and the gap between them.
@@ -111,6 +111,20 @@ pub enum Field {
 /// A host parameter's place in [`EqParams::pointers`] and the history's indices.
 pub fn band_index(slot: usize, field: Field) -> usize {
     slot * BAND_FIELDS.len() + field as usize
+}
+
+/// A slot's dynamics fields (plan §7.1), in [`crate::params::DYNAMICS_FIELDS`] order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicsField {
+    Range = 0,
+    Threshold = 1,
+    Attack = 2,
+    Release = 3,
+}
+
+/// A slot's dynamics parameter's place in [`EqParams::pointers`] and the history's indices.
+pub fn dynamics_index(slot: usize, field: DynamicsField) -> usize {
+    crate::params::DYNAMICS_BASE + slot * crate::params::DYNAMICS_FIELDS.len() + field as usize
 }
 pub const OUTPUT_INDEX: usize = SLOTS * BAND_FIELDS.len();
 pub const GAIN_SCALE_INDEX: usize = OUTPUT_INDEX + 1;
@@ -420,6 +434,17 @@ impl EqApp {
     /// The normalised value of a host parameter, as `plain` would set it.
     pub(crate) fn normalised(&self, index: usize, plain: f32) -> f32 {
         let params = &self.params;
+        if index >= crate::params::DYNAMICS_BASE {
+            let at = index - crate::params::DYNAMICS_BASE;
+            let fields = crate::params::DYNAMICS_FIELDS.len();
+            let dynamics = &params.dynamics[(at / fields).min(SLOTS - 1)];
+            return match at % fields {
+                0 => dynamics.range.preview_normalized(plain),
+                1 => dynamics.threshold.preview_normalized(plain),
+                2 => dynamics.attack.preview_normalized(plain),
+                _ => dynamics.release.preview_normalized(plain),
+            };
+        }
         if index >= OUTPUT_INDEX {
             return if index == OUTPUT_INDEX {
                 params.output.preview_normalized(plain)
@@ -475,8 +500,14 @@ impl EqApp {
 
     /// Every field of `slot`, set to a band: what a new band or a copy writes, so nothing a deleted
     /// band left in the slot comes back.
-    fn slot_writes(&self, slot: usize, band: mxm_fx_eq_n_dsp::Band) -> [(usize, f32); 6] {
+    fn slot_writes(
+        &self,
+        slot: usize,
+        band: mxm_fx_eq_n_dsp::Band,
+        dynamics: mxm_fx_eq_n_dsp::Dynamics,
+    ) -> [(usize, f32); 10] {
         let at = |field| band_index(slot, field);
+        let dyn_at = |field| dynamics_index(slot, field);
         [
             (
                 at(Field::Type),
@@ -496,7 +527,38 @@ impl EqApp {
                     crate::params::slope_value(band.slope) as f32,
                 ),
             ),
+            (
+                dyn_at(DynamicsField::Range),
+                self.normalised(dyn_at(DynamicsField::Range), dynamics.range_db),
+            ),
+            (
+                dyn_at(DynamicsField::Threshold),
+                self.normalised(dyn_at(DynamicsField::Threshold), dynamics.threshold_db),
+            ),
+            (
+                dyn_at(DynamicsField::Attack),
+                self.normalised(dyn_at(DynamicsField::Attack), dynamics.attack_ms),
+            ),
+            (
+                dyn_at(DynamicsField::Release),
+                self.normalised(dyn_at(DynamicsField::Release), dynamics.release_ms),
+            ),
         ]
+    }
+
+    /// A slot's dynamics as this editor last set them ([`normalised_now`](Self::normalised_now)'s
+    /// values).
+    pub(crate) fn dynamics_now(&self, slot: usize) -> mxm_fx_eq_n_dsp::Dynamics {
+        let params = &self.params.dynamics[slot];
+        let now = |field| self.normalised_now(dynamics_index(slot, field));
+        mxm_fx_eq_n_dsp::Dynamics {
+            range_db: params.range.preview_plain(now(DynamicsField::Range)),
+            threshold_db: params
+                .threshold
+                .preview_plain(now(DynamicsField::Threshold)),
+            attack_ms: params.attack.preview_plain(now(DynamicsField::Attack)),
+            release_ms: params.release.preview_plain(now(DynamicsField::Release)),
+        }
     }
 
     /// A 0 dB bell in the lowest Off slot, selected; `None` when every slot is in use.
@@ -523,6 +585,8 @@ impl EqApp {
                 q: 1.0,
                 slope: DEFAULT_SLOPE,
             },
+            // A new band is static, whatever an earlier band in the slot left.
+            mxm_fx_eq_n_dsp::Dynamics::STATIC,
         );
         self.close_open();
         if opened {
@@ -957,8 +1021,9 @@ impl EqApp {
             return false;
         };
         let band = self.band_now(original);
+        let dynamics = self.dynamics_now(original);
         self.close_open();
-        for (index, value) in self.slot_writes(slot, band) {
+        for (index, value) in self.slot_writes(slot, band, dynamics) {
             self.send(index, value);
         }
         self.copy = Some((slot, original));

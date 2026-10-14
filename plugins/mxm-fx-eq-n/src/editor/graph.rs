@@ -94,8 +94,14 @@ pub struct Curves {
     pub xs: Vec<f32>,
     pub freqs: Vec<f32>,
     pub composite: Vec<f32>,
+    /// The composite at the gains the bands have now, when a dynamic band is moving (plan §7.1):
+    /// what is heard. The drawn composite stays the one a click and a drag work on.
+    pub moving: Option<Vec<f32>>,
     sample_rate: f64,
 }
+
+/// A band's gain is moving when the heard gain is this far from the drawn one, in dB.
+const MOVING_DB: f32 = 0.01;
 
 impl Curves {
     pub fn compute(app: &EqApp, axes: &Axes) -> Curves {
@@ -118,6 +124,30 @@ impl Curves {
                 sample_rate,
             ))
         });
+        // The bands as heard: each dynamic band's movement, from the audio thread, on the gain the
+        // editor last set, held inside the band's range as the DSP holds it.
+        let mut any_moving = false;
+        let moving_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
+            let band = app.band_now(slot);
+            let shape = band.shape.filter(|_| !band.bypass)?;
+            let (drawn, heard) = app.telemetry.gains(slot);
+            let movement = heard - drawn;
+            if !shape.is_dynamic() || movement.abs() < MOVING_DB {
+                return None;
+            }
+            any_moving = true;
+            let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+            Some(design(
+                Design {
+                    shape,
+                    slope: band.slope,
+                    freq: f64::from(band.freq),
+                    gain_db: f64::from((band.gain_db + movement).clamp(-range, range) * scale),
+                    q: f64::from(band.q),
+                },
+                sample_rate,
+            ))
+        });
         let count = (axes.rect.width() / 2.0).max(2.0) as usize;
         let xs: Vec<f32> = (0..=count)
             .map(|index| axes.rect.left() + axes.rect.width() * index as f32 / count as f32)
@@ -127,6 +157,7 @@ impl Curves {
             cascades,
             xs,
             composite: Vec::new(),
+            moving: None,
             freqs,
             sample_rate,
         };
@@ -135,6 +166,27 @@ impl Curves {
             .iter()
             .map(|&freq| curves.composite_at(freq))
             .collect();
+        if any_moving {
+            let heard: Vec<&Cascade> = (0..SLOTS)
+                .filter_map(|slot| {
+                    moving_cascades[slot]
+                        .as_ref()
+                        .or(curves.cascades[slot].as_ref())
+                })
+                .collect();
+            curves.moving = Some(
+                curves
+                    .freqs
+                    .iter()
+                    .map(|&freq| {
+                        heard
+                            .iter()
+                            .map(|cascade| cascade.response_db(f64::from(freq), sample_rate))
+                            .sum::<f64>() as f32
+                    })
+                    .collect(),
+            );
+        }
         curves
     }
 
@@ -592,14 +644,31 @@ impl EqApp {
             );
         }
 
-        // The composite: the sum the audio makes.
-        let composite: Vec<Pos2> = curves
-            .xs
-            .iter()
-            .zip(&curves.composite)
-            .map(|(&x, &db)| pos2(x, axes.y(db)))
-            .collect();
-        painter.add(Painted::line(composite, Stroke::new(2.0, tokens.accent)));
+        // The composite: the sum the audio makes. With a dynamic band moving, the drawn curve is
+        // faint and the curve as heard now is drawn over it.
+        let line = |dbs: &[f32]| -> Vec<Pos2> {
+            curves
+                .xs
+                .iter()
+                .zip(dbs)
+                .map(|(&x, &db)| pos2(x, axes.y(db)))
+                .collect()
+        };
+        match &curves.moving {
+            Some(moving) => {
+                painter.add(Painted::line(
+                    line(&curves.composite),
+                    Stroke::new(1.5, tokens.accent.gamma_multiply(0.4)),
+                ));
+                painter.add(Painted::line(line(moving), Stroke::new(2.0, tokens.accent)));
+            }
+            None => {
+                painter.add(Painted::line(
+                    line(&curves.composite),
+                    Stroke::new(2.0, tokens.accent),
+                ));
+            }
+        }
 
         // The edges, once MICRO + ← → took one for MOVE.
         if let (Some(edge), Some(slot)) = (self.edge, self.selected)
@@ -650,10 +719,27 @@ impl EqApp {
             ));
         }
 
-        // Points, numbered; a bypassed band hollow, the selected one ringed.
+        // Points, numbered; a bypassed band hollow, the selected one ringed. A dynamic band has its
+        // own ring and a line from the point to where its Range would take it.
         let number_font = egui::FontId::proportional(11.0);
         for (slot, at) in self.positions(axes) {
             let band = self.band_now(slot);
+            let range = self.dynamics_now(slot).range_db;
+            if band.shape.is_some_and(|shape| shape.is_dynamic()) && range != 0.0 {
+                let limit = GAIN_RANGE as f32;
+                let reach = pos2(at.x, axes.y((band.gain_db + range).clamp(-limit, limit)));
+                let colour = tokens.accent.gamma_multiply(0.6);
+                painter.line_segment([at, reach], Stroke::new(EMPHASIS_STROKE, colour));
+                painter.line_segment(
+                    [reach - vec2(5.0, 0.0), reach + vec2(5.0, 0.0)],
+                    Stroke::new(EMPHASIS_STROKE, colour),
+                );
+                painter.circle_stroke(
+                    at,
+                    POINT_RADIUS + 2.5,
+                    Stroke::new(AXIS_STROKE, tokens.accent),
+                );
+            }
             if self.selected == Some(slot) {
                 painter.circle_stroke(
                     at,

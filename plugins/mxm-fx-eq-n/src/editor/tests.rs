@@ -463,7 +463,17 @@ fn view_goes_between_the_graph_and_the_column_and_the_column_is_the_cursors() {
 #[test]
 fn the_cursor_reaches_and_operates_every_control() {
     for (shape, extra) in [
-        (Shape::Bell, &["gain_1", "q_1"][..]),
+        (
+            Shape::Bell,
+            &[
+                "gain_1",
+                "q_1",
+                "range_1",
+                "threshold_1",
+                "attack_1",
+                "release_1",
+            ][..],
+        ),
         (Shape::LowCut, &["q_1", "slope_1"][..]),
     ] {
         let params = Arc::new(EqParams::default());
@@ -1752,4 +1762,128 @@ fn the_band_card_keeps_its_height_through_every_shape() {
         tops.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 0.5),
         "{tops:?}"
     );
+}
+
+/// Writes a parameter at once, as a host's automation would.
+fn set_plain(param: &FloatParam, plain: f32) {
+    // SAFETY: the test owns the parameters.
+    unsafe {
+        let _ = param
+            .as_ptr()
+            ._internal_set_normalized_value(param.preview_normalized(plain));
+    }
+}
+
+/// **A new band is static, and a copy takes its original's dynamics** (plan §7.1): a Range left
+/// in a slot by the band that was there is not inherited, and DUPLICATE carries all ten fields.
+#[test]
+fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.dynamics[0].range, -12.0);
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, Some(Shape::Bell));
+    assert_eq!(
+        rig.app.params.dynamics[0].dynamics(),
+        mxm_fx_eq_n_dsp::Dynamics::STATIC
+    );
+
+    set_plain(&rig.app.params.dynamics[0].range, -9.0);
+    set_plain(&rig.app.params.dynamics[0].attack, 3.0);
+    rig.press(Vec::new());
+    rig.press(vec![
+        key(job_key(DUPLICATE), true, NONE),
+        key(Key::ArrowRight, true, NONE),
+        key(Key::ArrowRight, false, NONE),
+    ]);
+    rig.press(vec![
+        key(job_key(DUPLICATE), false, NONE),
+        key(job_key(OUT), true, NONE),
+        key(job_key(OUT), false, NONE),
+    ]);
+    rig.press(Vec::new());
+    assert_eq!(rig.band(1).shape, Some(Shape::Bell));
+    let (original, copy) = (
+        rig.app.params.dynamics[0].dynamics(),
+        rig.app.params.dynamics[1].dynamics(),
+    );
+    assert!((copy.range_db + 9.0).abs() < 1e-3 && (copy.attack_ms - 3.0).abs() < 1e-3);
+    // Through each parameter's plain value, as the band's fields are copied.
+    for (a, b) in [
+        (copy.range_db, original.range_db),
+        (copy.threshold_db, original.threshold_db),
+        (copy.attack_ms, original.attack_ms),
+        (copy.release_ms, original.release_ms),
+    ] {
+        assert!((a - b).abs() < 1e-3, "{copy:?} {original:?}");
+    }
+    assert!(rig.gestures_balanced());
+}
+
+/// **The Dynamics group is a bell's and a shelf's** (plan §7.1): the Band card holds Range,
+/// Threshold, Attack, Release and the moving meter for those, and none of them for the rest.
+#[test]
+fn the_dynamics_group_belongs_to_the_bells_and_shelves() {
+    let params = EqParams::default();
+    for shape in crate::params::SHAPES {
+        let body = column::band_body(&params, 0, shape, DEFAULT_SLOPE);
+        let found: Vec<column::Leaf> = body.keys().into_iter().copied().collect();
+        let group = [
+            column::Leaf::Slider(column::Slider::Range),
+            column::Leaf::Slider(column::Slider::Threshold),
+            column::Leaf::Slider(column::Slider::Attack),
+            column::Leaf::Slider(column::Slider::Release),
+            column::Leaf::Moving,
+        ];
+        for leaf in group {
+            assert_eq!(
+                found.contains(&leaf),
+                shape.is_dynamic(),
+                "{shape:?} {leaf:?}"
+            );
+        }
+    }
+}
+
+/// **A moving band is drawn as heard, over the curve as drawn** (plan §7.1): with no movement
+/// published there is one curve; with a bell's heard gain 6 dB under its drawn one the curve as
+/// heard is the composite at the moved gain, and a cut's movement is never drawn.
+#[test]
+fn a_moving_band_is_drawn_as_heard_over_the_drawn_curve() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    assert!(graph::Curves::compute(&rig.app, &axes).moving.is_none());
+
+    rig.app.telemetry.publish_gains(0, 0.0, -6.0);
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    let moving = curves.moving.as_ref().expect("the curve as heard");
+    let centre = curves
+        .freqs
+        .iter()
+        .position(|&freq| freq >= 1_000.0)
+        .unwrap();
+    assert!(curves.composite[centre].abs() < 0.1, "drawn at 0 dB");
+    assert!(
+        (moving[centre] + 6.0).abs() < 0.2,
+        "heard 6 dB down: {}",
+        moving[centre]
+    );
+
+    set_plain_int(&rig.app.params.bands[0].kind, type_of(Some(Shape::LowCut)));
+    rig.press(Vec::new());
+    assert!(graph::Curves::compute(&rig.app, &axes).moving.is_none());
+}
+
+fn set_plain_int(param: &IntParam, plain: i32) {
+    // SAFETY: the test owns the parameters.
+    unsafe {
+        let _ = param
+            .as_ptr()
+            ._internal_set_normalized_value(param.preview_normalized(plain));
+    }
 }

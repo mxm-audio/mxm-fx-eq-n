@@ -5,6 +5,102 @@
   "category": "fx",
   "_comment": "`v` is the value and is authoritative. `text` is this plugin's own formatting of it, kept so the file can be read, and is never loaded.",
   "params": {
+    "attack_1": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_10": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_11": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_12": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_13": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_14": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_15": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_16": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_17": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_18": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_19": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_2": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_20": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_21": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_22": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_23": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_24": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_3": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_4": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_5": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_6": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_7": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_8": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
+    "attack_9": {
+      "v": 0.49156553,
+      "text": "10 ms"
+    },
     "bypass_1": {
       "v": 0.0,
       "text": "Off"
@@ -397,6 +493,198 @@
       "v": 0.49480563,
       "text": "1.00"
     },
+    "range_1": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_10": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_11": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_12": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_13": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_14": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_15": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_16": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_17": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_18": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_19": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_2": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_20": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_21": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_22": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_23": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_24": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_3": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_4": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_5": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_6": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_7": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_8": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "range_9": {
+      "v": 0.5,
+      "text": "0.0 dB"
+    },
+    "release_1": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_10": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_11": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_12": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_13": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_14": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_15": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_16": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_17": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_18": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_19": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_2": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_20": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_21": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_22": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_23": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_24": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_3": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_4": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_5": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_6": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_7": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_8": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
+    "release_9": {
+      "v": 0.51501364,
+      "text": "150 ms"
+    },
     "slope_1": {
       "v": 0.06666667,
       "text": "12 dB/oct"
@@ -492,6 +780,102 @@
     "slope_9": {
       "v": 0.06666667,
       "text": "12 dB/oct"
+    },
+    "threshold_1": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_10": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_11": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_12": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_13": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_14": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_15": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_16": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_17": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_18": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_19": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_2": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_20": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_21": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_22": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_23": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_24": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_3": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_4": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_5": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_6": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_7": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_8": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
+    },
+    "threshold_9": {
+      "v": 0.6666667,
+      "text": "-20.0 dB"
     },
     "type_1": {
       "v": 0.19354838,

@@ -4,8 +4,9 @@
 //! Product code is not linked into the host: a band is set the way a host restores a saved EQ,
 //! through the CLAP state. These hold the shipping boundary: the bundle is classified as an effect
 //! and offers its editor; inserted at Init it changes nothing, to the bit; a restored band is read
-//! back under its slot's own name, is heard, and rings down to exact silence; and the player's
-//! bypass restores the dry render to the bit.
+//! back under its slot's own name, is heard, and rings down to exact silence; a dynamic band
+//! (F1) cuts the loud note, and a state from before F1 comes back with every band static; and the
+//! player's bypass restores the dry render to the bit.
 
 use mxm_player_harness::app_harness;
 use mxm_player_harness::harness;
@@ -124,6 +125,9 @@ enum Chain {
     /// a sub an octave under it) lies more than an octave above the corner, and only what moves
     /// slower — the note's envelope, any offset — passes.
     HighCut,
+    /// Slot 1 restored as a broad dynamic bell at the note, drawn at 0 dB, Range −24 dB from a
+    /// −60 dB threshold: it cuts only what gets loud, and the note does.
+    Dynamic,
 }
 
 /// The restored band, written into the instance's own saved state, values plain as nice-plug
@@ -131,7 +135,7 @@ enum Chain {
 fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     let mut state = save_state(instance);
     let params = state["params"].as_object_mut().expect("parameter map");
-    assert_eq!(params.len(), 146);
+    assert_eq!(params.len(), 242);
     assert_eq!(
         params["type_1"],
         json!({"i32": 0}),
@@ -158,6 +162,36 @@ fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     assert_eq!(text("Band 2 type"), "Off");
 }
 
+/// The dynamic bell (`Chain::Dynamic`), written into the instance's own saved state.
+fn dynamic_bell(instance: &mut PluginInstance<MxmHost>) -> Value {
+    let mut state = save_state(instance);
+    let params = state["params"].as_object_mut().expect("parameter map");
+    assert_eq!(
+        params["range_1"],
+        json!({"f32": 0.0}),
+        "slot 1 is not static at Init"
+    );
+    params.insert("type_1".into(), json!({"i32": 1}));
+    params.insert("freq_1".into(), json!({"f32": 262.0}));
+    params.insert("q_1".into(), json!({"f32": 0.5}));
+    params.insert("range_1".into(), json!({"f32": -24.0}));
+    params.insert("threshold_1".into(), json!({"f32": -60.0}));
+    params.insert("attack_1".into(), json!({"f32": 0.5}));
+    params.insert("release_1".into(), json!({"f32": 10.0}));
+    state
+}
+
+/// A host parameter's text, by the name the host shows.
+fn text(instance: &mut PluginInstance<MxmHost>, name: &str) -> String {
+    ParamSet::read(instance)
+        .params
+        .iter()
+        .find(|param| param.name == name)
+        .unwrap_or_else(|| panic!("no parameter called {name}"))
+        .text
+        .clone()
+}
+
 fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
     let effect = eq_n()?;
     let source = source();
@@ -170,6 +204,11 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
     if let Some(effect) = harness.fx.first_mut() {
         if chain == Chain::HighCut {
             restore_high_cut(&mut effect.instance);
+        }
+        if chain == Chain::Dynamic {
+            let state = dynamic_bell(&mut effect.instance);
+            load_state(&mut effect.instance, &state);
+            assert_eq!(text(&mut effect.instance, "Band 1 range"), "-24.0 dB");
         }
         effect.bypassed.store(bypassed, Ordering::Relaxed);
     }
@@ -267,4 +306,59 @@ fn player_bypass_restores_the_dry_render_to_the_bit() {
     };
     let bypassed = render(Chain::HighCut, true).expect("the bundle existed above");
     assert_eq!(bypassed, dry);
+}
+
+/// **A dynamic band cuts what gets loud, through the host** (F1, plan §7.1): drawn at 0 dB, the bell
+/// takes the held note down, and still ends in exact silence.
+#[test]
+fn a_restored_dynamic_band_cuts_the_loud_note() {
+    let Some(dry) = render(Chain::Dry, false) else {
+        return;
+    };
+    let wet = render(Chain::Dynamic, false).expect("the bundle existed above");
+    assert!(wet.iter().all(|sample| sample.is_finite()));
+    assert!(
+        rms(&wet) < rms(&dry) * 0.7,
+        "the dynamic bell left {} of {} RMS",
+        rms(&wet),
+        rms(&dry)
+    );
+    let end = BLOCKS * BLOCK;
+    assert!(
+        wet[(end - 2 * BLOCK) * CHANNELS..]
+            .iter()
+            .all(|sample| *sample == 0.0),
+        "the band must come to rest in exact silence"
+    );
+}
+
+/// **A state from before F1 comes back static** (plan §7.1): the wrapper's own load runs
+/// `filter_state`, so a state without the dynamics ids restores Range 0 over an instance that had
+/// one, rather than keeping it.
+#[test]
+fn an_older_state_restores_every_band_static_through_the_host() {
+    let Some(effect) = eq_n() else {
+        return;
+    };
+    let effects = [(effect.as_path(), EFFECT_ID)];
+    let mut harness =
+        Harness::with_fx(&source(), SOURCE_ID, 1, &effects).expect("the chain builds");
+    let instance = &mut harness.fx[0].instance;
+    let dynamic = dynamic_bell(instance);
+    load_state(instance, &dynamic);
+    assert_eq!(text(instance, "Band 1 range"), "-24.0 dB");
+
+    let mut older = dynamic.clone();
+    let params = older["params"].as_object_mut().expect("parameter map");
+    params.retain(|id, _| {
+        !["range_", "threshold_", "attack_", "release_"]
+            .iter()
+            .any(|field| id.starts_with(field))
+    });
+    assert_eq!(params.len(), 146);
+    load_state(instance, &older);
+    assert_eq!(text(instance, "Band 1 type"), "Bell");
+    assert_eq!(text(instance, "Band 1 range"), "0.0 dB");
+    assert_eq!(text(instance, "Band 1 release"), "150 ms");
+    harness.shutdown();
 }

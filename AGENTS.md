@@ -189,4 +189,4 @@ later, together (the owner, 2026-10-06). CI runs the same on Windows, macOS and 
 |---|---|
 | [`crates/mxm-fx-eq-n-dsp/AGENTS.md`](crates/mxm-fx-eq-n-dsp/AGENTS.md) | The matched SVF bands, the cramping choice, transitions and parking, solo, precision and the measured cost |
 | [`plugins/AGENTS.md`](plugins/AGENTS.md) | Shared plugin conventions: nice-plug, the init patch, presets, `process()` rules, the editor contract, and installing a bundle in a DAW |
-| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 146 permanent parameters and their reserved stepped domains, the empty-EQ Init, solo, the analyser and meter, the graph-and-column editor, the graph as a surface, plain undo, the factory set, the host tests |
+| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 242 permanent parameters and their reserved stepped domains, F1's dynamic bands, the empty-EQ Init, solo, the analyser and meter, the graph-and-column editor, the graph as a surface, plain undo, the factory set, the host tests |

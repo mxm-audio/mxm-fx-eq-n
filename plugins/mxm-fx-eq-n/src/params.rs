@@ -1,10 +1,11 @@
 //! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
-//! **Twenty-four band slots and two globals, 146 parameters.** The slots are nested, so their ids
-//! are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`, `slope_1`, through
-//! `slope_24`. The globals are `output` and `gainscale`. Every id is permanent. A host keeps its
-//! parameter names from load, so a slot is named by its number ("Band 7 frequency"), never by its
-//! shape.
+//! **Twenty-four band slots, two globals and each slot's dynamics, 242 parameters.** The slots are
+//! nested, so their ids are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`,
+//! `slope_1`, through `slope_24`. The globals are `output` and `gainscale`. F1's dynamics (plan
+//! §7.1) come after them, four per slot: `range_1`, `threshold_1`, `attack_1`, `release_1`, through
+//! `release_24`, so no v1 id moved. Every id is permanent. A host keeps its parameter names from
+//! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
 //! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
 //! and presets store the normalised value, so a range that grew would move every saved shape. The
@@ -19,9 +20,13 @@
 
 use std::sync::{Arc, LazyLock, RwLock};
 
+use mxm_fx_eq_n_dsp::dynamics::{
+    ATTACK_MS_MAX, ATTACK_MS_MIN, RANGE_DB_MAX, RELEASE_MS_MAX, RELEASE_MS_MIN, THRESHOLD_DB_MAX,
+    THRESHOLD_DB_MIN,
+};
 use mxm_fx_eq_n_dsp::{
-    Band, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX, Q_MIN,
-    SLOTS, Shape, Slope,
+    Band, Dynamics, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX,
+    Q_MIN, SLOTS, Shape, Slope,
 };
 use nice_plug::prelude::*;
 
@@ -52,6 +57,12 @@ pub const BAND_FIELDS: [&str; 6] = ["type", "bypass", "freq", "gain", "q", "slop
 
 /// The globals' ids, in declaration order.
 pub const GLOBAL_IDS: [&str; 2] = ["output", "gainscale"];
+
+/// A slot's dynamics fields, in declaration order: the suffixes of their ids (plan §7.1).
+pub const DYNAMICS_FIELDS: [&str; 4] = ["range", "threshold", "attack", "release"];
+
+/// Where the dynamics start in [`EqParams::erased`]'s order: after every slot and the globals.
+pub const DYNAMICS_BASE: usize = SLOTS * BAND_FIELDS.len() + GLOBAL_IDS.len();
 
 /// The shape at a type value, or none for Off and for an unassigned value.
 pub fn shape_of(value: i32) -> Option<Shape> {
@@ -192,6 +203,96 @@ impl BandParams {
     }
 }
 
+/// One slot's dynamics (plan §7.1; brief §C): static while Range is 0.
+#[derive(Params)]
+pub struct DynamicsParams {
+    /// How far the band's gain moves with its level: below 0 it cuts what gets loud, above 0 it
+    /// lifts it.
+    #[id = "range"]
+    pub range: FloatParam,
+    #[id = "threshold"]
+    pub threshold: FloatParam,
+    #[id = "attack"]
+    pub attack: FloatParam,
+    #[id = "release"]
+    pub release: FloatParam,
+}
+
+impl DynamicsParams {
+    pub(crate) fn new(index: usize) -> Self {
+        let n = index + 1;
+        let defaults = Dynamics::STATIC;
+        let db = |name: String, default: f32, min: f64, max: f64| {
+            FloatParam::new(
+                name,
+                default,
+                FloatRange::Linear {
+                    min: min as f32,
+                    max: max as f32,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1))
+            .with_string_to_value(Arc::new(|text| {
+                text.trim().trim_end_matches("dB").trim().parse().ok()
+            }))
+        };
+        Self {
+            range: db(
+                format!("Band {n} range"),
+                defaults.range_db,
+                -RANGE_DB_MAX,
+                RANGE_DB_MAX,
+            ),
+            threshold: db(
+                format!("Band {n} threshold"),
+                defaults.threshold_db,
+                THRESHOLD_DB_MIN,
+                THRESHOLD_DB_MAX,
+            ),
+            attack: FloatParam::new(
+                format!("Band {n} attack"),
+                defaults.attack_ms,
+                FloatRange::Skewed {
+                    min: ATTACK_MS_MIN as f32,
+                    max: ATTACK_MS_MAX as f32,
+                    // 10 ms near the middle of the travel, as a log axis would put it.
+                    factor: FloatRange::skew_factor(-2.1),
+                },
+            )
+            .with_value_to_string(Arc::new(attack_text))
+            .with_string_to_value(Arc::new(milliseconds_parse)),
+            release: FloatParam::new(
+                format!("Band {n} release"),
+                defaults.release_ms,
+                FloatRange::Skewed {
+                    min: RELEASE_MS_MIN as f32,
+                    max: RELEASE_MS_MAX as f32,
+                    // About 140 ms in the middle of the travel.
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_value_to_string(Arc::new(release_text))
+            .with_string_to_value(Arc::new(milliseconds_parse)),
+        }
+    }
+
+    /// The slot's dynamics as the engine takes them.
+    pub fn dynamics(&self) -> Dynamics {
+        Dynamics {
+            range_db: self.range.value(),
+            threshold_db: self.threshold.value(),
+            attack_ms: self.attack.value(),
+            release_ms: self.release.value(),
+        }
+    }
+
+    /// The slot's dynamics parameters, in the order of [`DYNAMICS_FIELDS`].
+    pub fn parameters(&self) -> [&dyn mxm_params::ErasedParam; 4] {
+        [&self.range, &self.threshold, &self.attack, &self.release]
+    }
+}
+
 #[derive(Params)]
 pub struct EqParams {
     #[nested(array, group = "Band")]
@@ -202,6 +303,10 @@ pub struct EqParams {
     /// Multiplies every bell, shelf and tilt gain; cuts, notches and band passes stay as drawn.
     #[id = "gainscale"]
     pub gain_scale: FloatParam,
+    /// F1's dynamics, after the globals so that no v1 id moved (plan §7.1). Grouped with their
+    /// slots ("Band 7") in a host.
+    #[nested(array, group = "Band")]
+    pub dynamics: [DynamicsParams; SLOTS],
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
@@ -239,6 +344,7 @@ impl Default for EqParams {
             .with_unit("%")
             .with_value_to_string(formatters::v2s_f32_percentage(1))
             .with_string_to_value(formatters::s2v_f32_percentage()),
+            dynamics: std::array::from_fn(DynamicsParams::new),
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
         }
@@ -247,33 +353,43 @@ impl Default for EqParams {
 
 impl EqParams {
     /// Every host parameter, in the order the undo history's indices name them: each slot's
-    /// fields in [`BAND_FIELDS`] order, slot by slot, then [`GLOBAL_IDS`].
+    /// fields in [`BAND_FIELDS`] order, slot by slot, then [`GLOBAL_IDS`], then each slot's
+    /// dynamics in [`DYNAMICS_FIELDS`] order from [`DYNAMICS_BASE`].
     pub fn erased(&self) -> Vec<&dyn mxm_params::ErasedParam> {
-        let mut all: Vec<&dyn mxm_params::ErasedParam> = Vec::with_capacity(SLOTS * 6 + 2);
+        let mut all: Vec<&dyn mxm_params::ErasedParam> =
+            Vec::with_capacity(DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len());
         for band in &self.bands {
             all.extend(band.parameters());
         }
         all.push(&self.output);
         all.push(&self.gain_scale);
+        for dynamics in &self.dynamics {
+            all.extend(dynamics.parameters());
+        }
         all
     }
 
     /// [`erased`](Self::erased)'s parameter at `index`, without building the list: the editor
     /// reads parameters one at a time, every frame.
     pub fn param(&self, index: usize) -> &dyn mxm_params::ErasedParam {
-        const FIELDS: usize = 6;
+        const FIELDS: usize = BAND_FIELDS.len();
+        const DYNAMICS: usize = DYNAMICS_FIELDS.len();
         match index {
             index if index < SLOTS * FIELDS => {
                 self.bands[index / FIELDS].parameters()[index % FIELDS]
             }
             index if index == SLOTS * FIELDS => &self.output,
-            _ => &self.gain_scale,
+            index if index < DYNAMICS_BASE => &self.gain_scale,
+            index => {
+                let at = (index - DYNAMICS_BASE).min(SLOTS * DYNAMICS - 1);
+                self.dynamics[at / DYNAMICS].parameters()[at % DYNAMICS]
+            }
         }
     }
 
     /// [`erased`](Self::erased)'s parameters as nice-plug's pointers.
     pub fn pointers(&self) -> Vec<nice_plug::params::internals::ParamPtr> {
-        let mut all = Vec::with_capacity(SLOTS * 6 + 2);
+        let mut all = Vec::with_capacity(DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len());
         for band in &self.bands {
             all.extend([
                 band.kind.as_ptr(),
@@ -286,6 +402,14 @@ impl EqParams {
         }
         all.push(self.output.as_ptr());
         all.push(self.gain_scale.as_ptr());
+        for dynamics in &self.dynamics {
+            all.extend([
+                dynamics.range.as_ptr(),
+                dynamics.threshold.as_ptr(),
+                dynamics.attack.as_ptr(),
+                dynamics.release.as_ptr(),
+            ]);
+        }
         all
     }
 }
@@ -300,6 +424,23 @@ static BAND_IDS: LazyLock<[[&'static str; 6]; SLOTS]> = LazyLock::new(|| {
 /// Slot `slot`'s (0-based) permanent ids, in the order of [`BAND_FIELDS`].
 pub fn band_ids(slot: usize) -> &'static [&'static str; 6] {
     &BAND_IDS[slot]
+}
+
+/// Every slot's dynamics ids, in declaration order: `range_1` … `release_24`.
+static DYNAMICS_IDS: LazyLock<[[&'static str; 4]; SLOTS]> = LazyLock::new(|| {
+    std::array::from_fn(|slot| {
+        DYNAMICS_FIELDS.map(|field| &*Box::leak(format!("{field}_{}", slot + 1).into_boxed_str()))
+    })
+});
+
+/// Slot `slot`'s (0-based) permanent dynamics ids, in the order of [`DYNAMICS_FIELDS`].
+pub fn dynamics_ids(slot: usize) -> &'static [&'static str; 4] {
+    &DYNAMICS_IDS[slot]
+}
+
+/// Whether `id` is one of F1's dynamics ids, which an older preset or state does not hold.
+pub fn is_dynamics_id(id: &str) -> bool {
+    DYNAMICS_IDS.iter().any(|ids| ids.contains(&id))
 }
 
 /// Frequency: 10 Hz to 30 kHz, skewed so the middle of the travel is near 1 kHz, as a log axis
@@ -345,6 +486,42 @@ fn q_text(q: f32) -> String {
     } else {
         format!("{q:.1}")
     }
+}
+
+/// `0.5 ms`, `9.9 ms`, then whole milliseconds, `10 ms` to `200 ms`. The precision is chosen from
+/// the reading rounded to tenths, so the host's round trip is idempotent at the switch.
+fn attack_text(ms: f32) -> String {
+    let tenths = (ms * 10.0).round() / 10.0;
+    if tenths < 10.0 {
+        format!("{tenths:.1} ms")
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
+/// Whole milliseconds, `10 ms` to `999 ms`, then seconds, `1.00 s` to `2.00 s`, the unit chosen
+/// from the rounded milliseconds (`mxm_params::text::milliseconds_then_seconds`' rule, in
+/// milliseconds).
+fn release_text(ms: f32) -> String {
+    if ms.round() >= 1_000.0 {
+        format!("{:.2} s", ms / 1_000.0)
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
+/// A typed time back to milliseconds: `250 ms` and `0.25 s` read the same, and a bare number is
+/// milliseconds.
+fn milliseconds_parse(text: &str) -> Option<f32> {
+    let text = text.trim().to_lowercase();
+    let (number, scale) = if let Some(rest) = text.strip_suffix("ms") {
+        (rest, 1.0)
+    } else if let Some(rest) = text.strip_suffix('s') {
+        (rest, 1_000.0)
+    } else {
+        (text.as_str(), 1.0)
+    };
+    number.trim().parse::<f32>().ok().map(|value| value * scale)
 }
 
 fn type_text(value: i32) -> String {
@@ -406,17 +583,21 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_146() {
+    fn the_ids_are_complete_unique_permanent_and_242() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()
             .into_iter()
             .map(|(id, _, _)| id)
             .collect();
-        assert_eq!(ids.len(), 146);
+        assert_eq!(ids.len(), 242);
         let mut want: Vec<&str> = (0..SLOTS).flat_map(|slot| *band_ids(slot)).collect();
         want.extend(GLOBAL_IDS);
-        assert_eq!(want.len(), 146);
+        want.extend((0..SLOTS).flat_map(|slot| *dynamics_ids(slot)));
+        assert_eq!(want.len(), 242);
+        // In the host's order: every v1 id where it was, the dynamics after them.
+        assert_eq!(ids[..DYNAMICS_BASE], want[..DYNAMICS_BASE]);
+        assert_eq!(ids[DYNAMICS_BASE..], want[DYNAMICS_BASE..]);
         for id in &want {
             assert!(ids.iter().any(|other| other == id), "missing {id}");
         }
@@ -433,6 +614,29 @@ mod tests {
             ["type_1", "bypass_1", "freq_1", "gain_1", "q_1", "slope_1"]
         );
         assert_eq!(band_ids(23)[5], "slope_24");
+        assert_eq!(
+            *dynamics_ids(0),
+            ["range_1", "threshold_1", "attack_1", "release_1"]
+        );
+        assert_eq!(dynamics_ids(23)[3], "release_24");
+        assert!(is_dynamics_id("attack_7") && !is_dynamics_id("gain_7"));
+    }
+
+    /// The editor's indices name the same parameters as the host's order.
+    #[test]
+    fn the_editor_indices_follow_the_host_order() {
+        let params = EqParams::default();
+        let erased = params.erased();
+        assert_eq!(erased.len(), 242);
+        for (index, param) in erased.iter().enumerate() {
+            assert_eq!(params.param(index).name(), param.name(), "{index}");
+        }
+        assert_eq!(params.param(DYNAMICS_BASE).name(), "Band 1 range");
+        assert_eq!(
+            params.param(DYNAMICS_BASE + 4 * 6 + 3).name(),
+            "Band 7 release"
+        );
+        assert_eq!(params.pointers().len(), 242);
     }
 
     #[test]
@@ -441,6 +645,7 @@ mod tests {
         assert_eq!(params.bands[6].freq.name(), "Band 7 frequency");
         assert_eq!(params.bands[23].kind.name(), "Band 24 type");
         assert_eq!(params.output.name(), "Output gain");
+        assert_eq!(params.dynamics[6].threshold.name(), "Band 7 threshold");
     }
 
     #[test]
@@ -505,7 +710,11 @@ mod tests {
     /// The stepped values must also parse back to themselves, `Unavailable n` included.
     #[test]
     fn every_reading_survives_the_hosts_text_round_trip() {
-        mxm_plugin_test::text_checks::every_text_round_trips(&EqParams::default(), &[9.995]);
+        // Q's switch to one decimal, Attack's to whole milliseconds, Release's to seconds.
+        mxm_plugin_test::text_checks::every_text_round_trips(
+            &EqParams::default(),
+            &[9.995, 9.95, 999.5],
+        );
         let band = &EqParams::default().bands[0];
         for (param, max) in [(&band.kind, TYPE_MAX), (&band.slope, SLOPE_MAX)] {
             for value in 0..=max {
@@ -526,5 +735,21 @@ mod tests {
         assert_eq!(band.gain_db, 0.0);
         assert_eq!(band.q, 1.0);
         assert!(!band.bypass);
+        assert_eq!(
+            params.dynamics[3].dynamics(),
+            Dynamics::STATIC,
+            "every slot starts static"
+        );
+    }
+
+    #[test]
+    fn the_dynamics_readings() {
+        assert_eq!(attack_text(0.5), "0.5 ms");
+        assert_eq!(attack_text(9.96), "10 ms");
+        assert_eq!(attack_text(200.0), "200 ms");
+        assert_eq!(release_text(150.0), "150 ms");
+        assert_eq!(release_text(999.6), "1.00 s");
+        assert_eq!(milliseconds_parse("0.25 s"), Some(250.0));
+        assert_eq!(milliseconds_parse("12"), Some(12.0));
     }
 }

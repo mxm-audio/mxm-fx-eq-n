@@ -641,7 +641,7 @@ group's tree in every Band state; the ring, the moving curve and the meter only 
   width would move with the gain it decides.
 - **Smoothing the level before the law**: more gain-signal energy, as `mxm-fx-curve` measured.
 
-**Delivery**, each step reviewed by the agent-loop before the next:
+**Delivery.** F1.1 was reviewed on its own; from F1.2 the code of F1.2–F1.4 is written first, its tests written and run at the end, and one agent-loop review covers it (the owner, 2026-10-14: *"write down what to test and then do the tests in the end"*):
 
 | Step | Delivers | Gate |
 |---|---|---|

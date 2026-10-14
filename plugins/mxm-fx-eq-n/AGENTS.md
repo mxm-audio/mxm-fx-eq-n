@@ -35,14 +35,21 @@ and the factory set and the host tests (E4). DAW and listening checks are E5's.
   `-n` is descriptive (*n* bands), not a box number (root `AGENTS.md`, *Naming*).
 - **Layouts:** stereo→stereo and mono→mono, the two channels processed identically (brief A1).
   No note port, so no developer channel (`plugins/AGENTS.md`, *A developer channel*).
-- **146 permanent parameters** (`params.rs`):
+- **242 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
   - `output`, the output gain, as linear gain shown in dB;
-  - `gainscale`, 0–200 %.
+  - `gainscale`, 0–200 %;
+  - F1's dynamics, four per slot after the globals (plan §7.1): `range_<n>`, `threshold_<n>`,
+    `attack_<n>` and `release_<n>`, named "Band 7 range" and grouped with their slot; their place
+    in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved.
 
-  `the_ids_are_complete_unique_permanent_and_146` holds them.
+  `the_ids_are_complete_unique_permanent_and_242` holds them.
+- **A state or preset from before F1 leaves every band static**: a preset through
+  `default_missing_legacy_parameter`, a host state through `filter_state`
+  (`preset::add_dynamics_at_defaults`), which also extends a loaded preset's baseline so it stays
+  clean.
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
   and a preset's band 3 is slot 3. No ownership state exists.
 
@@ -89,7 +96,8 @@ transaction.
   only through its bands (`every_factory_preset_is_heard_and_fills_the_lowest_slots`, which also
   asks the shipped cascade for at least 1 dB of change).
 - **About a dozen, named for the job, every shape used** (brief B), the brief's examples by name
-  (`the_set_is_the_briefs_and_uses_every_shape`).
+  (`the_set_is_the_briefs_and_uses_every_shape`), and F1's two dynamic ones, *De-esser* and
+  *Resonance tamer* (brief §C); `Designed::dynamic` gives a band its dynamics.
 
 ## Band solo is a transient command — [NOTES.md § Why](NOTES.md#band-solo-is-a-transient-command-never-a-parameter)
 
@@ -147,6 +155,11 @@ transaction.
   edits and the column's own decisions (its menus, Solo) — take the history's pending values until
   the host applies them. The column's shared controls read the parameter itself, mxm-kit's binding
   as everywhere ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*; plan §7).
+- **Dynamic bands** (plan §7.1): a bell or shelf's Band card has Range, Threshold, Attack and
+  Release on the shared binding and a meter of how far it moves now; the graph rings a dynamic
+  band's point, draws a line to where its Range would take it, and, while a band moves, the curve
+  as heard over the drawn one, faint. Both read `Telemetry::gains`, published only with an editor
+  connected. A new band writes static dynamics into its slot; a copy takes the original's.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
   falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
@@ -159,7 +172,10 @@ transaction.
   through the CLAP state, and read back by the host under its slot's name.
 - They hold the bundle's boundary (plan §8): discovered as an effect with no map, the editor
   offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
-  ringing down to exact silence, and the player's bypass bit-exact dry.
+  ringing down to exact silence, a dynamic band cutting the loud note, a state from before F1
+  restored static through the wrapper's own `filter_state`, and the player's bypass bit-exact dry.
+- **They read `target/bundled/`, this repository's own**: with a shared `CARGO_TARGET_DIR` the
+  bundle lands in that target's `bundled/` and must be copied here first.
 
 ## Not here, by plan
 

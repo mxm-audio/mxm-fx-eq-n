@@ -186,6 +186,9 @@ The brief asks for about a dozen presets named for the job and gives eight examp
 (E4, 2026-10-14): the eight examples, then *Bass weight*, *Band pass sweep*, *Snare crack* and
 two hum notches, chosen so every shape is used at least once — the low shelf and the band pass
 had no example. Each is a starting point, a few bands of the usual move, not a finished mix.
+F1 adds the two dynamic ones the owner signed (brief §C, 2026-10-14): *De-esser*, a bell at 6.5 kHz
+cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a narrow bell at 2.5 kHz
+(Q 4) cutting up to 6 dB over −35 dB; both at a 0 dB drawn gain, so they touch only what gets loud.
 
 - **Why the lowest slots.** Automation belongs to the slot number (decision 10) and a new band
   takes the lowest Off slot, so a preset in slots 1…n leaves the player's next band in n + 1, and

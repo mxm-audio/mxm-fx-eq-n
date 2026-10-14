@@ -1,5 +1,9 @@
 //! Lock-free, lossy editor telemetry: whether an editor is open, the analyser's switch, the sample
-//! rate, and the Out meter. Observation only; the DSP reads none of it.
+//! rate, the Out meter and each band's gains. Observation only; the DSP reads none of it.
+//!
+//! **Each band's two gains** (plan §7.1): the drawn gain where the DSP has glided it, and the gain
+//! heard, the drawn plus the dynamic moving part held inside ±30 dB, both before the gain scale.
+//! The editor's moving curve draws the heard one, and its meter their difference.
 //!
 //! The meter is mxm-kit's `PeakMeter`, one per channel, the collection's one policy: a peak is
 //! max-combined and reset on read, a peak at or above full scale latches the clip until the player
@@ -17,6 +21,8 @@ pub struct Telemetry {
     sample_rate: AtomicU32,
     /// The Out meter, post output gain: left, right.
     pub output: [PeakMeter; 2],
+    /// Each slot's drawn and heard gains in dB, as `f32` bits.
+    gains: [[AtomicU32; 2]; mxm_fx_eq_n_dsp::SLOTS],
 }
 
 impl Default for Telemetry {
@@ -26,6 +32,7 @@ impl Default for Telemetry {
             analyser_on: AtomicBool::new(true),
             sample_rate: AtomicU32::new(48_000f32.to_bits()),
             output: [PeakMeter::new(), PeakMeter::new()],
+            gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
         }
     }
 }
@@ -39,6 +46,29 @@ impl Telemetry {
             let _ = meter.take();
             meter.clear_clip();
         }
+        for gains in &self.gains {
+            for gain in gains {
+                gain.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// A slot's drawn and heard gains, from the audio thread after a block.
+    pub fn publish_gains(&self, slot: usize, drawn_db: f32, heard_db: f32) {
+        if let Some([drawn, heard]) = self.gains.get(slot) {
+            drawn.store(drawn_db.to_bits(), Ordering::Relaxed);
+            heard.store(heard_db.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// A slot's last published drawn and heard gains, in dB: `(0, 0)` before any.
+    pub fn gains(&self, slot: usize) -> (f32, f32) {
+        self.gains.get(slot).map_or((0.0, 0.0), |[drawn, heard]| {
+            (
+                f32::from_bits(drawn.load(Ordering::Relaxed)),
+                f32::from_bits(heard.load(Ordering::Relaxed)),
+            )
+        })
     }
 
     pub fn connected(&self) -> bool {

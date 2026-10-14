@@ -34,6 +34,17 @@ pub enum Slider {
     Q,
     Output,
     GainScale,
+    Range,
+    Threshold,
+    Attack,
+    Release,
+}
+
+impl Slider {
+    /// A control of the selected band's, rather than of the whole EQ.
+    fn of_the_band(self) -> bool {
+        !matches!(self, Slider::Output | Slider::GainScale)
+    }
 }
 
 /// What a leaf of the column's cards draws.
@@ -50,11 +61,18 @@ pub enum Leaf {
     Resolution,
     Speed,
     Tilt,
+    /// How far a dynamic band's gain is moving now (plan §7.1).
+    Moving,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
 const SLOPE_DESCRIPTION: &str = "How steeply the cut falls away past its frequency.";
 const BYPASS_DESCRIPTION: &str = "Takes the band out of the sound and keeps its settings.";
+const MOVING_DESCRIPTION: &str =
+    "How far the band is moving now: left of the middle it cuts, right of it lifts.";
+/// The moving meter's height, and the dB from its middle to an end.
+const MOVING_HEIGHT: f32 = 10.0;
+const MOVING_SPAN_DB: f32 = 30.0;
 const SOLO_DESCRIPTION: &str = "Plays only what this band works on, until it is pressed again.";
 const NO_BAND_DESCRIPTION: &str =
     "Click a point on the graph to show its band here, or click the line to add one.";
@@ -85,7 +103,34 @@ fn shapes() -> Vec<String> {
 fn bound(params: &EqParams, slot: usize, slider: Slider) -> Bound<'_> {
     let band = &params.bands[slot];
     let ids = band_ids(slot);
+    let dynamics = &params.dynamics[slot];
+    let dynamics_ids = crate::params::dynamics_ids(slot);
     match slider {
+        Slider::Range => Bound::new(
+            dynamics_ids[0],
+            &dynamics.range,
+            "How far the band moves when it gets loud: below 0 it cuts, above 0 it lifts. At 0 \
+             the band stays as drawn.",
+        )
+        .labelled("Range"),
+        Slider::Threshold => Bound::new(
+            dynamics_ids[1],
+            &dynamics.threshold,
+            "How loud the band has to get before it moves.",
+        )
+        .labelled("Threshold"),
+        Slider::Attack => Bound::new(
+            dynamics_ids[2],
+            &dynamics.attack,
+            "How fast the band moves when it gets loud.",
+        )
+        .labelled("Attack"),
+        Slider::Release => Bound::new(
+            dynamics_ids[3],
+            &dynamics.release,
+            "How fast the band comes back when the sound falls.",
+        )
+        .labelled("Release"),
         Slider::Frequency => Bound::new(
             ids[Field::Freq as usize],
             &band.freq,
@@ -156,7 +201,7 @@ fn button_leaf(key: Leaf, label: &str) -> Node<Leaf> {
 }
 
 /// One shape's Band body, for slot `slot`.
-fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slope) -> Node<Leaf> {
+pub(crate) fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slope) -> Node<Leaf> {
     let mut rows = vec![
         leaf(
             Leaf::Bypass,
@@ -175,6 +220,25 @@ fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slope) -> Node
     }
     if shape.has_slope() {
         rows.push(selector_leaf(Leaf::Slope, "Slope", slopes()));
+    }
+    if shape.is_dynamic() {
+        // Two to a row, so the card that holds them still opens inside the budget (§8).
+        for pair in [
+            [Slider::Range, Slider::Threshold],
+            [Slider::Attack, Slider::Release],
+        ] {
+            rows.push(tree::row(
+                pair.map(|slider| slider_leaf(params, slot, slider)).into(),
+            ));
+        }
+        rows.push(leaf(
+            Leaf::Moving,
+            Kind::Custom {
+                min_width: 0.0,
+                height: tree::Height::Fixed(MOVING_HEIGHT),
+                fills: true,
+            },
+        ));
     }
     let mut actions = Vec::new();
     if shape.offers_solo() {
@@ -463,8 +527,11 @@ impl EqApp {
             }
             Leaf::Slider(slider) => {
                 let params = self.params.clone();
-                let band_slider = matches!(slider, Slider::Frequency | Slider::Gain | Slider::Q);
-                let slot = if band_slider { selected } else { Some(0) };
+                let slot = if slider.of_the_band() {
+                    selected
+                } else {
+                    Some(0)
+                };
                 if let Some(slot) = slot {
                     // No band in the sound has a gain to scale: the slider fades, and its hover
                     // says why. It stays a control, as every parameter is (plan §8).
@@ -546,10 +613,45 @@ impl EqApp {
                     self.set_view(settings);
                 }
             }
+            Leaf::Moving => {
+                if let Some(slot) = selected {
+                    let (drawn, heard) = self.telemetry.gains(slot);
+                    self.paint_moving(ui, tokens, rect, heard - drawn);
+                }
+            }
             Leaf::Show | Leaf::Resolution | Leaf::Speed | Leaf::Tilt => {
                 self.paint_setting(ui, tokens, leaf);
             }
         }
+    }
+
+    /// The moving meter: a track with its middle marked, and a bar from the middle to the band's
+    /// movement, left for a cut and right for a lift. Its reading is its name for a screen reader.
+    fn paint_moving(&self, ui: &mut Ui, tokens: &Tokens, rect: Rect, moving_db: f32) {
+        let response = ui.allocate_rect(rect, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, tokens.surface_2);
+        let middle = rect.center().x;
+        let half = rect.width() / 2.0;
+        let reach = (moving_db / MOVING_SPAN_DB).clamp(-1.0, 1.0) * half;
+        if reach != 0.0 {
+            let bar = Rect::from_x_y_ranges(
+                middle.min(middle + reach)..=middle.max(middle + reach),
+                rect.y_range(),
+            );
+            painter.rect_filled(bar, 2.0, tokens.accent);
+        }
+        painter.line_segment(
+            [
+                egui::pos2(middle, rect.top()),
+                egui::pos2(middle, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, tokens.border_strong),
+        );
+        let reading = format!("Moving {moving_db:+.1} dB");
+        response
+            .on_hover_text(MOVING_DESCRIPTION)
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &reading));
     }
 
     fn paint_setting(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf) {

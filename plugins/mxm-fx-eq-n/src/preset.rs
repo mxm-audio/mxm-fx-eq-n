@@ -10,7 +10,9 @@ use std::sync::RwLock;
 use mxm_fx_eq_n_dsp::SLOTS;
 pub use mxm_preset::{Category, Preset, PresetIdentity};
 
-use crate::params::{EqParams, GLOBAL_IDS, band_ids};
+use crate::params::{
+    DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, band_ids, dynamics_ids, is_dynamics_id,
+};
 
 impl mxm_preset::Instrument for EqParams {
     fn clap_id(&self) -> &'static str {
@@ -18,13 +20,27 @@ impl mxm_preset::Instrument for EqParams {
     }
 
     fn parameters(&self) -> Vec<(&'static str, &dyn mxm_params::ErasedParam)> {
-        let mut out = Vec::with_capacity(SLOTS * 6 + GLOBAL_IDS.len());
+        let mut out = Vec::with_capacity(SLOTS * (6 + DYNAMICS_FIELDS.len()) + GLOBAL_IDS.len());
         for (slot, band) in self.bands.iter().enumerate() {
             out.extend(band_ids(slot).iter().copied().zip(band.parameters()));
         }
         let globals: [&dyn mxm_params::ErasedParam; 2] = [&self.output, &self.gain_scale];
         out.extend(GLOBAL_IDS.into_iter().zip(globals));
+        for (slot, dynamics) in self.dynamics.iter().enumerate() {
+            out.extend(
+                dynamics_ids(slot)
+                    .iter()
+                    .copied()
+                    .zip(dynamics.parameters()),
+            );
+        }
         out
+    }
+
+    /// **F1's dynamics are older presets' defaults** (plan §7.1): a preset written before them
+    /// leaves every band static, not keeping a Range the instance had.
+    fn default_missing_legacy_parameter(&self, id: &str) -> bool {
+        is_dynamics_id(id)
     }
 
     fn identity(&self) -> &RwLock<PresetIdentity> {
@@ -33,6 +49,66 @@ impl mxm_preset::Instrument for EqParams {
 
     fn factory_files(&self) -> &'static [(&'static str, &'static str)] {
         FACTORY_FILES
+    }
+}
+
+/// **A host state from before F1 restores every band static** (plan §7.1), for
+/// `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each missing dynamics
+/// id is written at its default, and a loaded preset's baseline that lacks it gains its normalised
+/// default, so the preset keeps its clean or Modified meaning (`mxm_preset::add_switches_off`'s
+/// rule, at each field's own default rather than Off).
+pub fn add_dynamics_at_defaults(state: &mut nice_plug::prelude::PluginState) {
+    static DEFAULTS: std::sync::LazyLock<Vec<(&'static str, f32, f32)>> =
+        std::sync::LazyLock::new(|| {
+            use nice_plug::params::Param;
+            let mut all = Vec::with_capacity(SLOTS * DYNAMICS_FIELDS.len());
+            for slot in 0..SLOTS {
+                let params = DynamicsParams::new(slot);
+                let fields = [
+                    &params.range,
+                    &params.threshold,
+                    &params.attack,
+                    &params.release,
+                ];
+                for (id, param) in dynamics_ids(slot).iter().zip(fields) {
+                    all.push((
+                        *id,
+                        param.default_plain_value(),
+                        param.default_normalized_value(),
+                    ));
+                }
+            }
+            all
+        });
+    for (id, plain, _) in DEFAULTS.iter() {
+        state
+            .params
+            .entry((*id).to_owned())
+            .or_insert(nice_plug::plugin::ParamValue::F32(*plain));
+    }
+    let Some(serialized) = state.fields.get_mut("preset") else {
+        return;
+    };
+    let Ok(mut identity) =
+        nice_plug::params::persist::deserialize_field::<PresetIdentity>(serialized)
+    else {
+        return;
+    };
+    if identity.loaded.is_none()
+        || DEFAULTS
+            .iter()
+            .all(|(id, _, _)| identity.baseline.contains_key(*id))
+    {
+        return;
+    }
+    for (id, _, normalised) in DEFAULTS.iter() {
+        identity
+            .baseline
+            .entry((*id).to_owned())
+            .or_insert(*normalised);
+    }
+    if let Ok(canonical) = nice_plug::params::persist::serialize_field(&identity) {
+        *serialized = canonical;
     }
 }
 
@@ -75,6 +151,11 @@ pub const FACTORY_FILES: &[(&str, &str)] = &[
         "Hum notch 60 Hz",
         include_str!("../presets/hum-notch-60-hz.json"),
     ),
+    ("De-esser", include_str!("../presets/de-esser.json")),
+    (
+        "Resonance tamer",
+        include_str!("../presets/resonance-tamer.json"),
+    ),
 ];
 
 #[cfg(test)]
@@ -84,7 +165,7 @@ mod tests {
         BandParams, DEFAULT_SLOPE, SHAPES, shape_of, slope_of, slope_value, type_of,
     };
     use mxm_fx_eq_n_dsp::{
-        Design, FREQ_MIN, GAIN_RANGE, Q_MAX, Q_MIN, Shape, Slope, design, max_frequency,
+        Design, Dynamics, FREQ_MIN, GAIN_RANGE, Q_MAX, Q_MIN, Shape, Slope, design, max_frequency,
     };
     use mxm_preset::{INIT_NAME, Instrument, Value, factory, library};
     use nice_plug::params::{Param, Params};
@@ -97,6 +178,29 @@ mod tests {
         gain_db: f32,
         q: f32,
         slope: Slope,
+        /// Static unless the design says otherwise ([`Designed::dynamic`]; plan §7.1).
+        dynamics: Dynamics,
+    }
+
+    impl Designed {
+        /// The band, dynamic: Range, Threshold, Attack and Release (brief §C).
+        const fn dynamic(
+            self,
+            range_db: f32,
+            threshold_db: f32,
+            attack_ms: f32,
+            release_ms: f32,
+        ) -> Designed {
+            Designed {
+                dynamics: Dynamics {
+                    range_db,
+                    threshold_db,
+                    attack_ms,
+                    release_ms,
+                },
+                ..self
+            }
+        }
     }
 
     /// The defaults a new band of each shape takes (brief A4): Q 0.707 for shelves and cuts, 1 for
@@ -108,6 +212,7 @@ mod tests {
             gain_db,
             q,
             slope: DEFAULT_SLOPE,
+            dynamics: Dynamics::STATIC,
         }
     }
     const fn low_shelf(freq: f32, gain_db: f32) -> Designed {
@@ -117,6 +222,7 @@ mod tests {
             gain_db,
             q: 0.707,
             slope: DEFAULT_SLOPE,
+            dynamics: Dynamics::STATIC,
         }
     }
     const fn high_shelf(freq: f32, gain_db: f32) -> Designed {
@@ -132,6 +238,7 @@ mod tests {
             gain_db: 0.0,
             q: 0.707,
             slope,
+            dynamics: Dynamics::STATIC,
         }
     }
     const fn high_cut(freq: f32, slope: Slope) -> Designed {
@@ -147,6 +254,7 @@ mod tests {
             gain_db: 0.0,
             q,
             slope: DEFAULT_SLOPE,
+            dynamics: Dynamics::STATIC,
         }
     }
     const fn band_pass(freq: f32, q: f32) -> Designed {
@@ -163,6 +271,7 @@ mod tests {
             gain_db,
             q: 1.0,
             slope: DEFAULT_SLOPE,
+            dynamics: Dynamics::STATIC,
         }
     }
 
@@ -243,6 +352,17 @@ mod tests {
                 notch(240.0, 10.0),
             ],
         ),
+        // F1's two (brief §C): a band that cuts only when it gets loud.
+        (
+            "De-esser",
+            Category::Fx,
+            &[bell(6_500.0, 0.0, 2.0).dynamic(-6.0, -30.0, 1.0, 60.0)],
+        ),
+        (
+            "Resonance tamer",
+            Category::Fx,
+            &[bell(2_500.0, 0.0, 4.0).dynamic(-6.0, -35.0, 5.0, 100.0)],
+        ),
     ];
 
     /// A design as a complete preset: Init, then each band's six fields in its slot, every text
@@ -262,6 +382,24 @@ mod tests {
                 fields.slope.preview_normalized(slope_value(band.slope)),
             ];
             for (id, v) in band_ids(slot).iter().zip(values) {
+                preset.params.insert(
+                    (*id).to_owned(),
+                    Value {
+                        v,
+                        text: String::new(),
+                    },
+                );
+            }
+            let fields = &params.dynamics[slot];
+            let dynamics = [
+                fields.range.preview_normalized(band.dynamics.range_db),
+                fields
+                    .threshold
+                    .preview_normalized(band.dynamics.threshold_db),
+                fields.attack.preview_normalized(band.dynamics.attack_ms),
+                fields.release.preview_normalized(band.dynamics.release_ms),
+            ];
+            for (id, v) in dynamics_ids(slot).iter().zip(dynamics) {
                 preset.params.insert(
                     (*id).to_owned(),
                     Value {
@@ -331,6 +469,18 @@ mod tests {
                 "no factory preset uses {shape:?}"
             );
         }
+        // F1's two (brief §C), each with a dynamic band, and only they are dynamic.
+        for (name, _, bands) in FACTORY_DESIGN {
+            let dynamic = bands.iter().any(|band| band.dynamics != Dynamics::STATIC);
+            let signed = ["De-esser", "Resonance tamer"].contains(name);
+            assert_eq!(dynamic, signed, "{name}");
+            assert!(
+                bands
+                    .iter()
+                    .all(|band| band.dynamics == Dynamics::STATIC || band.shape.is_dynamic()),
+                "{name}: dynamics on a band that has none"
+            );
+        }
     }
 
     /// Every designed value inside its range at the lowest common rate, and stored as a band of
@@ -366,7 +516,7 @@ mod tests {
                 Preset::parse(text, crate::CLAP_ID).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             assert_eq!(&preset.name, name);
             assert_ne!(preset.category, Category::Uncategorised, "{name}");
-            assert_eq!(preset.params.len(), 146, "{name}");
+            assert_eq!(preset.params.len(), 242, "{name}");
             assert!(preset.resolve(&params).1.is_empty(), "{name} is incomplete");
             assert!(
                 preset.state.is_none(),
@@ -395,7 +545,8 @@ mod tests {
 
     /// **Every preset is heard, and leaves the slots after its bands free**: its bands sit in slots
     /// 1…n, none bypassed, the rest Off; the output and the gain scale stay at Init's; and
-    /// the shipped cascade's response moves at least 1 dB somewhere between 20 Hz and 20 kHz.
+    /// the shipped cascade's response moves at least 1 dB somewhere between 20 Hz and 20 kHz, a
+    /// dynamic band taken at its full Range, as a loud signal moves it.
     #[test]
     fn every_factory_preset_is_heard_and_fills_the_lowest_slots() {
         let params = EqParams::default();
@@ -418,13 +569,17 @@ mod tests {
             }
             let cascades: Vec<_> = bands[..used]
                 .iter()
-                .map(|band| {
+                .enumerate()
+                .map(|(slot, band)| {
+                    let range = &params.dynamics[slot].range;
+                    let moved = range.preview_plain(preset.params[dynamics_ids(slot)[0]].v);
+                    let limit = GAIN_RANGE as f32;
                     design(
                         Design {
                             shape: band.shape.unwrap(),
                             slope: band.slope,
                             freq: f64::from(band.freq),
-                            gain_db: f64::from(band.gain_db),
+                            gain_db: f64::from((band.gain_db + moved).clamp(-limit, limit)),
                             q: f64::from(band.q),
                         },
                         rate,
@@ -471,7 +626,7 @@ mod tests {
     fn every_host_parameter_is_declared_once_under_its_own_id() {
         let params = EqParams::default();
         let declared = params.parameters();
-        assert_eq!(declared.len(), 146);
+        assert_eq!(declared.len(), 242);
         let host: Vec<String> = params
             .param_map()
             .into_iter()
@@ -507,7 +662,7 @@ mod tests {
     fn the_init_preset_is_the_parameter_defaults_and_the_empty_eq() {
         let params = EqParams::default();
         let init = Preset::init(&params);
-        assert_eq!(init.params.len(), 146);
+        assert_eq!(init.params.len(), 242);
         for (id, param) in params.parameters() {
             assert_eq!(
                 init.params[id].v,
@@ -527,5 +682,101 @@ mod tests {
         assert!(bands.iter().all(|band| band.shape.is_none()));
         assert_eq!(params.output.default_plain_value(), 1.0);
         assert_eq!(params.gain_scale.default_plain_value(), 1.0);
+    }
+}
+
+/// F1's migrations (plan §7.1): what an older preset or host state leaves of the dynamics.
+#[cfg(test)]
+mod dynamics_migration {
+    use super::*;
+    use mxm_preset::{Instrument, LoadedPreset, Origin};
+    use nice_plug::params::persist::{deserialize_field, serialize_field};
+    use nice_plug::plugin::ParamValue;
+
+    /// **A preset written before F1 restores every band static**: resolving it writes each
+    /// dynamics id at its default and names no problem.
+    #[test]
+    fn an_older_preset_leaves_every_band_static() {
+        let params = EqParams::default();
+        let mut older = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
+        older.params.retain(|id, _| !is_dynamics_id(id));
+        assert_eq!(older.params.len(), 146);
+        let (writes, problems) = older.resolve(&params);
+        assert!(problems.is_empty(), "{problems:?}");
+        let parameters = params.parameters();
+        for (id, _, v) in writes.iter().filter(|(id, _, _)| is_dynamics_id(id)) {
+            let (_, param) = parameters.iter().find(|(known, _)| known == id).unwrap();
+            assert_eq!(*v, param.default_normalised(), "{id}");
+        }
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, _, _)| is_dynamics_id(id))
+                .count(),
+            SLOTS * DYNAMICS_FIELDS.len()
+        );
+    }
+
+    /// **A host state from before F1 restores every band static, and its preset stays clean**
+    /// (`add_dynamics_at_defaults`): each missing id gains its plain default, a loaded preset's
+    /// baseline its normalised one; a value the state holds is kept, and with no preset loaded
+    /// there is no baseline to extend.
+    #[test]
+    fn an_older_host_state_gains_static_dynamics_and_its_preset_stays_clean() {
+        let params = EqParams::default();
+        let v1: Vec<&str> = params
+            .parameters()
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| !is_dynamics_id(id))
+            .collect();
+        let identity = PresetIdentity {
+            loaded: Some(LoadedPreset {
+                name: "Air".to_owned(),
+                origin: Origin::Factory,
+            }),
+            baseline: v1.iter().map(|id| ((*id).to_owned(), 0.5)).collect(),
+            ..PresetIdentity::default()
+        };
+        let mut state = nice_plug::prelude::PluginState {
+            version: String::new(),
+            params: v1
+                .iter()
+                .map(|id| ((*id).to_owned(), ParamValue::F32(0.5)))
+                .chain([("attack_3".to_owned(), ParamValue::F32(42.0))])
+                .collect(),
+            fields: [("preset".to_owned(), serialize_field(&identity).unwrap())]
+                .into_iter()
+                .collect(),
+        };
+        add_dynamics_at_defaults(&mut state);
+        assert_eq!(state.params.len(), 242);
+        assert!(matches!(state.params["range_1"], ParamValue::F32(v) if v == 0.0));
+        assert!(matches!(state.params["release_24"], ParamValue::F32(v) if v == 150.0));
+        assert!(
+            matches!(state.params["attack_3"], ParamValue::F32(v) if v == 42.0),
+            "a value the state holds is kept"
+        );
+        let migrated: PresetIdentity = deserialize_field(&state.fields["preset"]).unwrap();
+        assert_eq!(migrated.baseline.len(), 242);
+        assert_eq!(
+            migrated.baseline["range_1"],
+            nice_plug::params::Param::default_normalized_value(&params.dynamics[0].range)
+        );
+        assert_eq!(migrated.baseline["freq_1"], 0.5);
+
+        let mut unloaded = nice_plug::prelude::PluginState {
+            version: String::new(),
+            params: Default::default(),
+            fields: [(
+                "preset".to_owned(),
+                serialize_field(&PresetIdentity::default()).unwrap(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        add_dynamics_at_defaults(&mut unloaded);
+        let none: PresetIdentity = deserialize_field(&unloaded.fields["preset"]).unwrap();
+        assert!(none.baseline.is_empty());
     }
 }

@@ -464,3 +464,56 @@ fn a_hosts_block_sizes_change_nothing() {
         assert_eq!(render(sizes), whole, "{sizes:?}");
     }
 }
+
+/// **The shell feeds the dynamics to the engine, and reports what they do only to an editor**
+/// (plan §7.1, §4): a bell at 0 dB with Range −12 dB cuts a loud tone at its centre, inside its
+/// Range; the drawn and heard gains are published only while an editor is connected, and a
+/// connect clears them.
+#[test]
+fn a_dynamic_band_cuts_what_gets_loud_and_tells_only_an_editor() {
+    let mut plugin = prepared(2);
+    set_band(
+        &plugin.params.bands[4],
+        Some(Shape::Bell),
+        1_000.0,
+        0.0,
+        2.0,
+        Slope::Db12,
+    );
+    let dynamics = &plugin.params.dynamics[4];
+    set_float(&dynamics.range, -12.0);
+    set_float(&dynamics.threshold, -40.0);
+    set_float(&dynamics.attack, 1.0);
+    set_float(&dynamics.release, 50.0);
+    let input: Vec<f32> = (0..96_000)
+        .map(|i| (0.5 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+        .collect();
+    let mut buffers = vec![input.clone(), input.clone()];
+    run(&mut plugin, &mut buffers);
+    let heard = tone_db(&buffers[0], 1_000.0, 0.5);
+    assert!(
+        (-12.0..-6.0).contains(&heard),
+        "a loud tone is cut: {heard} dB"
+    );
+    assert_eq!(
+        plugin.telemetry.gains(4),
+        (0.0, 0.0),
+        "no editor, nothing published"
+    );
+
+    plugin.telemetry.connect(true);
+    let mut again = vec![input.clone(), input];
+    run(&mut plugin, &mut again);
+    let (drawn, heard) = plugin.telemetry.gains(4);
+    assert!(drawn.abs() < 1e-3, "the drawn gain stays 0 dB: {drawn}");
+    assert!(
+        (-12.0..-6.0).contains(&heard),
+        "the heard gain is the cut: {heard}"
+    );
+    plugin.telemetry.connect(true);
+    assert_eq!(
+        plugin.telemetry.gains(4),
+        (0.0, 0.0),
+        "a connect clears them"
+    );
+}

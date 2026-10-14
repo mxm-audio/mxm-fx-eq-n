@@ -69,6 +69,9 @@ impl MxmFxEqN {
         for (slot, band) in self.params.bands.iter().enumerate() {
             self.engine.set_band(slot, band.band());
         }
+        for (slot, dynamics) in self.params.dynamics.iter().enumerate() {
+            self.engine.set_dynamics(slot, dynamics.dynamics());
+        }
         self.engine.set_output_gain(self.params.output.value());
         self.engine.set_gain_scale(self.params.gain_scale.value());
         let solo = if self.offline || !self.telemetry.connected() {
@@ -158,6 +161,12 @@ impl MxmFxEqN {
             for (meter, peak) in self.telemetry.output.iter().zip(peaks) {
                 meter.publish(peak);
             }
+            for slot in 0..mxm_fx_eq_n_dsp::SLOTS {
+                if let Some((drawn, heard)) = self.engine.gains_db(slot) {
+                    self.telemetry
+                        .publish_gains(slot, drawn as f32, heard as f32);
+                }
+            }
         }
 
         // A band still ringing keeps the host calling; once every state has settled to exact
@@ -211,6 +220,12 @@ impl Plugin for MxmFxEqN {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    /// A state from before F1 restores every band static, its loaded preset still clean
+    /// (`preset::add_dynamics_at_defaults`).
+    fn filter_state(state: &mut PluginState) {
+        preset::add_dynamics_at_defaults(state);
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
