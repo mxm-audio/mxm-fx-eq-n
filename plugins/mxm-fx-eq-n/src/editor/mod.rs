@@ -8,8 +8,9 @@
 //!   outputs come here ([`EqApp::on_surface`]) and edit the bands.
 //! - **Every host write goes through the [`history::Recorder`]**, so undo sees the column's
 //!   controls, the graph's drags and the keyboard's gestures alike.
-//! - **Solo is held, not latched**: from the press to the release of the Band card's Hold button,
-//!   a Ctrl/Cmd press on a point, or OPEN held with the cursor on Hold. It crosses
+//! - **Solo is a toggle** (the owner, 2026-10-14): the Band card's Solo button latches it on the
+//!   selected band, until it is pressed again, another band is selected, the band leaves the sound
+//!   or the patch is replaced; a Ctrl/Cmd press on a point solos that point while held. It crosses
 //!   `crate::audition`, so the DSP reads no editor state; the shell ends it on reset, deactivation
 //!   and restore, and the editor ends it on close.
 
@@ -60,7 +61,7 @@ pub const ANALYSER_CARD: u64 = 4;
 pub const CARDS: [u64; 4] = [GRAPH_CARD, BAND_CARD, OUTPUT_CARD, ANALYSER_CARD];
 /// The graph's key in the cursor's registry.
 pub const GRAPH_KEY: &str = "graph";
-/// The Hold button's key: OPEN held on it holds solo.
+/// The Solo button's key: OPEN on it presses it.
 pub const SOLO_KEY: &str = "solo";
 
 pub type EqEditor = nice_plug_egui::EguiEditor<EqApp>;
@@ -174,10 +175,11 @@ pub struct EqApp {
     /// When the wheel last turned Q, which ends its gesture after a pause.
     pub(crate) wheel_until: Option<f64>,
     pub(crate) context_slot: Option<usize>,
-    /// A held solo this frame, from the pointer or a key.
+    /// A held solo this frame: Ctrl/Cmd held on a point.
     pub(crate) pointer_solo: Option<usize>,
-    /// The band whose Hold button a press began on, until the press is released.
-    pub(crate) solo_button: Option<usize>,
+    /// The band the Solo button latched, until it is pressed again, another band is selected,
+    /// the band leaves the sound or the patch is replaced.
+    pub(crate) latched: Option<usize>,
     solo_endings: u32,
     /// The shell ended a solo while a press held it: that press may not bring it back.
     solo_blocked: bool,
@@ -227,7 +229,7 @@ impl EqApp {
             wheel_until: None,
             context_slot: None,
             pointer_solo: None,
-            solo_button: None,
+            latched: None,
             solo_endings: 0,
             solo_blocked: false,
             spectrum,
@@ -608,29 +610,49 @@ impl EqApp {
         self.audition.slot()
     }
 
-    /// Solo, from whichever control holds it, to the shell. Only a band in the sound can be
-    /// soloed: a bypassed band, the tilt and an Off slot are refused here as the DSP refuses them.
-    /// `open_held`: OPEN (Enter) is down with the cursor on the Hold button.
-    pub(crate) fn publish_solo(&mut self, open_held: bool) {
+    /// Solo, from the Solo button's latch or a point held, to the shell. Only a band in the sound
+    /// can be soloed: a bypassed band, the tilt and an Off slot are refused here as the DSP refuses
+    /// them, and a latch on one is let go.
+    pub(crate) fn publish_solo(&mut self) {
         let (endings, stored) = self.audition.state();
         if endings != self.solo_endings {
-            // The shell ended a solo (a reset, a deactivation or a restored state): whatever press
-            // holds one now may not bring it back.
+            // The shell ended a solo (a reset, a deactivation or a restored state): the latch goes,
+            // and whatever press holds one now may not bring it back.
             self.solo_endings = endings;
             self.solo_blocked = true;
+            self.latched = None;
         }
-        let keyboard = open_held.then_some(self.selected).flatten();
-        let held = self.pointer_solo.or(keyboard);
+        // A latch is the selected band's, and only while that band is in the sound.
+        if let Some(slot) = self.latched
+            && (self.selected != Some(slot) || !self.offers_solo(slot))
+        {
+            self.latched = None;
+        }
+        let held = self.pointer_solo;
         if held.is_none() {
             self.solo_blocked = false;
         }
         let wanted = held
             .filter(|_| !self.solo_blocked)
+            .or(self.latched)
             .filter(|&slot| self.offers_solo(slot));
         if wanted != stored {
             // Refused only if the shell ended a solo since `endings` was read; the next frame sees it.
             self.audition.request(endings, wanted);
         }
+    }
+
+    /// The Solo button, pressed: latches `slot`'s solo, or lets it go.
+    pub(crate) fn toggle_solo(&mut self, slot: usize) {
+        self.latched = (self.latched != Some(slot)).then_some(slot);
+    }
+
+    /// Whether the gain scale changes anything heard: a band in the sound with a gain.
+    pub(crate) fn gain_heard(&self) -> bool {
+        (0..SLOTS).any(|slot| {
+            let band = self.band_now(slot);
+            !band.bypass && band.shape.is_some_and(Shape::has_gain)
+        })
     }
 
     pub(crate) fn offers_solo(&self, slot: usize) -> bool {
@@ -644,7 +666,7 @@ impl EqApp {
             self.audition.request(endings, None);
         }
         self.pointer_solo = None;
-        self.solo_button = None;
+        self.latched = None;
         self.solo_blocked = false;
     }
 
@@ -720,6 +742,8 @@ impl EqApp {
         self.wheel_until = None;
         self.copy = None;
         self.drag = None;
+        // A solo latched on the patch replaced is let go with it.
+        self.latched = None;
         ctx.stop_dragging();
     }
 

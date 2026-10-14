@@ -1313,45 +1313,82 @@ fn the_analyser_coming_back_on_starts_from_silence() {
     );
 }
 
+/// **Solo is a toggle** (the owner, 2026-10-14: held, the band could not be edited while it
+/// played). It stays on with nothing held, and goes when it is pressed again, when the shell ends
+/// it, when its band leaves the sound, when another band is selected and when the editor closes.
 #[test]
-fn solo_is_held_never_latched_refused_where_nothing_is_heard_and_ends_on_close() {
+fn solo_latches_on_the_selected_band_until_something_lets_it_go() {
     let mut rig = Rig::new();
     rig.press(Vec::new());
     rig.app.insert_at(1_000.0);
-    // Held: the pointer on the Hold button is the editor's own record of it.
-    rig.app.publish_solo(true);
-    assert_eq!(rig.audition.slot(), Some(0), "held");
-    rig.app.publish_solo(true);
-    assert_eq!(rig.audition.slot(), Some(0), "still held");
-    rig.app.publish_solo(false);
-    assert_eq!(rig.audition.slot(), None, "released");
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
+    assert_eq!(rig.audition.slot(), Some(0), "latched");
+    // Edited while it plays, with nothing held.
+    rig.app.instant(&[(band_index(0, Field::Gain), 0.7)]);
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    assert_eq!(rig.audition.slot(), Some(0), "still on");
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
+    assert_eq!(rig.audition.slot(), None, "pressed again");
 
-    // The shell ends a solo while it is held: the same press cannot bring it back.
-    rig.app.publish_solo(true);
+    // The shell ends it: the latch goes with it, and stays gone.
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
     rig.audition.end();
-    rig.app.publish_solo(true);
-    rig.app.publish_solo(true);
+    rig.app.publish_solo();
+    rig.app.publish_solo();
     assert_eq!(rig.audition.slot(), None);
-    rig.app.publish_solo(false);
+    assert_eq!(rig.app.latched, None);
 
-    // A bypassed band is not in the sound, so it cannot be soloed.
+    // A bypassed band is not in the sound: the latch is let go, and stays let go.
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
     rig.app.set_bypass(0, true);
-    rig.app.publish_solo(true);
+    rig.app.publish_solo();
     assert_eq!(rig.audition.slot(), None);
-    rig.app.publish_solo(false);
     rig.app.set_bypass(0, false);
+    rig.app.publish_solo();
+    assert_eq!(rig.audition.slot(), None, "un-bypassed, not soloed again");
 
-    // Closing the editor while it is held ends it.
-    rig.app.publish_solo(true);
+    // Another band selected lets it go.
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
+    assert_eq!(rig.audition.slot(), Some(0));
+    rig.app.insert_at(4_000.0);
+    rig.app.publish_solo();
+    assert_eq!(rig.audition.slot(), None);
+
+    // Closing the editor ends it.
+    rig.app.select(0);
+    rig.app.toggle_solo(0);
+    rig.app.publish_solo();
     assert_eq!(rig.audition.slot(), Some(0));
     rig.app.detach();
     assert_eq!(rig.audition.slot(), None);
     assert!(!rig.telemetry.connected());
 }
 
-/// OPEN held with the cursor on Hold holds solo, as the button held does.
+/// A preset load replaces the band the solo was on, so the latch goes with the patch.
 #[test]
-fn open_held_on_hold_solos_the_band() {
+fn a_preset_load_lets_a_latched_solo_go() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.app.toggle_solo(0);
+    rig.press(Vec::new());
+    assert_eq!(rig.audition.slot(), Some(0));
+    rig.app.start_replacing();
+    rig.app.instant(&[(band_index(0, Field::Freq), 0.3)]);
+    rig.app.finish_replacing(&rig.ctx.clone());
+    rig.press(Vec::new());
+    assert_eq!(rig.audition.slot(), None);
+}
+
+/// OPEN with the cursor on Solo presses it as a click does: once on, again off.
+#[test]
+fn open_on_solo_toggles_it() {
     let mut rig = Rig::new();
     rig.press(Vec::new());
     rig.press(Vec::new());
@@ -1361,7 +1398,7 @@ fn open_held_on_hold_solos_the_band() {
     for _ in 0..12 {
         match rig.app.nav.parameter() {
             Some(SOLO_KEY) => break,
-            // Hold and Delete share the bottom row: ← along it.
+            // Solo and Delete share the bottom row: ← along it.
             Some("delete") => rig.type_keys(&[Key::ArrowLeft]),
             _ => rig.type_keys(&[Key::ArrowDown]),
         }
@@ -1369,14 +1406,38 @@ fn open_held_on_hold_solos_the_band() {
     assert_eq!(
         rig.app.nav.parameter(),
         Some(SOLO_KEY),
-        "the arrows reach Hold"
+        "the arrows reach Solo"
     );
-    rig.press(vec![key(Key::Enter, true, NONE)]);
+    rig.type_keys(&[Key::Enter]);
+    for _ in 0..3 {
+        rig.press(Vec::new());
+    }
+    assert_eq!(rig.audition.slot(), Some(0), "on, with nothing held");
+    rig.type_keys(&[Key::Enter]);
     rig.press(Vec::new());
-    assert_eq!(rig.audition.slot(), Some(0), "held");
-    rig.press(vec![key(Key::Enter, false, NONE)]);
+    assert_eq!(rig.audition.slot(), None, "off");
+}
+
+/// **The gain scale fades while it has nothing to scale**: no band in the sound with a gain. A
+/// notch, a cut and a band pass have none, and a bypassed bell is not in the sound.
+#[test]
+fn the_gain_scale_is_heard_only_with_a_band_that_has_a_gain() {
+    let mut rig = Rig::new();
     rig.press(Vec::new());
-    assert_eq!(rig.audition.slot(), None, "let go");
+    assert!(!rig.app.gain_heard(), "Init: no band");
+    rig.app.insert_at(1_000.0);
+    assert!(rig.app.gain_heard(), "a bell");
+    rig.app.set_bypass(0, true);
+    assert!(!rig.app.gain_heard(), "the bell bypassed");
+    rig.app.set_bypass(0, false);
+    for shape in [Shape::Notch, Shape::LowCut, Shape::BandPass] {
+        rig.app.set_shape(0, shape);
+        assert!(!rig.app.gain_heard(), "{shape:?}");
+    }
+    for shape in [Shape::LowShelf, Shape::TiltShelf] {
+        rig.app.set_shape(0, shape);
+        assert!(rig.app.gain_heard(), "{shape:?}");
+    }
 }
 
 fn pointer(at: egui::Pos2, pressed: Option<bool>) -> Vec<egui::Event> {

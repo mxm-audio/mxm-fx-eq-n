@@ -101,9 +101,18 @@ and `audition.rs`'s tests hold the lifecycle.
   parameter it opened back. A pointer press, or the cursor turning inert, ends a keyboard gesture,
   kept, through the language's own interrupt. The keyboard's place is painted only once the
   keyboard is used (`navigation::shown`).
-- **Solo is held, never latched**: from the press to the release of the Band card's Hold button, a
-  Ctrl/Cmd press on a point, or OPEN (Enter) held with the cursor on Hold. A bypassed band, the tilt and an Off slot are
-  refused, as the DSP refuses them; the editor ends solo when it closes.
+- **Solo is a toggle** (the owner, 2026-10-14, testing in MXM Player: *"The hold button should be
+  a toggle. I cannot hold it down and change the eq at the same time"*). The Band card's Solo
+  button, or OPEN on it, latches solo on the selected band. A latch belongs to that band while it
+  is selected and in the sound: selecting another band, bypassing or removing it, a preset load or
+  a host restore, the shell's ending and the editor closing each let it go, and nothing brings it
+  back but a press. A Ctrl/Cmd press on a point still solos it for as long as it is held. A bypassed
+  band, the tilt and an Off slot are refused, as the DSP refuses them.
+- **The gain scale fades while it has nothing to scale** (the owner, 2026-10-14, on Hum notch:
+  *"gain scale does nothing"*). It scales bell, shelf and tilt gains only (brief A5), so with only
+  notches, cuts and band passes in the sound, or none, it changes nothing; the slider is drawn at
+  the disabled opacity and its hover says why. It stays a control: every parameter is operable from
+  an empty Init (plan §8), and *No help text* keeps the reason off the panel.
 - **Undo is plain** (plan §5.4; `editor/history.rs`). The editor's host context is a recorder, so
   every write is seen, from the column's controls, the graph and the keyboard alike, and the shared
   binding needed no observer. BACK during a drag puts the band back (`mxm_ui::drag::cancelled`),
@@ -167,7 +176,7 @@ and `audition.rs`'s tests hold the lifecycle.
   about 0.1 ms. Both FFT crates are optimised in dev builds, so a debug bundle animates too.
 
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
-solo held, not latched; the bands' keys are the language's, MOVE on an edge keeping the other one.
+solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.
 The probe's band curves (owner: "mostly visual noise") are not drawn.
 
 ## The factory set

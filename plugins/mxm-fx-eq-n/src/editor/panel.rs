@@ -9,7 +9,7 @@ use mxm_ui::visual::EMPHASIS_STROKE;
 use nice_plug::context::gui::GuiContext;
 use nice_plug_egui::NiceEguiApp;
 
-use super::{CARDS, EqApp, METER_RAIL, SOLO_KEY, history};
+use super::{CARDS, EqApp, METER_RAIL, history};
 use crate::view::ViewSettings;
 
 /// How long a pause in the wheel ends its gesture.
@@ -76,9 +76,6 @@ impl EqApp {
         self.telemetry.set_analyser_on(settings.analyser);
         self.drain_analyser(&settings);
         self.pointer_solo = None;
-        if !ctx.input(|input| input.pointer.primary_down()) {
-            self.solo_button = None;
-        }
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.
         let removed = |app: &Self, slot: Option<usize>| slot.is_some_and(|s| !app.band_in_use(s));
@@ -146,11 +143,7 @@ impl EqApp {
             )
             .show(ui, |ui| self.surface(ui, &tokens));
 
-        // OPEN held with the cursor on Hold holds solo, as a press on the button does.
-        let open_held = self.nav.bar().is_none()
-            && self.nav.parameter() == Some(SOLO_KEY)
-            && ctx.input(|input| input.key_down(Key::Enter));
-        self.publish_solo(open_held);
+        self.publish_solo();
     }
 
     fn app_bar(&mut self, ui: &mut Ui, tokens: &Tokens) {

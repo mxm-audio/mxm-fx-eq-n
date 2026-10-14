@@ -1,8 +1,8 @@
 //! Band solo: the plugin's one transient command (plan §5.2; `plugins/AGENTS.md`, *Editor
 //! contract*, the transient-command exception).
 //!
-//! **Why solo is not a parameter.** An audition is what somebody is listening to while they hold a
-//! key or a button. Saved, a project would reopen soloed; automated, a render would play one band's
+//! **Why solo is not a parameter.** An audition is what somebody is listening to while they work on
+//! a band. Saved, a project would reopen soloed; automated, a render would play one band's
 //! band pass instead of the EQ; recalled by a preset, it would change what the EQ does without
 //! changing the EQ. So it has no id, no state and no preset value, and the DSP takes it as an
 //! ordinary call (`Engine::set_solo`) that the shell makes once per block.

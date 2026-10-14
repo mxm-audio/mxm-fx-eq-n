@@ -32,6 +32,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 22 | **E5, first findings** (the owner in MXM Player, 2026-10-14): solo is a toggle, not held; the gain scale fades while no band in the sound has a gain; the empty Band card's hover says how to get a band. A freeze found on the way is the baseview fork's (its frame clock starved input on a 59 Hz screen), fixed there. |
 | 21 | **E4 built** (2026-10-14): thirteen factory presets generated from a design table in the editor's units, the brief's eight examples plus five so every shape is used, each in the lowest slots at Init's output; `host-tests/` through MXM Player: discovered as an effect, the editor offered, Init bit-exact dry in the chain, a band restored through the CLAP state heard and ringing down to exact silence, the player's bypass bit-exact; the lock on kit `f459221` and player `cd3eae3`. |
 | 20 | **Moved to its own repository**, `mxm-audio/mxm-fx-eq-n` (2026-10-13): the archive was the wrong home. The DSP crate came across unchanged (50 tests, on 1.87 too); the FFT became mxm-kit's `mxm-fft`; the shell and the editor are ported onto the live kit, the editor's keys onto its keyboard language. |
 | 19 | **E3 built** (2026-10-13): the graph, the column of tree cards, the Out meter, the held-key keyboard (`crates/ui`'s `held`), plain undo with epochs, held solo, the analyser on `crates/mxm-fft` (X0, X1) within a 2 ms budget, accessibility, the editor checks; the probe deleted. Undo records at the editor's own host context, so §5.4's binding observer and §6's `mxm-preset` change were not needed. |
@@ -411,7 +412,9 @@ From Pro-Q and the collection's own canvas (research §17.2; `plugins/mxm-fx-cur
     - a bell, notch or band pass, a 0 dB bell included, plays a band-pass at its frequency and Q;
     - a cut plays what it removes;
     - a shelf plays the region it changes.
-  - **While soloing,** frequency, gain and Q stay editable. Latching or momentary is settled at E0.5.
+  - **While soloing,** frequency, gain and Q stay editable. **Solo latches** (the owner, 2026-10-14,
+    in MXM Player: held, the band could not be edited while it played); Ctrl/Cmd held on a point
+    still auditions it.
   - **It is an audition route, not a band edit.** It touches no parameter and no history, and it
     crosses the collection's transient-command path (`plugins/AGENTS.md`), so the DSP reads no editor
     state. The plugin's `AGENTS.md` says why saving or automating an audition would be false.

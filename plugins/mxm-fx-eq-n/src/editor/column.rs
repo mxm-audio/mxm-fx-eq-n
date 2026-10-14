@@ -5,7 +5,8 @@
 //!
 //! The Band card is reserved to its tallest shape, so changing a band's shape, or selecting none,
 //! moves nothing below it. With no band selected it has no subject, and it says so with its title
-//! alone ("Band —"): no sentence on the panel (`plugins/AGENTS.md`, *No help text*).
+//! alone ("Band —"): no sentence on the panel (`plugins/AGENTS.md`, *No help text*). Its hover says
+//! how to get one.
 
 use egui::{Rect, Ui, vec2};
 use mxm_fx_eq_n_dsp::{Shape, Slope};
@@ -54,7 +55,16 @@ pub enum Leaf {
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
 const SLOPE_DESCRIPTION: &str = "How steeply the cut falls away past its frequency.";
 const BYPASS_DESCRIPTION: &str = "Takes the band out of the sound and keeps its settings.";
-const SOLO_DESCRIPTION: &str = "Plays only what this band works on, for as long as it is held.";
+const SOLO_DESCRIPTION: &str = "Plays only what this band works on, until it is pressed again.";
+const NO_BAND_DESCRIPTION: &str =
+    "Click a point on the graph to show its band here, or click the line to add one.";
+const GAIN_SCALE_DESCRIPTION: &str =
+    "Scales every band's gain together; cuts, notches and band passes stay as drawn.";
+/// The gain scale's hover while no band in the sound has a gain, when the slider is faded.
+const GAIN_SCALE_UNHEARD: &str = concat!(
+    "Scales the gain of bells, shelves and tilts. No band in the sound has one, so it ",
+    "changes nothing now; cuts, notches and band passes stay as drawn."
+);
 const DELETE_DESCRIPTION: &str = "Removes the band. Undo brings it back.";
 
 fn slopes() -> Vec<String> {
@@ -101,13 +111,12 @@ fn bound(params: &EqParams, slot: usize, slider: Slider) -> Bound<'_> {
             "The level after every band, last in the chain.",
         )
         .labelled("Output"),
-        Slider::GainScale => Bound::new(
-            "gainscale",
-            &params.gain_scale,
-            "Scales every band's gain together; cuts, notches and band passes stay as drawn.",
-        )
-        .labelled("Gain scale"),
+        Slider::GainScale => gain_scale(params, GAIN_SCALE_DESCRIPTION),
     }
+}
+
+fn gain_scale<'a>(params: &'a EqParams, description: &'static str) -> Bound<'a> {
+    Bound::new("gainscale", &params.gain_scale, description).labelled("Gain scale")
 }
 
 fn slider_leaf(params: &EqParams, slot: usize, slider: Slider) -> Node<Leaf> {
@@ -275,7 +284,7 @@ impl EqApp {
         let title = band_title(self);
         // With no band selected the Band card has no controls, so it is no stop of the cursor's:
         // VIEW from the graph would land on nothing and fall back to the graph.
-        let band = self.selected.is_some();
+        let absent = self.selected.is_none().then_some(NO_BAND_DESCRIPTION);
         self.card(
             ui,
             tokens,
@@ -283,7 +292,7 @@ impl EqApp {
             &title,
             |app, _| band_tree(app),
             true,
-            band,
+            absent,
         );
         ui.add_space(SPACE_3);
         self.card(
@@ -293,7 +302,7 @@ impl EqApp {
             OUTPUT_TITLE,
             |app, _| output_tree(app),
             false,
-            true,
+            None,
         );
         ui.add_space(SPACE_3);
         self.card(
@@ -303,7 +312,7 @@ impl EqApp {
             ANALYSER_TITLE,
             |_, _| analyser_tree(),
             false,
-            true,
+            None,
         );
     }
 
@@ -319,11 +328,17 @@ impl EqApp {
         title: &str,
         tree: impl Fn(&EqApp, &Ui) -> Node<Leaf>,
         reserved: bool,
-        stop: bool,
+        absent: Option<&'static str>,
     ) {
-        if !stop {
+        if let Some(hover) = absent {
             navigation::bar_card_absent(ui.ctx(), key);
-            self.card_body(ui, tokens, title, tree, reserved);
+            let rect = self.card_body(ui, tokens, title, tree, reserved);
+            ui.interact(
+                rect,
+                ui.id().with(("absent card", key)),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(hover);
             return;
         }
         navigation::bar_card(ui, key, |ui| {
@@ -446,18 +461,28 @@ impl EqApp {
                 let band_slider = matches!(slider, Slider::Frequency | Slider::Gain | Slider::Q);
                 let slot = if band_slider { selected } else { Some(0) };
                 if let Some(slot) = slot {
-                    bound(&params, slot, slider).slider(ui, tokens, &setter, &mut self.text);
+                    // No band in the sound has a gain to scale: the slider fades, and its hover
+                    // says why. It stays a control, as every parameter is (plan §8).
+                    let unheard = slider == Slider::GainScale && !self.gain_heard();
+                    let bound = if unheard {
+                        gain_scale(&params, GAIN_SCALE_UNHEARD)
+                    } else {
+                        bound(&params, slot, slider)
+                    };
+                    let text = &mut self.text;
+                    ui.scope(|ui| {
+                        if unheard {
+                            ui.multiply_opacity(ui.visuals().disabled_alpha());
+                        }
+                        bound.slider(ui, tokens, &setter, text);
+                    });
                 }
             }
             Leaf::Solo => {
                 if let Some(slot) = selected {
                     let bypassed = self.band_now(slot).bypass;
                     let soloed = self.soloed() == Some(slot);
-                    let text = match (bypassed, soloed) {
-                        (true, _) => "Bypassed",
-                        (false, true) => "On",
-                        (false, false) => "Hold",
-                    };
+                    let text = if bypassed { "Bypassed" } else { "Solo" };
                     let response = navigation::at(ui, SOLO_KEY, |ui| {
                         let response = ui
                             .add_enabled(
@@ -470,13 +495,10 @@ impl EqApp {
                         navigation::mark_unclaimed(ui, response.id, response.rect);
                         response
                     });
-                    // Held from the press on the button to the button's release; egui itself stops
-                    // calling a press "down on" the button once it outlasts a click.
-                    if response.is_pointer_button_down_on() {
-                        self.solo_button = Some(slot);
-                    }
-                    if self.solo_button == Some(slot) {
-                        self.pointer_solo = Some(slot);
+                    // A toggle (the owner, 2026-10-14: held, the band could not be edited while it
+                    // played). OPEN presses it as a click does.
+                    if response.clicked() {
+                        self.toggle_solo(slot);
                     }
                 }
             }

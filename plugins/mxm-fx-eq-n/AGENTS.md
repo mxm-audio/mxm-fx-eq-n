@@ -134,13 +134,17 @@ transaction.
   (`navigation::paged_with_bar`, every card a `bar_card`); **the graph is a surface**
   (`navigation::surface`, `on_surface`), where MOVE, VALUE, EXTENT, MICRO's edges, DUPLICATE, ADD,
   REMOVE and DELETE act on the bands, OUT keeps a gesture as one undo step and BACK reverts it.
-- **Solo is held**: the Hold button, Ctrl/Cmd on a point, or OPEN held on Hold.
+- **Solo is a toggle** (the owner, 2026-10-14): the Solo button latches it on the selected band
+  until it is pressed again, another band is selected, the band leaves the sound, the patch is
+  replaced or the editor closes; Ctrl/Cmd held on a point solos it while held.
+- **The gain scale fades** while no band in the sound has a gain (`gain_heard`), and its hover says
+  so; it stays operable. With no band selected the Band card's hover says how to get one.
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
   too, where the host has it, writing nothing**; the history is the instance's.
 - **The editor reads what it sent** (`normalised_now`, `band_now`): nice-plug changes a parameter
   only when its queued event is written, so the editor's own reads — the graph, the keyboard's
-  edits and the column's own decisions (its menus, Hold) — take the history's pending values until
+  edits and the column's own decisions (its menus, Solo) — take the history's pending values until
   the host applies them. The column's shared controls read the parameter itself, mxm-kit's binding
   as everywhere ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*; plan §7).
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
