@@ -646,7 +646,7 @@ group's tree in every Band state; the ring, the moving curve and the meter only 
 | Step | Delivers | Gate |
 |---|---|---|
 | **F1.0** | The brief's addendum: ranges, defaults, the law's slopes and knee, the bound, the presets' names. **Signed** (2026-10-14): the brief's §C | Owner |
-| **F1.1** | DSP: detector, law, bound, ballistics, the idle rule; the cost measured. **Built** (2026-10-14): `dynamics.rs`, the engine's dynamic bands, 15 new tests; 24 dynamic bells all moving cost 9.8 % at 192 kHz against the 35 % steady budget; the detector's delay, the fastest attack's broadband energy and slot order measured (`eq_n_dynamics`) | Measurements in the DSP's `AGENTS.md` |
+| **F1.1** | DSP: detector, law, bound, ballistics, the idle rule; the cost measured. **Built** (2026-10-14): `dynamics.rs`, the engine's dynamic bands, 15 new tests; 24 dynamic bells all moving cost 9.8 % at 192 kHz against the 35 % steady budget; the detector's delay, the fastest attack's broadband energy and slot order measured (`eq_n_dynamics`). **Code review approved** (agent-loop, four rounds, 2026-10-14) at `d436275`: a reset during a cut, a band back from Off and `is_settled`'s waiting moves fixed | Measurements in the DSP's `AGENTS.md` |
 | **F1.2** | Shell: the 96 parameters, both migrations, telemetry | Unit tests; bundle; `clap-validator` |
 | **F1.3** | Editor: the Dynamics group, the ring, the moving curve, the meter | Editor tests; owner by eye |
 | **F1.4** | The dynamic presets beside the thirteen static ones, the factory tests learning the new fields; host tests through MXM Player | Merge gate |
