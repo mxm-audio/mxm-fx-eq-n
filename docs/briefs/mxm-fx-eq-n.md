@@ -198,6 +198,38 @@ telephone band. The fifty-preset floor is for instruments.
 
 ---
 
+## C. F1 — dynamic bands (addendum, signed 2026-10-14)
+
+The plan's §7.1 is the design; this is what the owner signed for it (2026-10-14, *"Approve, values as
+proposed"*), after decisions 12–14.
+
+**Which bands.** Bells and shelves. Cuts, notches and band passes have no gain; the tilt lifts one side
+of its pivot and cuts the other, so it stays static.
+
+**Ranges and defaults.**
+
+| Control | Range | Default |
+|---|---|---|
+| Range | −30 to +30 dB; below 0 cuts what gets loud, above 0 lifts it | 0 (the band is static) |
+| Threshold | −60 to 0 dB | −20 dB |
+| Attack | 0.5 to 200 ms | 10 ms |
+| Release | 10 to 2,000 ms | 150 ms |
+
+The defaults of Threshold, Attack and Release are proposals the owner did not sign; F1.5's listening
+confirms or changes them.
+
+**The law.** Above Threshold, through a 6 dB soft knee, the band's gain moves at a fixed slope — 3:1
+for a cut, 1:1.5 for a lift — and eases into Range: with `a` the movement that slope asks for, the
+moving part is `Range · (1 − e^(−a/|Range|))`. It never passes Range, a louder band never comes out
+quieter, and more Range never means less action.
+
+**The bound.** The heard gain, the drawn gain plus the moving part, stays inside the band's ±30 dB at
+every sample; the gain scale applies after it.
+
+**Factory presets.** *De-esser* and *Resonance tamer* join the thirteen.
+
+---
+
 ## Sign-off
 
 - [x] A3 shapes and slopes (owner), 2026-10-12
@@ -207,3 +239,4 @@ telephone band. The fifty-preset floor is for instruments.
 - [x] B7 accent: the collection cyan (owner, 2026-10-12); contrast measured at E3
 - [x] Factory preset direction (owner), 2026-10-12
 - [ ] §15 QA gate on the real panel (E5)
+- [x] C, F1's addendum: bands, ranges, the law (3:1, 1:1.5, 6 dB knee), the bound, the presets' names (owner), 2026-10-14
