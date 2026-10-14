@@ -12,7 +12,7 @@ use mxm_player_harness::harness;
 
 use clack_extensions::state::PluginState;
 use clack_host::prelude::*;
-use harness::{CHANNELS, Harness, mxm_mono_01};
+use harness::{CHANNELS, Harness};
 use mxm_player::engine::Engine;
 use mxm_player::events::input::Payload;
 use mxm_player::host::MxmHost;
@@ -28,12 +28,25 @@ const BLOCK: usize = 256;
 // under a second at 48 kHz) to end in exact silence.
 const BLOCKS: usize = 1_600;
 
+/// This plugin's release bundle, or `None` when it has not been built: **the one skip**.
 fn eq_n() -> Option<PathBuf> {
     let found = mxm_player_harness::host_test::plugin_bundle("mxm-fx-eq-n").map(|(_, file)| file);
     if found.is_none() {
         eprintln!("skipping: run `cargo xtask bundle mxm-fx-eq-n --release`");
     }
     found
+}
+
+/// The source the chain plays, fetched beside the bundle (`test-bundles.txt`). Required once the
+/// bundle exists, so a fetch that failed fails the tests rather than passing them unrun.
+fn source() -> PathBuf {
+    let path = app_harness::workspace_root().join("target/bundled/mxm-mono-01.clap");
+    assert!(
+        path.exists(),
+        "{} is missing: run `cargo xtask fetch`",
+        path.display()
+    );
+    path
 }
 
 #[test]
@@ -146,8 +159,8 @@ fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
 }
 
 fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
-    let source = mxm_mono_01()?;
     let effect = eq_n()?;
+    let source = source();
     let effects: Vec<(&Path, &str)> = if chain == Chain::Dry {
         vec![]
     } else {
@@ -206,7 +219,7 @@ fn inserted_at_init_it_changes_nothing_to_the_bit() {
     let Some(dry) = render(Chain::Dry, false) else {
         return;
     };
-    let wet = render(Chain::Init, false).expect("the bundles existed above");
+    let wet = render(Chain::Init, false).expect("the bundle existed above");
     assert!(
         dry.iter().any(|sample| *sample != 0.0),
         "the source is silent"
@@ -222,7 +235,7 @@ fn a_restored_band_is_heard_and_ends_in_exact_silence() {
     let Some(dry) = render(Chain::Dry, false) else {
         return;
     };
-    let wet = render(Chain::HighCut, false).expect("the bundles existed above");
+    let wet = render(Chain::HighCut, false).expect("the bundle existed above");
     assert!(wet.iter().all(|sample| sample.is_finite()));
     assert!(
         rms(&wet) < rms(&dry) / 10.0,
@@ -252,6 +265,6 @@ fn player_bypass_restores_the_dry_render_to_the_bit() {
     let Some(dry) = render(Chain::Dry, false) else {
         return;
     };
-    let bypassed = render(Chain::HighCut, true).expect("the bundles existed above");
+    let bypassed = render(Chain::HighCut, true).expect("the bundle existed above");
     assert_eq!(bypassed, dry);
 }
