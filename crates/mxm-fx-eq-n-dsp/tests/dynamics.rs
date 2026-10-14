@@ -224,6 +224,67 @@ fn the_heard_gain_stays_inside_the_bound_under_a_drawn_gain_edit() {
     );
 }
 
+/// **A reset during a cut** leaves the band as drawn at once, its audio too: the filter is built
+/// after the moving part is cleared, so a quiet tone after it is not cut by stale coefficients.
+#[test]
+fn a_reset_during_a_cut_leaves_the_band_as_drawn() {
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(5_000.0, 0.0, 1.0));
+    engine.set_dynamics(0, dynamics(-12.0, -30.0));
+    engine.reset();
+    let (_, gains) = play(&mut engine, 0, 1.0, 5_000.0, 0.5, 0);
+    assert!(*gains.last().unwrap() < -6.0, "cutting");
+    engine.reset();
+    assert_eq!(engine.gains_db(0).unwrap(), (0.0, 0.0));
+    // A tone 30 dB under the threshold: nothing to cut, so it must pass as drawn, at once.
+    let quiet = 0.001;
+    let (output, gains) = play(&mut engine, 0, 0.2, 5_000.0, quiet, 48_000);
+    assert!(gains.iter().all(|gain| *gain == 0.0));
+    let tone = tone_db(&output, 5_000.0, 48_000) - 20.0 * quiet.log10();
+    assert!(tone.abs() < 0.05, "the quiet tone moved {tone:.3} dB");
+}
+
+/// **A slot turned Off keeps no stale Range**: Range set to 0 while it is Off, the band comes back
+/// static over a loud tone, never a moment of the old cut.
+#[test]
+fn a_band_back_from_off_starts_at_its_configured_range() {
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(5_000.0, 0.0, 1.0));
+    engine.set_dynamics(0, dynamics(-30.0, -40.0));
+    engine.reset();
+    let _ = play(&mut engine, 0, 1.0, 5_000.0, 0.5, 0);
+    engine.set_band(
+        0,
+        Band {
+            shape: None,
+            ..bell(5_000.0, 0.0, 1.0)
+        },
+    );
+    let _ = play(&mut engine, 0, 0.2, 5_000.0, 0.5, 48_000);
+    engine.set_dynamics(0, dynamics(0.0, -40.0));
+    engine.set_band(0, bell(5_000.0, 0.0, 1.0));
+    let (_, gains) = play(&mut engine, 0, 0.5, 5_000.0, 0.5, 57_600);
+    assert!(
+        gains.iter().all(|gain| *gain == 0.0),
+        "the old Range cut a static band: {:?}",
+        gains.iter().copied().fold(0.0f64, f64::min)
+    );
+}
+
+/// A dynamics edit is a setting unread until the next interval, as a band edit is.
+#[test]
+fn a_dynamics_edit_is_unsettled_until_read() {
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(1_000.0, 0.0, 1.0));
+    engine.reset();
+    let mut silence = vec![0.0f32; 480];
+    silence.fill(0.0);
+    engine.process_mono(&mut silence);
+    assert!(engine.is_settled());
+    engine.set_dynamics(0, dynamics(-12.0, -30.0));
+    assert!(!engine.is_settled(), "an unread Range edit");
+}
+
 /// The detector is the band's region and follows it: moved off the tone, the band stops hearing
 /// it and releases to the drawn gain.
 #[test]

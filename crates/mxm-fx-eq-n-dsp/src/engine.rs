@@ -196,6 +196,8 @@ struct BandEngine {
     audition_moved: bool,
     /// The slot's dynamics as set (plan §7.1).
     dynamics: Dynamics,
+    /// The dynamics changed since the last control step read them.
+    dynamics_changed: bool,
     /// Range, gliding as the gain does, in dB; 0 for a shape that cannot be dynamic.
     range_db: Glide,
     /// One interval's factors from Attack and Release.
@@ -228,6 +230,7 @@ impl BandEngine {
         parked: false,
         audition_moved: false,
         dynamics: Dynamics::STATIC,
+        dynamics_changed: false,
         range_db: Glide::at(0.0),
         // Set for the engine's interval in `Engine::new`.
         ballistics: Ballistics {
@@ -318,8 +321,15 @@ impl BandEngine {
         self.destination = wanted;
         if old.is_none() {
             // Out of silence the band starts where it is drawn, not gliding from the values the
-            // slot last held.
+            // slot last held: its Range too, as configured now, and no moving part.
             self.snap();
+            self.stop_listening();
+            let dynamic = wanted.is_some_and(|structure| structure.shape.is_dynamic());
+            self.range_db = Glide::at(if dynamic {
+                f64::from(self.dynamics.range_db)
+            } else {
+                0.0
+            });
         }
         let fresh = |band: &BandEngine, structure: Structure, scale: f64| Running {
             structure,
@@ -548,7 +558,6 @@ impl Engine {
         self.bands.get(slot).map(|engine| engine.target)
     }
 
-    /// The output gain as a linear factor, held inside ±24 dB. It ramps over a fade.
     /// A slot's dynamics (plan §7.1), held inside their ranges and read at the next control
     /// interval: Range glides there; Attack and Release take effect at once. An out-of-range slot
     /// is ignored.
@@ -559,6 +568,7 @@ impl Engine {
             if band.dynamics != dynamics {
                 band.dynamics = dynamics;
                 band.ballistics = Ballistics::new(dynamics, interval_seconds);
+                band.dynamics_changed = true;
             }
         }
     }
@@ -584,6 +594,7 @@ impl Engine {
         })
     }
 
+    /// The output gain as a linear factor, held inside ±24 dB. It ramps over a fade.
     pub fn set_output_gain(&mut self, gain: f32) {
         let limit = 10f64.powf(OUTPUT_GAIN_RANGE_DB / 20.0);
         let gain = if gain.is_finite() {
@@ -638,6 +649,13 @@ impl Engine {
             band.fade = Fade::None;
             band.left = 0;
             band.parked = false;
+            // The dynamic state first: no moving part, Range as configured, so the filter below
+            // is built from the drawn gain alone.
+            band.stop_listening();
+            band.dynamics_changed = false;
+            let range = band.dynamics.range_db;
+            let dynamic = wanted.is_some_and(|structure| structure.shape.is_dynamic());
+            band.range_db = Glide::at(if dynamic { f64::from(range) } else { 0.0 });
             band.current = wanted.map(|structure| Running {
                 structure,
                 filter: Filter::fresh(&design_running(
@@ -645,10 +663,6 @@ impl Engine {
                     sample_rate,
                 )),
             });
-            band.stop_listening();
-            let range = band.dynamics.range_db;
-            let dynamic = wanted.is_some_and(|structure| structure.shape.is_dynamic());
-            band.range_db = Glide::at(if dynamic { f64::from(range) } else { 0.0 });
             // A band with Range listens from the first sample, so it never parks here.
             if dynamic && range != 0.0 && scale != 0.0 {
                 band.listening = true;
@@ -703,6 +717,7 @@ impl Engine {
                     || (shape.has_q(slope) && band.log_q.is_moving())
             });
             !band.changed
+                && !band.dynamics_changed
                 && band.target.structure() == band.destination
                 && band.fade == Fade::None
                 && !gliding
@@ -790,6 +805,7 @@ impl Engine {
                 band.retarget(sample_rate);
                 band.changed = false;
             }
+            band.dynamics_changed = false;
             let wanted = band.target.structure();
             if wanted != band.destination && band.fade == Fade::None {
                 band.start(wanted, scale, sample_rate, fade);
