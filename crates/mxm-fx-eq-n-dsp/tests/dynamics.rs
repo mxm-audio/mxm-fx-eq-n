@@ -304,7 +304,14 @@ fn settled_waits_for_a_pending_peak_and_a_scale_a_range_hears() {
         }
     }
     assert!(settled, "a steady tone's cut never arrived");
-    // Then silence: the cut releases, moving every interval with nothing in the peak.
+    // Then silence: one whole interval of it is final, so the release it asks for waits.
+    let mut quiet = vec![0.0f32; interval];
+    engine.process_mono(&mut quiet);
+    assert!(
+        !engine.is_settled(),
+        "a complete silent interval's release waits"
+    );
+    // Then the release itself, moving every interval with nothing in the peak.
     for _ in 0..3 {
         let mut quiet = vec![0.0f32; interval];
         engine.process_mono(&mut quiet);

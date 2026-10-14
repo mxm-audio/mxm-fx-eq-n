@@ -431,19 +431,28 @@ impl BandEngine {
         self.detector.clear();
     }
 
-    /// Whether the peak heard so far this interval already asks for more action than the band
-    /// takes, so the next control step will move it in: something audible waiting to happen
-    /// (`Engine::is_settled`). A release cannot be known before the interval ends, since its last
-    /// samples may bring the peak back; the step that starts it moves the band.
-    fn pending_attack(&self) -> bool {
-        if !self.listening || self.peak == 0.0 {
+    /// Whether the next control step will move the moving part: something audible waiting to
+    /// happen (`Engine::is_settled`). Once the interval is `complete` its peak is final, and any
+    /// move it asks for counts, attack or release. Partway through, only an attack can be known:
+    /// the peak so far already asks for more action than the band takes, while the interval's last
+    /// samples may still bring a falling peak back.
+    fn pending_move(&self, complete: bool) -> bool {
+        if !self.listening {
             return false;
         }
+        let level_db = if self.peak > 0.0 {
+            20.0 * self.peak.log10()
+        } else {
+            f64::NEG_INFINITY
+        };
         let target = law(
-            20.0 * self.peak.log10(),
+            level_db,
             f64::from(self.dynamics.threshold_db),
             self.range_db.value(),
         );
+        if complete {
+            return self.ballistics.step(self.moving_db, target) != self.moving_db;
+        }
         target != 0.0
             && (self.moving_db == 0.0 || self.moving_db.signum() == target.signum())
             && target.abs() > self.moving_db.abs() + crate::dynamics::LAND_DB
@@ -732,6 +741,8 @@ impl Engine {
                 .as_ref()
                 .is_none_or(|running| !running.filter.is_ramping())
         };
+        // The interval in progress has run its course: its peaks are final.
+        let complete = self.countdown == 0;
         let band_settled = |band: &BandEngine| {
             let gliding = band.current.as_ref().is_some_and(|running| {
                 let Structure { shape, slope } = running.structure;
@@ -746,7 +757,7 @@ impl Engine {
                 && !gliding
                 && !band.dynamics_moved
                 && !band.range_db.is_moving()
-                && !band.pending_attack()
+                && !band.pending_move(complete)
                 && still(&band.current)
                 && still(&band.previous)
         };
