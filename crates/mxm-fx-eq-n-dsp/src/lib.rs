@@ -9,9 +9,12 @@
 //! - [`design`](mod@design): what a band's sections are, by shape, as the audio runs them and the graph draws
 //!   them. The editor calls it for the curve, so the curve cannot differ from the sound.
 //! - [`filter`]: the sections running, two channels at once.
-//! - [`engine`]: the whole EQ, its values' smoothing, transitions, parking, solo and activity.
+//! - [`dynamics`]: a dynamic band's law and ballistics (plan §7.1).
+//! - [`engine`]: the whole EQ, its values' smoothing, transitions, parking, solo, dynamics and
+//!   activity.
 
 pub mod design;
+pub mod dynamics;
 pub mod engine;
 pub mod filter;
 
@@ -19,6 +22,7 @@ pub use design::{
     Cascade, Design, MAX_EFFECTIVE_GAIN_DB, MAX_SECTIONS, Method, Section, Shape, Slope,
     analogue_db, design, design_running, design_solo, design_with, max_frequency,
 };
+pub use dynamics::Dynamics;
 pub use engine::{Band, Engine};
 
 /// The band slots a host sees (decision 1).

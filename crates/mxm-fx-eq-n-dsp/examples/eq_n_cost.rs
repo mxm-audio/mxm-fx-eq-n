@@ -23,8 +23,12 @@
 //!   new one redesigns and ramps.
 //! - **24 parked bells**: twenty-four 0 dB bells, the identity; the budget's idle half.
 //! - **8 bells**: a typical session.
+//! - **24 dynamic bells** (plan §7.1, F1's worst case, held to the *steady* budget): every band a
+//!   bell with Range −30, Threshold −40, Attack 0.5 ms and Release 10 ms, spread from 100 Hz up,
+//!   on noise whose level drops 30 dB every other block, so every band's detector runs and its gain
+//!   moves and is redesigned all the time.
 
-use mxm_fx_eq_n_dsp::{Band, Engine, SLOTS, Shape, Slope};
+use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, SLOTS, Shape, Slope};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -36,6 +40,7 @@ enum Load {
     CrossfadingGliding,
     Parked,
     Typical,
+    Dynamic,
 }
 
 fn cut(freq: f32, slope: Slope) -> Band {
@@ -65,6 +70,14 @@ fn measure(load: Load, rate: f64) -> f64 {
                 q: 2.0,
                 slope: Slope::Db12,
             },
+            Load::Dynamic => Band {
+                shape: Some(Shape::Bell),
+                bypass: false,
+                freq: 100.0 * 1.25f32.powi(slot as i32),
+                gain_db: 3.0,
+                q: 1.0,
+                slope: Slope::Db12,
+            },
             Load::Typical if slot >= 8 => Band::OFF,
             Load::Typical => Band {
                 shape: Some(Shape::Bell),
@@ -77,6 +90,17 @@ fn measure(load: Load, rate: f64) -> f64 {
             _ => cut(2_000.0 + 300.0 * slot as f32, Slope::Db96),
         };
         engine.set_band(slot, band);
+        if let Load::Dynamic = load {
+            engine.set_dynamics(
+                slot,
+                Dynamics {
+                    range_db: -30.0,
+                    threshold_db: -40.0,
+                    attack_ms: 0.5,
+                    release_ms: 10.0,
+                },
+            );
+        }
     }
     engine.reset();
     let block = match load {
@@ -158,6 +182,11 @@ fn measure(load: Load, rate: f64) -> f64 {
             }
             work_left.copy_from_slice(&left);
             work_right.copy_from_slice(&right);
+            if matches!(load, Load::Dynamic) && index % 2 == 1 {
+                for sample in work_left.iter_mut().chain(work_right.iter_mut()) {
+                    *sample *= 0.03;
+                }
+            }
             engine.process_stereo(&mut work_left, &mut work_right);
             black_box((&work_left, &work_right));
         }
@@ -179,6 +208,7 @@ fn main() {
         ("crossfade + glide", Load::CrossfadingGliding),
         ("24 parked bells", Load::Parked),
         ("8 bells", Load::Typical),
+        ("24 dynamic bells", Load::Dynamic),
     ] {
         print!("{label:<18}");
         for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {

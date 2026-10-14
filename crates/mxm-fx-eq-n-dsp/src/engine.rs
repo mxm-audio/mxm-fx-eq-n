@@ -15,10 +15,18 @@
 //!   A parked band's state is cleared, and it comes back exactly as a new band does, through the
 //!   entry fade from silence (plan §3.5). With every band parked, no solo and the output at
 //!   exactly 0 dB, [`Engine::process_stereo`] leaves the buffer untouched: bit-exact dry.
+//!
+//! **A bell or shelf with Range is dynamic** (plan §7.1; `crate::dynamics`): its detector, the
+//! band's region (`design_solo`) with its own state, hears the EQ's input — never the bands before
+//! it — and its loudest sample each interval, across channels, is the level the law reads. The
+//! ballistics move the signed moving part, the heard gain is the drawn gain plus it, held inside
+//! ±30 dB, and Range glides as the gain does. A band that listens never parks; it parks again, as a
+//! static band does, only when nothing it does can be heard (Range 0, or the gain scale at 0 %).
 
 use crate::design::{
     Cascade, Design, Shape, Slope, design_running, design_solo, max_frequency, solo_hears_q,
 };
+use crate::dynamics::{Ballistics, Dynamics, law};
 use crate::filter::Filter;
 use crate::{
     FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX, Q_MIN, SLOTS,
@@ -186,6 +194,23 @@ struct BandEngine {
     parked: bool,
     /// Frequency or Q moved in the last control step: what a solo audition is designed from.
     audition_moved: bool,
+    /// The slot's dynamics as set (plan §7.1).
+    dynamics: Dynamics,
+    /// Range, gliding as the gain does, in dB; 0 for a shape that cannot be dynamic.
+    range_db: Glide,
+    /// One interval's factors from Attack and Release.
+    ballistics: Ballistics,
+    /// The moving part of the gain, signed, in dB; exactly 0 at rest.
+    moving_db: f64,
+    /// The band's region with its own state: what the dynamics hear, from the EQ's input.
+    detector: Filter,
+    /// The shape the detector is designed for, while it listens.
+    detector_for: Option<Shape>,
+    /// The loudest detector output this interval, across channels.
+    peak: f64,
+    /// Whether the band listens this interval: a dynamic shape, Range or a moving part not 0, and
+    /// the gain scale not 0.
+    listening: bool,
 }
 
 impl BandEngine {
@@ -202,6 +227,18 @@ impl BandEngine {
         left: 0,
         parked: false,
         audition_moved: false,
+        dynamics: Dynamics::STATIC,
+        range_db: Glide::at(0.0),
+        // Set for the engine's interval in `Engine::new`.
+        ballistics: Ballistics {
+            attack_keep: 0.0,
+            release_keep: 0.0,
+        },
+        moving_db: 0.0,
+        detector: Filter::EMPTY,
+        detector_for: None,
+        peak: 0.0,
+        listening: false,
     };
 
     /// Whether this band does anything to the audio this sample.
@@ -244,12 +281,23 @@ impl BandEngine {
             slope: structure.slope,
             freq: self.log_freq.value().exp(),
             gain_db: if structure.shape.has_gain() {
-                self.gain_db.value() * scale
+                self.heard_gain_db() * scale
             } else {
                 0.0
             },
             q: self.log_q.value().exp(),
         }
+    }
+
+    /// The gain heard before the gain scale: the drawn gain where it has glided to, plus the moving
+    /// part, held inside the band's ±30 dB at every interval (plan §7.1, *the bound*).
+    fn heard_gain_db(&self) -> f64 {
+        (self.gain_db.value() + self.moving_db).clamp(-GAIN_RANGE, GAIN_RANGE)
+    }
+
+    /// The detector for the band's region at its present frequency and Q.
+    fn detector_design(&self, structure: Structure, sample_rate: f64) -> Option<Cascade> {
+        design_solo(self.design_inputs(structure, 1.0), sample_rate)
     }
 
     /// The gain envelope of an entry or exit fade after `frames` more samples.
@@ -355,7 +403,9 @@ impl BandEngine {
     fn largest_state(&self) -> f64 {
         let state =
             |running: &Option<Running>| running.as_ref().map_or(0.0, |r| r.filter.largest_state());
-        state(&self.current).max(state(&self.previous))
+        state(&self.current)
+            .max(state(&self.previous))
+            .max(self.detector.largest_state())
     }
 
     fn clear(&mut self) {
@@ -365,6 +415,16 @@ impl BandEngine {
         {
             running.filter.clear();
         }
+        self.detector.clear();
+    }
+
+    /// No moving part and no detector: what a band that stops listening keeps.
+    fn stop_listening(&mut self) {
+        self.listening = false;
+        self.moving_db = 0.0;
+        self.peak = 0.0;
+        self.detector = Filter::EMPTY;
+        self.detector_for = None;
     }
 }
 
@@ -428,12 +488,16 @@ impl Engine {
         let sample_rate = usable_sample_rate(sample_rate);
         let interval = ((sample_rate * CONTROL_SECONDS).round() as usize)
             .clamp(MIN_CONTROL_FRAMES, MAX_CONTROL_FRAMES);
+        let mut bands = [BandEngine::NEW; SLOTS];
+        for band in &mut bands {
+            band.ballistics = Ballistics::new(Dynamics::STATIC, interval as f64 / sample_rate);
+        }
         Engine {
             sample_rate,
             fade: ((sample_rate * FADE_SECONDS).round() as u32).max(1),
             interval,
             keep: (-(interval as f64) / (SMOOTHING_SECONDS * sample_rate)).exp(),
-            bands: [BandEngine::NEW; SLOTS],
+            bands,
             gain_scale: Glide::at(1.0),
             output: 1.0,
             output_target: 1.0,
@@ -485,6 +549,41 @@ impl Engine {
     }
 
     /// The output gain as a linear factor, held inside ±24 dB. It ramps over a fade.
+    /// A slot's dynamics (plan §7.1), held inside their ranges and read at the next control
+    /// interval: Range glides there; Attack and Release take effect at once. An out-of-range slot
+    /// is ignored.
+    pub fn set_dynamics(&mut self, slot: usize, dynamics: Dynamics) {
+        let interval_seconds = self.interval as f64 / self.sample_rate;
+        if let Some(band) = self.bands.get_mut(slot) {
+            let dynamics = dynamics.bounded();
+            if band.dynamics != dynamics {
+                band.dynamics = dynamics;
+                band.ballistics = Ballistics::new(dynamics, interval_seconds);
+            }
+        }
+    }
+
+    /// A slot's dynamics as last set, held inside their ranges.
+    pub fn dynamics(&self, slot: usize) -> Option<Dynamics> {
+        self.bands.get(slot).map(|band| band.dynamics)
+    }
+
+    /// A slot's gains for the editor, before the gain scale (plan §7.1, telemetry): the drawn gain
+    /// where it has glided to, and the gain heard, the drawn gain plus the moving part held inside
+    /// ±30 dB. Their difference is the action heard. 0 dB for a shape without a gain.
+    pub fn gains_db(&self, slot: usize) -> Option<(f64, f64)> {
+        let band = self.bands.get(slot)?;
+        let gain_shape = band
+            .current
+            .as_ref()
+            .is_some_and(|running| running.structure.shape.has_gain());
+        Some(if gain_shape {
+            (band.gain_db.value(), band.heard_gain_db())
+        } else {
+            (0.0, 0.0)
+        })
+    }
+
     pub fn set_output_gain(&mut self, gain: f32) {
         let limit = 10f64.powf(OUTPUT_GAIN_RANGE_DB / 20.0);
         let gain = if gain.is_finite() {
@@ -546,9 +645,19 @@ impl Engine {
                     sample_rate,
                 )),
             });
-            band.parked = wanted.is_some_and(|structure| {
-                structure.shape.has_gain() && band.design_inputs(structure, scale).gain_db == 0.0
-            });
+            band.stop_listening();
+            let range = band.dynamics.range_db;
+            let dynamic = wanted.is_some_and(|structure| structure.shape.is_dynamic());
+            band.range_db = Glide::at(if dynamic { f64::from(range) } else { 0.0 });
+            // A band with Range listens from the first sample, so it never parks here.
+            if dynamic && range != 0.0 && scale != 0.0 {
+                band.listening = true;
+            }
+            band.parked = !band.listening
+                && wanted.is_some_and(|structure| {
+                    structure.shape.has_gain()
+                        && band.design_inputs(structure, scale).gain_db == 0.0
+                });
         }
         self.solo = Solo::OFF;
         self.output = self.output_target;
@@ -569,7 +678,9 @@ impl Engine {
 
     /// Whether any filter holds state, so silence in is not yet silence out.
     pub fn is_ringing(&self) -> bool {
-        self.bands.iter().any(|band| band.largest_state() > 0.0)
+        self.bands
+            .iter()
+            .any(|band| band.largest_state() > 0.0 || band.moving_db != 0.0)
             || self.solo.filter.largest_state() > 0.0
     }
 
@@ -595,6 +706,8 @@ impl Engine {
                 && band.target.structure() == band.destination
                 && band.fade == Fade::None
                 && !gliding
+                && band.moving_db == 0.0
+                && !band.range_db.is_moving()
                 && still(&band.current)
                 && still(&band.previous)
         };
@@ -602,7 +715,9 @@ impl Engine {
         let scale_heard = self.bands.iter().any(|band| {
             band.destination
                 .is_some_and(|structure| structure.shape.has_gain())
-                && (band.gain_db.value() != 0.0 || band.gain_db.target != 0.0)
+                && (band.gain_db.value() != 0.0
+                    || band.gain_db.target != 0.0
+                    || band.moving_db != 0.0)
         });
         let solo = &self.solo;
         let solo_mix_target = if solo.heard { 1.0 } else { 0.0 };
@@ -683,6 +798,7 @@ impl Engine {
                 // Dry: nothing is heard, so the values wait at their targets.
                 band.snap();
                 band.audition_moved = false;
+                band.stop_listening();
                 continue;
             };
             let freq_moved = band.log_freq.step(keep, 1.0e-6);
@@ -691,9 +807,54 @@ impl Engine {
             let structure = running.structure;
             band.audition_moved = freq_moved || (q_moved && solo_hears_q(structure.shape));
             let gain_shape = structure.shape.has_gain();
+
+            // Dynamics (plan §7.1): Range glides, the interval's level meets the law, and the
+            // ballistics move the moving part toward what it asks.
+            let dynamic_shape = structure.shape.is_dynamic();
+            band.range_db.retarget(if dynamic_shape {
+                f64::from(band.dynamics.range_db)
+            } else {
+                0.0
+            });
+            band.range_db.step(keep, 1.0e-5);
+            let moving_before = band.moving_db;
+            if dynamic_shape
+                && scale != 0.0
+                && (band.range_db.value() != 0.0 || band.moving_db != 0.0)
+            {
+                if !band.listening || band.detector_for != Some(structure.shape) {
+                    band.detector = band
+                        .detector_design(structure, sample_rate)
+                        .map_or(Filter::EMPTY, |cascade| Filter::fresh(&cascade));
+                    band.detector_for = Some(structure.shape);
+                    band.peak = 0.0;
+                } else if band.audition_moved {
+                    if let Some(cascade) = band.detector_design(structure, sample_rate) {
+                        band.detector.ramp_to(&cascade, frames);
+                    }
+                }
+                let level_db = if band.peak > 0.0 {
+                    20.0 * band.peak.log10()
+                } else {
+                    f64::NEG_INFINITY
+                };
+                let target = law(
+                    level_db,
+                    f64::from(band.dynamics.threshold_db),
+                    band.range_db.value(),
+                );
+                band.moving_db = band.ballistics.step(band.moving_db, target);
+                band.peak = 0.0;
+                band.listening = true;
+            } else if band.listening || band.moving_db != 0.0 {
+                // Nothing it does can be heard any more: no moving part, no detector.
+                band.stop_listening();
+            }
+            let dynamics_moved = band.moving_db != moving_before;
+
             // Only what the shape hears: a cut's stored gain or a tilt's Q may glide unheeded.
             let moved = freq_moved
-                || (gain_moved && gain_shape)
+                || ((gain_moved || dynamics_moved) && gain_shape)
                 || (q_moved && structure.shape.has_q(structure.slope));
             let fading_gain = matches!(band.fade, Fade::In | Fade::Out);
             // A fade's last interval may hold fewer of its samples than the interval: the ramp
@@ -712,7 +873,7 @@ impl Engine {
 
             // Parking: a gain shape settled at exactly 0 dB is the identity.
             if band.fade == Fade::None && gain_shape {
-                let identity = inputs.gain_db == 0.0;
+                let identity = inputs.gain_db == 0.0 && !band.listening;
                 if identity && !band.parked {
                     band.parked = true;
                     if let Some(running) = &mut band.current {
@@ -820,6 +981,11 @@ impl Engine {
 
             let mut wet = dry;
             for band in &mut self.bands {
+                if band.listening {
+                    for value in band.detector.process(dry) {
+                        band.peak = band.peak.max(value.abs());
+                    }
+                }
                 if band.active() {
                     wet = band.tick(wet, fade);
                 }

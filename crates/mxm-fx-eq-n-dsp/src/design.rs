@@ -112,6 +112,13 @@ impl Shape {
     pub fn offers_solo(self) -> bool {
         self != Shape::TiltShelf
     }
+
+    /// Whether the shape can be dynamic (plan §7.1; brief §C): a bell or a shelf. Cuts, the notch
+    /// and the band pass have no gain, and the tilt lifts one side of its pivot and cuts the other,
+    /// so "cut what gets loud" has no meaning for it.
+    pub fn is_dynamic(self) -> bool {
+        matches!(self, Shape::Bell | Shape::LowShelf | Shape::HighShelf)
+    }
 }
 
 /// A cut's slope (brief A3). Each step is an order of 6 dB/octave.

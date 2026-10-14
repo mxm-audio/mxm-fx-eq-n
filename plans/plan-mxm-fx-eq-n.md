@@ -2,7 +2,7 @@
 
 **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
-all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C. F1.1 is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
+all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built. F1.2 is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
 crate unchanged, the shell onto nice-plug 0.4.2, the editor onto the kit's keyboard language
 (`mxm_ui::navigation`, `mxm-keys`) in place of the archive's `held` layer, and the analyser on the
@@ -646,7 +646,7 @@ group's tree in every Band state; the ring, the moving curve and the meter only 
 | Step | Delivers | Gate |
 |---|---|---|
 | **F1.0** | The brief's addendum: ranges, defaults, the law's slopes and knee, the bound, the presets' names. **Signed** (2026-10-14): the brief's §C | Owner |
-| **F1.1** | DSP: detector, law, bound, ballistics, the idle rule; the cost measured | Measurements in the DSP's `AGENTS.md` |
+| **F1.1** | DSP: detector, law, bound, ballistics, the idle rule; the cost measured. **Built** (2026-10-14): `dynamics.rs`, the engine's dynamic bands, 15 new tests; 24 dynamic bells all moving cost 9.8 % at 192 kHz against the 35 % steady budget; the detector's delay, the fastest attack's broadband energy and slot order measured (`eq_n_dynamics`) | Measurements in the DSP's `AGENTS.md` |
 | **F1.2** | Shell: the 96 parameters, both migrations, telemetry | Unit tests; bundle; `clap-validator` |
 | **F1.3** | Editor: the Dynamics group, the ring, the moving curve, the meter | Editor tests; owner by eye |
 | **F1.4** | The dynamic presets beside the thirteen static ones, the factory tests learning the new fields; host tests through MXM Player | Merge gate |

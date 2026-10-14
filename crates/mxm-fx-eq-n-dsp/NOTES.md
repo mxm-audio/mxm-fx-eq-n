@@ -140,14 +140,22 @@ All measured on the development machine (AMD Threadripper 3970X, Windows, rustc 
   as a share of one core, three runs. *Crossfading* switches every band between a 96 dB/octave
   low and high cut at each fade's end, so every band always runs two eight-section filters;
   *crossfading and gliding*, **the transition worst case and A6's acceptance figure**, also moves
-  every band's frequency every control interval, so the new bank redesigns and ramps throughout:
+  every band's frequency every control interval, so the new bank redesigns and ramps throughout.
+  *24 dynamic bells* is F1's worst case (plan §7.1), a **steady** load: every band a bell with
+  Range −30, Threshold −40, Attack 0.5 ms and Release 10 ms, on noise whose level drops 30 dB
+  every other block, so every detector runs and every gain moves and is redesigned throughout.
+  Measured 2026-10-14, after F1.1, best of three:
 
   | Load | 44.1 kHz | 192 kHz | Budget (A6, 192 kHz) |
   |---|---|---|---|
-  | Steady | 4.4–4.5 % | 19.4–20.6 % | 35 % |
-  | Every band crossfading | 8.8–9.8 % | 38.1–42.3 % | 70 % |
-  | Every band crossfading and gliding | 15.1–18.1 % | 51.2–57.2 % | 70 % |
-  | Every band gliding | 10.3–13.4 % | 31.8–36.7 % | 70 % |
+  | Steady | 4.4 % | 19.4 % | 35 % |
+  | Every band crossfading | 8.9 % | 38.4 % | 70 % |
+  | Every band crossfading and gliding | 14.8 % | 50.0 % | 70 % |
+  | Every band gliding | 10.4 % | 29.6 % | 70 % |
+  | 24 dynamic bells, all moving | 3.4 % | 9.8 % | 35 % (steady) |
+
+  A dynamic bell costs less than a 96 dB/octave cut: one section and its detector's one, against
+  eight; its gain is redesigned once a control interval, as any glide is.
 
   Deriving every section's coefficients before the signal passes (`filter.rs`), and taking
   `tan(w/2)` once per band, brought the worst case down from 69.4–75.6 % — over the budget — and
@@ -159,7 +167,7 @@ All measured on the development machine (AMD Threadripper 3970X, Windows, rustc 
   read 26 and 45 ns a frame on consecutive runs), so compare builds back to back.
 
   The analyser's audio-side handoff spends from the same budget (plan §3.5): the steady case
-  leaves it 14–16 % at 192 kHz, the transition worst case 13–19 %.
+  leaves it about 15.6 % at 192 kHz, the transition worst case 20 %, the dynamic case 25 %.
 - **Chosen, not measured**: `SMOOTHING_SECONDS` (5 ms, inside the collection's 5–20 ms window),
   `FADE_SECONDS` (20 ms, `mxm-fx-curve`'s), `CONTROL_SECONDS` (a third of a millisecond),
   `QUIET_FLOOR` (−200 dB of state), the 20 kHz fit point, the invertibility floors (6 dB, Q 40)
@@ -167,6 +175,32 @@ All measured on the development machine (AMD Threadripper 3970X, Windows, rustc 
 
 A design change reruns `eq_n_cramping` and the design tests; a per-sample change reruns
 `eq_n_cost` on an idle machine; replace the figures above rather than adding to them.
+
+## Dynamic bands, measured
+
+`eq_n_dynamics` and `tests/dynamics.rs`, at 48 kHz (F1.1, 2026-10-14).
+
+- **The detector's delay against the audio** (Wise's "conundrum", research §7): a tone at a dynamic
+  cut's centre (Range −12, Threshold −40, the tone at −6 dBFS) starting from silence; how much later
+  the cut is half in than a 0.5 ms attack alone would make it.
+
+  | Band | Q 1 | Q 4 | Q 10 | Q 40 |
+  |---|---|---|---|---|
+  | 100 Hz | 1.32 ms | 1.99 ms | 2.65 ms | 11.65 ms |
+  | 1 kHz | 0.65 ms | 0.65 ms | 0.65 ms | 1.65 ms |
+
+  Under the band pass's group delay (`2Q/ω₀`: 127 ms at 100 Hz, Q 40) because the level crosses a
+  threshold 34 dB under the tone early in the rise; nearer the threshold it is longer. The onset
+  passes uncut for that long: a narrow, low dynamic cut is slow by nature, not by its Attack.
+- **Broadband energy at the fastest attack**: a 200 Hz tone through a 1 kHz, Q 2 cut (Range −30,
+  Attack 0.5 ms, Release 10 ms) that 1 kHz bursts trigger every 100 ms: energy above 5 kHz at
+  −83.2 dB of the tone, against −114.4 dB with the band static, so the moving gain adds 31 dB of
+  it, still 83 dB under the tone. E1's envelope-rate case (1 ms, 60 ms, 0 to −12 dB) was −89.7 dB.
+- **Slot order**: two reacting bells (2 and 2.5 kHz, a cut and a lift) swapped take the same gains
+  interval by interval; the renders differ by −72.2 dB of the signal, the moving filters not
+  commuting.
+- **The law on a steady tone**: the heard gain within 0.3 dB of `law` and the tone within 0.4 dB,
+  cut and lift, Range ±6 and ±12 (the interval's peak of a 5 kHz tone reads up to 0.5 dB low).
 
 ## What the tests cover
 

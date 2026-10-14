@@ -6,10 +6,11 @@ Parent: [`../../AGENTS.md`](../../AGENTS.md). The detail behind the rules: [NOTE
 
 Framework-free, zero-runtime-dependency DSP for the original `mxm-fx-eq-n` effect: up to 24
 parametric bands in series, each a trapezoidal SVF whose design is matched to its analogue
-prototype, with click-free transitions, parking, band solo, the gain scale and the output gain.
+prototype, with click-free transitions, parking, band solo, dynamic bands (F1), the gain scale and
+the output gain.
 
 The product contract is [`../../plans/plan-mxm-fx-eq-n.md`](../../plans/plan-mxm-fx-eq-n.md) §2–§3
-and [`../../docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md) A1–A6; the evidence base is
+and §7.1 (F1) and [`../../docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md) A1–A6 and §C; the evidence base is
 `research:effects/parametric-equalizers.md`. No existing equaliser's code was opened.
 
 # Ownership
@@ -17,11 +18,13 @@ and [`../../docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md) A1–
 - `src/design.rs`: shapes and slopes, the matched and bilinear designs, the analogue prototypes,
   solo designs and response evaluation. The editor draws from it.
 - `src/filter.rs`: the running sections, their per-sample parameter ramp and their state.
-- `src/engine.rs`: the bands, glides, transitions, parking, solo, gain scale, output gain and
-  activity.
+- `src/dynamics.rs`: a dynamic band's law, its knee, its ballistics and its settings' ranges.
+- `src/engine.rs`: the bands, glides, transitions, parking, solo, dynamics, gain scale, output gain
+  and activity.
 - `tests/design.rs`: meanings and analogue match; `tests/engine.rs`: plan §8's audio properties;
-  `tests/realtime.rs`: the allocation guard.
-- `examples/`: `eq_n_cramping`, `eq_n_precision`, `eq_n_modulation`, `eq_n_tail`, `eq_n_cost`, the
+  `tests/dynamics.rs`: plan §7.1's; `tests/realtime.rs`: the allocation guard.
+- `examples/`: `eq_n_cramping`, `eq_n_precision`, `eq_n_modulation`, `eq_n_tail`, `eq_n_cost`,
+  `eq_n_dynamics`, the
   measurements in [NOTES.md § Measured and chosen facts](NOTES.md#measured-and-chosen-facts).
 
 Does **not** own parameters, ids, ranges as host parameters, smoothing styles, telemetry, the
@@ -78,6 +81,24 @@ constants, because the DSP holds every value inside them whatever arrives.
 - **Solo** is honoured only while the band is live and offers it; it runs on the dry input, follows
   the band, and fades in and out.
 
+## Dynamic bands (F1) — [NOTES.md § Measured](NOTES.md#dynamic-bands-measured)
+
+The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them as constants.
+- **Bells and shelves only** (`Shape::is_dynamic`); `Engine::set_dynamics` per slot, read at the next
+  interval; **Range 0 is the v1 band**, bit for bit.
+- **The law** (`dynamics::law`): 3:1 for a cut, 1:1.5 for a lift, a 6 dB knee, easing into Range;
+  monotonic in level and in Range, never past it.
+- **The detector** is the band's solo design, its own state, on the EQ's **input**: its loudest
+  sample each control interval, linked across channels, is the level. It follows the band's
+  frequency and Q. So the gains never depend on slot order.
+- **The ballistics** move the signed moving part in dB: Attack away from rest, Release back or
+  across it; a release ends at exactly 0 below `REST_DB`. Range glides as the gain does.
+- **The bound**: the heard gain, the drawn gain plus the moving part, is held inside ±30 dB each
+  interval, before the gain scale; `Engine::gains_db` gives the editor the drawn and heard gains.
+- **A band that listens never parks**: Range or a moving part not 0, and the gain scale not 0 %;
+  otherwise it parks and re-enters as v1 bands do.
+- **Activity**: a moving part keeps `is_ringing` true, so a host's sleep starts from rest.
+
 ## Numeric and realtime contracts — [NOTES.md § Reasons](NOTES.md#the-numeric-contracts-reasons)
 
 - `f64` coefficients and state, `f32` only at the buffers; denormals flushed on every state write;
@@ -111,6 +132,7 @@ cargo run -p mxm-fx-eq-n-dsp --release --example eq_n_precision
 cargo run -p mxm-fx-eq-n-dsp --release --example eq_n_modulation
 cargo run -p mxm-fx-eq-n-dsp --release --example eq_n_tail
 cargo run -p mxm-fx-eq-n-dsp --release --example eq_n_cost
+cargo run -p mxm-fx-eq-n-dsp --release --example eq_n_dynamics
 ```
 
 What the tests cover: [NOTES.md § What the tests cover](NOTES.md#what-the-tests-cover).
