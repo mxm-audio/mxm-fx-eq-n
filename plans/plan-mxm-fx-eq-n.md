@@ -2,7 +2,8 @@
 
 **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
-accepted, one premise rejected with the permanence it asked for stated). **Waiting for the owner's approval.** **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
+accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
+(2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done, SC.1–SC.3 in progress. **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
 all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built; F1.2–F1.4, the shell, the editor and the two presets, built; their code review approved in round 3 (2026-10-14: 6 findings over two rounds, all accepted). F1.5, the owner's listening and DAW checks, is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
@@ -75,8 +76,8 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 13 | **A dynamic band listens to its own region**; the alternative was a free trigger range per band (§7.1) | **Settled** (owner, 2026-10-14) | F1.1 |
 | 14 | **No external side chain in F1**: its own later step, once newDAWn routes a side chain (§7.1) | **Settled** (owner, 2026-10-14) | — |
 | 15 | **The external side chain next**, before F2: the EQ only, proved by tests here and heard in Bitwig at home; the alternatives were a key source in MXM Player, or newDAWn's routing first (§7.2) | **Settled** (owner, 2026-10-14) | — |
-| 16 | **Per band**: each dynamic band listens to its own input or the side chain, the key band-limited as the input is (Pro-Q 4's way); the alternative is one switch for every band (§7.2) | **Proposed** | SC.1 |
-| 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Proposed** | SC.1 |
+| 16 | **Per band**: each dynamic band listens to its own input or the side chain, the key band-limited as the input is (Pro-Q 4's way); the alternative is one switch for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
+| 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
 Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
 the state precision (§3.4) and the shape and slope set (§3.2).
@@ -733,7 +734,7 @@ path through a real host is the owner's check at home.
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **SC.0** | Decisions 15–17 and brief A1's port, signed | Owner |
+| **SC.0** | Decisions 15–17 and brief A1's port, signed. **Done** (2026-10-14) | Owner |
 | **SC.1** | DSP: the keyed block calls, the detector's source per band, solo's source | DSP tests at the end |
 | **SC.2** | Shell: the port and layouts, 24 switches, both migrations | Unit and host tests at the end; `clap-validator` |
 | **SC.3** | Editor: the toggle, the dashed ring, the re-measured column | Editor tests at the end; one agent-loop review of SC.1–SC.3 |

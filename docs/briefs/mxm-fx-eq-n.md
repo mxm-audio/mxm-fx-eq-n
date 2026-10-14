@@ -20,7 +20,9 @@ benchmark, FabFilter Pro-Q, and against a conventional fixed-band EQ.
 ### A1. Identity and host surface
 
 - `mxm-fx-eq-n`, CLAP id `dk.mxm.mxm-fx-eq-n`.
-- Mono→mono and stereo→stereo, with the two channels processed identically in v1.
+- Mono→mono and stereo→stereo, with the two channels processed identically in v1; each with a
+  **"Side chain"** input of the main input's channel count, which a dynamic band may listen to
+  (plan §7.2, approved by the owner 2026-10-14): four layouts, the keyed ones first.
 - Zero latency.
 - **24 band slots** (owner, 2026-10-12). Each slot has permanent ids for type (Off plus the shapes),
   bypass, frequency, gain, Q and slope.
