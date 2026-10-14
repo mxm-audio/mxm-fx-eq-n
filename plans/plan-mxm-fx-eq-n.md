@@ -777,9 +777,11 @@ detectors in parallel on the input.
 **Solo plays what the band works on, where it sits**: a Left band's region in the left, a Mid band's
 in the centre, a Side band's as side (`L = S`, `R = −S`). Every other rule of solo is §5's and §7.2's.
 
-**Mono** (decision 19, Pro-Q's way): a mono layout offers no placement, and a band placed Left, Right,
-Mid or Side — from a preset or a stereo instance's state — is shown disabled and does nothing, its
-placement kept. Its hover says why; the Placement control can set it back to Stereo.
+**Mono** (decision 19, Pro-Q's way): in a mono layout a Stereo band shows no Placement control, and a
+band placed Left, Right, Mid or Side — from a preset or a stereo instance's state — is shown disabled
+and does nothing, its placement kept. **Its Band card shows the Placement control with one choice
+enabled, Stereo**, the way back (Pro-Q resets it from the band's menu); the others are shown, not
+offered, and the hover says why. Choosing Stereo is an ordinary edit, undoable.
 
 **Parameters.** One per slot, appended after the side-chain switches (290 in all): `place_<n>`,
 "Band n placement", stepped **0–7**, reserved now as `type` and `slope` are: 0 Stereo, 1 Left,
