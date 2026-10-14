@@ -10,7 +10,8 @@
 //! - **The ballistics** ([`Ballistics::step`]) smooth the moving part itself, signed, in dB: Attack
 //!   while it moves away from rest, Release while it moves back toward rest or across it, so a lift
 //!   is timed as a cut is. One pole per direction, so the state only ever lies between where it was
-//!   and where the law asks. A release ends at exactly 0 below [`REST_DB`].
+//!   and where the law asks. A release ends at exactly 0 below [`REST_DB`], and a move toward any
+//!   other target stops within [`LAND_DB`] of it.
 //!
 //! The level the law reads is the band's region (`design::design_solo`), linked across channels,
 //! as a peak over each control interval (`engine`).
@@ -39,6 +40,10 @@ pub const LIFT_SLOPE: f64 = 0.5;
 /// Below this a moving part released toward rest is at rest, exactly 0: a ten-thousandth of a dB,
 /// far under anything audible, and the point after which a host may sleep the plugin.
 pub const REST_DB: f64 = 1.0e-4;
+
+/// Within this of the law's target the moving part has arrived and stays: a one-pole only ever
+/// approaches, and a band on a steady signal must come to rest and be settled.
+pub const LAND_DB: f64 = 1.0e-5;
 
 /// A slot's dynamics as the host and the editor set them, plain values.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,6 +150,9 @@ impl Ballistics {
 
     /// The moving part one interval on, from `moving` toward the law's `target`.
     pub fn step(&self, moving: f64, target: f64) -> f64 {
+        if target != 0.0 && (target - moving).abs() < LAND_DB {
+            return moving;
+        }
         let away = target != 0.0
             && (moving == 0.0 || moving.signum() == target.signum())
             && target.abs() > moving.abs();
@@ -280,7 +288,19 @@ mod tests {
             crossed |= moving < 0.0 && next >= 0.0;
             moving = next;
         }
-        assert!(crossed && (moving - 6.0).abs() < 1e-9);
+        assert!(crossed && (moving - 6.0).abs() < LAND_DB);
+    }
+
+    /// A move toward a steady target arrives, within `LAND_DB`, in a bounded number of steps.
+    #[test]
+    fn a_move_toward_a_steady_target_arrives_and_stays() {
+        let ballistics = Ballistics::new(Dynamics::STATIC, 1.0 / 3_000.0);
+        let mut moving = 0.0;
+        for _ in 0..30_000 {
+            moving = ballistics.step(moving, -9.0);
+        }
+        assert!((moving + 9.0).abs() < LAND_DB);
+        assert_eq!(ballistics.step(moving, -9.0), moving, "arrived and still");
     }
 
     #[test]

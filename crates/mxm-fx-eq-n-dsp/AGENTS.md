@@ -92,7 +92,9 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
   sample each control interval, linked across channels, is the level. It follows the band's
   frequency and Q. So the gains never depend on slot order.
 - **The ballistics** move the signed moving part in dB: Attack away from rest, Release back or
-  across it; a release ends at exactly 0 below `REST_DB`. Range glides as the gain does.
+  across it; a release ends at exactly 0 below `REST_DB`, a move toward any other target stops
+  within `LAND_DB` of it. Range glides as the gain does. A listening band is settled when its last
+  step did not move it and the peak heard so far asks for no more.
 - **The bound**: the heard gain, the drawn gain plus the moving part, is held inside ±30 dB each
   interval, before the gain scale; `Engine::gains_db` gives the editor the drawn and heard gains.
 - **A band that listens never parks**: Range or a moving part not 0, and the gain scale not 0 %;

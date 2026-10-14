@@ -271,6 +271,60 @@ fn a_band_back_from_off_starts_at_its_configured_range() {
     );
 }
 
+/// **Settled means nothing waits**: one interval of a loud tone gathers a peak the next control
+/// step will act on, so the band is not settled; on a tone whose every interval peaks alike (3 kHz
+/// at 48 kHz, one cycle an interval) it arrives and is settled; and a gain-scale glide toward 0 %
+/// is heard by a band with Range, which will stop listening and park.
+#[test]
+fn settled_waits_for_a_pending_peak_and_a_scale_a_range_hears() {
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(3_000.0, 0.0, 1.0));
+    engine.set_dynamics(0, dynamics(-12.0, -30.0));
+    engine.reset();
+    let interval = engine.control_interval();
+    assert_eq!(interval, 16);
+    let mut silence = vec![0.0f32; 480];
+    engine.process_mono(&mut silence);
+    assert!(engine.is_settled(), "a band with Range at rest on silence");
+    let mut loud = sine(interval, 0, 3_000.0, 0.5);
+    engine.process_mono(&mut loud);
+    assert!(
+        !engine.is_settled(),
+        "a peak waits for the next control step"
+    );
+    let mut start = interval;
+    let mut settled = false;
+    for _ in 0..(3.0 * RATE) as usize / interval {
+        let mut block = sine(interval, start, 3_000.0, 0.5);
+        start += interval;
+        engine.process_mono(&mut block);
+        if engine.is_settled() {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "a steady tone's cut never arrived");
+    // Then silence: the cut releases, moving every interval with nothing in the peak.
+    for _ in 0..3 {
+        let mut quiet = vec![0.0f32; interval];
+        engine.process_mono(&mut quiet);
+    }
+    assert!(!engine.is_settled(), "a release in progress is not settled");
+
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(1_000.0, 0.0, 1.0));
+    engine.set_dynamics(0, dynamics(-12.0, -30.0));
+    engine.reset();
+    silence.fill(0.0);
+    engine.process_mono(&mut silence);
+    assert!(engine.is_settled());
+    engine.set_gain_scale(0.0);
+    assert!(
+        !engine.is_settled(),
+        "the scale glides and the band will park"
+    );
+}
+
 /// A dynamics edit is a setting unread until the next interval, as a band edit is.
 #[test]
 fn a_dynamics_edit_is_unsettled_until_read() {
