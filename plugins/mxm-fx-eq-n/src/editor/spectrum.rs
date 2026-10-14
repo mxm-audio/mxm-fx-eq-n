@@ -12,7 +12,9 @@
 //!   1.4 s window is 4,096 points rather than 270,000. It is recomputed when an eighth of it is new.
 //!   Below [`CROSSOVER_HZ`] the long window is read once it holds enough audio.
 //! - **Coherent windows.** A dropped block or a new generation restarts both windows, never splicing
-//!   across the gap; a block recorded at another rate is ignored.
+//!   across the gap; a block recorded at another rate is ignored. **A silence is a gap too**: with
+//!   no audio for [`STALE_SECONDS`] the windows' readings go, the display falls to the floor, and
+//!   the next audio restarts them.
 //! - **Ballistics**: a rise shows at once, a fall at the chosen speed. **Tilt** about 1 kHz.
 
 use mxm_fft::{Complex, Planner, RealFft};
@@ -26,6 +28,12 @@ pub const FLOOR_DB: f32 = -120.0;
 pub const BAND_OCTAVES: f32 = 1.0 / 12.0;
 /// Below this the long window, once ready, is read instead of the short one.
 pub const CROSSOVER_HZ: f32 = 300.0;
+/// With no audio for this long, what the windows hold is the sound from before: the host stopped
+/// calling the plugin (it sleeps on silence, or its transport stopped). Their readings go, the
+/// display falls to the floor at the chosen speed, and the next audio restarts them as a gap does.
+/// Longer than any host's block.
+const STALE_SECONDS: f64 = 0.3;
+
 /// The decimated rate the long window aims at.
 const LONG_RATE: f32 = 3_000.0;
 /// The anti-alias low pass, as a share of the decimated rate.
@@ -295,6 +303,11 @@ pub struct Spectrum {
     pub pre_db: Vec<f32>,
     pub post_db: Vec<f32>,
     last_time: Option<f64>,
+    /// Audio came since the last analysis, when audio last came, and whether the windows hold
+    /// only the sound from before a silence ([`STALE_SECONDS`]).
+    fresh: bool,
+    last_audio: Option<f64>,
+    stale: bool,
 }
 
 impl Spectrum {
@@ -323,6 +336,9 @@ impl Spectrum {
             pre_db: Vec::new(),
             post_db: Vec::new(),
             last_time: None,
+            fresh: false,
+            last_audio: None,
+            stale: false,
         }
     }
 
@@ -343,6 +359,9 @@ impl Spectrum {
         }
         self.expected_seq = None;
         self.generation = None;
+        self.fresh = false;
+        self.last_audio = None;
+        self.stale = false;
         self.pre_db.iter_mut().for_each(|db| *db = FLOOR_DB);
         self.post_db.iter_mut().for_each(|db| *db = FLOOR_DB);
     }
@@ -367,14 +386,16 @@ impl Spectrum {
         let dropped = self
             .expected_seq
             .is_some_and(|expected| block.seq != expected);
-        if broken || dropped {
-            // A gap in the audio or a dropped block: restart, never splice across.
+        if broken || dropped || std::mem::take(&mut self.stale) {
+            // A gap in the audio, a dropped block or audio after a silence: restart, never splice
+            // across.
             self.short.restart();
             if let Some(long) = &mut self.long {
                 long.restart();
             }
             self.gaps += 1;
         }
+        self.fresh = true;
         self.generation = Some(block.generation);
         self.expected_seq = Some(block.seq.wrapping_add(1));
         self.channels = usize::from(block.channels.clamp(1, 2));
@@ -414,9 +435,24 @@ impl Spectrum {
             .map_or(0.0, |last| (now - last).clamp(0.0, 0.25)) as f32;
         self.last_time = Some(now);
         let fall = settings.speed.release_db_per_second() * elapsed;
-        self.short.analyse(self.channels, settings.show);
-        if let Some(long) = &mut self.long {
-            long.window.analyse(self.channels, settings.show);
+        if std::mem::take(&mut self.fresh) {
+            self.last_audio = Some(now);
+        } else if self
+            .last_audio
+            .is_some_and(|last| now - last > STALE_SECONDS)
+            && !self.stale
+        {
+            self.stale = true;
+            self.short.analysed = [false; 2];
+            if let Some(long) = &mut self.long {
+                long.window.analysed = [false; 2];
+            }
+        }
+        if !self.stale {
+            self.short.analyse(self.channels, settings.show);
+            if let Some(long) = &mut self.long {
+                long.window.analyse(self.channels, settings.show);
+            }
         }
         let long = self.long.as_ref().map(|long| &long.window);
         let short = &self.short;
@@ -705,6 +741,36 @@ mod tests {
         assert!(
             (loud - spectrum.pre_db[0] - 1.2).abs() < 0.01,
             "12 dB/s for 0.1 s"
+        );
+    }
+
+    /// **With no audio the whole display falls**, the long window's lows included (the owner,
+    /// 2026-10-14, in MXM Player: the part under 250 Hz "did not sink down and dissapear"), and the
+    /// next audio starts the windows again rather than splicing onto what came before the silence.
+    #[test]
+    fn with_no_audio_the_whole_display_falls_and_the_next_audio_restarts_the_windows() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        spectrum.set_resolution(Resolution::High);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        let settings = flat();
+        feed(&mut spectrum, &mut seq, 2.0, &mut |n| {
+            (std::f32::consts::TAU * 60.0 * n as f32 / rate).sin()
+        });
+        let freqs = [60.0, 2_000.0];
+        spectrum.analyse(&freqs, 0.0, &settings);
+        assert!(spectrum.long_ready());
+        assert!(spectrum.pre_db[0] > -6.0, "the tone, from the long window");
+        // The host stops calling the plugin: the editor's frames go on, and no audio comes.
+        for frame in 1..=600 {
+            spectrum.analyse(&freqs, f64::from(frame) / 60.0, &settings);
+        }
+        assert_eq!(spectrum.pre_db, [FLOOR_DB; 2], "pre fell to the floor");
+        assert_eq!(spectrum.post_db, [FLOOR_DB; 2], "post fell to the floor");
+        feed(&mut spectrum, &mut seq, 0.05, &mut |_| 0.0);
+        assert!(
+            !spectrum.ready() && !spectrum.long_ready(),
+            "restarted, not spliced"
         );
     }
 

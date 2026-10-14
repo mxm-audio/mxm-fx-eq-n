@@ -406,8 +406,8 @@ From Pro-Q and the collection's own canvas (research §17.2; `plugins/mxm-fx-cur
   modifier settled at E0.5. Otherwise the wheel scrolls the view, as the narrow layout needs.
 - **Clicking a point selects it,** and the column follows. A right-click opens shape and delete.
 - **Delete removes the selected band.**
-- **Band solo is v1, the owner's sweep made into a feature** (research §17.3). Holding solo plays what
-  the band is about, so sweeping it hunts a resonance by ear.
+- **Band solo is v1, the owner's sweep made into a feature** (research §17.3). Solo, switched on,
+  plays what the band is about, so sweeping it hunts a resonance by ear.
   - **What it plays per shape** is a column of the E0 semantics table (§3.2). The proposal:
     - a bell, notch or band pass, a 0 dB bell included, plays a band-pass at its frequency and Q;
     - a cut plays what it removes;

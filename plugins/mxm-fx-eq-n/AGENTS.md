@@ -148,7 +148,9 @@ transaction.
   the host applies them. The column's shared controls read the parameter itself, mxm-kit's binding
   as everywhere ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*; plan §7).
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
-  decimated long window for the lows; settings are view state (`view.rs`), persisted, dirty-only;
+  decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
+  falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
+  persisted, dirty-only;
   within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).
 
 ## The host tests (`host-tests/`)

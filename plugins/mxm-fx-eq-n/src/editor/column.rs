@@ -178,7 +178,12 @@ fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slope) -> Node
     }
     let mut actions = Vec::new();
     if shape.offers_solo() {
-        actions.push(button_leaf(Leaf::Solo, "Bypassed"));
+        actions.push(leaf(
+            Leaf::Solo,
+            Kind::Toggle {
+                label: "Bypassed".to_owned(),
+            },
+        ));
     }
     actions.push(button_leaf(Leaf::Delete, "Delete band"));
     rows.push(row_gap(SPACE_3, actions));
@@ -374,7 +379,7 @@ impl EqApp {
         .rect
     }
 
-    pub(crate) fn paint_leaf(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf, _rect: Rect) {
+    pub(crate) fn paint_leaf(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf, rect: Rect) {
         let gui = self.gui.clone();
         let Some(gui) = gui else {
             return;
@@ -481,23 +486,27 @@ impl EqApp {
             Leaf::Solo => {
                 if let Some(slot) = selected {
                     let bypassed = self.band_now(slot).bypass;
-                    let soloed = self.soloed() == Some(slot);
-                    let text = if bypassed { "Bypassed" } else { "Solo" };
-                    let response = navigation::at(ui, SOLO_KEY, |ui| {
-                        let response = ui
-                            .add_enabled(
-                                !bypassed,
-                                egui::Button::new(text)
-                                    .selected(soloed)
-                                    .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
-                            )
-                            .on_hover_text(SOLO_DESCRIPTION);
-                        navigation::mark_unclaimed(ui, response.id, response.rect);
-                        response
-                    });
+                    let mut on = self.soloed() == Some(slot);
+                    let label = if bypassed { "Bypassed" } else { "Solo" };
                     // A toggle (the owner, 2026-10-14: held, the band could not be edited while it
-                    // played). OPEN presses it as a click does.
-                    if response.clicked() {
+                    // played), drawn as every toggle is, the Analyser's beside it (the owner: "Is
+                    // there no standard for that?"). OPEN presses it as a click does.
+                    let pressed = navigation::at(ui, SOLO_KEY, |ui| {
+                        ui.add_enabled_ui(!bypassed, |ui| {
+                            mxm_ui::control::toggle_sized(
+                                ui,
+                                tokens,
+                                label,
+                                "Solo",
+                                &mut on,
+                                false,
+                                SOLO_DESCRIPTION,
+                                rect.width(),
+                            )
+                        })
+                        .inner
+                    });
+                    if pressed {
                         self.toggle_solo(slot);
                     }
                 }
