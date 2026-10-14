@@ -118,20 +118,20 @@ technique or paper it comes from.
 # Ownership
 
 Root owns `Cargo.toml`, `Cargo.lock`, `LICENSE`, `NOTICE.md`, `TRADEMARKS.md`, `README.md`,
-`CONTRIBUTING.md`, `.cargo/`, `.github/`, `bundler.toml` and `xtask/`; `plans/` holds this
-product's plan, and `docs/briefs/` its brief. There is no `test-bundles.txt` here: it lists the
-plugins from other repositories that host tests load, and this repository has no host tests yet
-(they are the plan's E4).
+`CONTRIBUTING.md`, `.cargo/`, `.github/`, `bundler.toml`, `test-bundles.txt` and `xtask/`;
+`plans/` holds this product's plan, and `docs/briefs/` its brief. `test-bundles.txt` names the
+plugins from other repositories that the host tests load: `mxm-mono-01`, the source they play.
 Each folder with an `AGENTS.md` owns its contents; the index is below.
 
 **Dependencies follow each repository's `main`, and `Cargo.lock` pins the exact commit.** The kit comes from mxm-kit's
 `main`, another product's crates from its repository's `main`, and nice-plug and
 egui-baseview from their MXM forks (`[patch.crates-io]`).
 
-**One tier of tests so far.** `cargo test` builds the plugin and its DSP only — the loop for a
-change. There is no `plugins/mxm-fx-eq-n/host-tests` package yet, so nothing here loads the
-release bundle through MXM Player; when one comes, it is a separate package so the fast tier
-never builds the player (checked 2026-10-06: neither `Cargo.toml`'s members nor CI has one).
+**Two tiers of tests.** `cargo test` builds the plugin and its DSP only — the loop for a
+change. `plugins/mxm-fx-eq-n/host-tests` loads the release bundle through MXM Player: it is a
+separate package, outside `default-members`, so the fast tier never builds the player. **It reads
+this repository's own `target/bundled`**, so bundle without `CARGO_TARGET_DIR`: a bundle built
+into a shared target lands elsewhere, and every host test skips.
 
 ## Windows, Linux and macOS — all three, always
 
@@ -175,8 +175,9 @@ third-party files, images and verbatim text never do.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test                                   # the fast tier: the plugin and its DSP
-cargo xtask bundle mxm-fx-eq-n --release
-# no slow tier yet: there is no mxm-fx-eq-n-host-tests package to run through MXM Player
+cargo xtask bundle mxm-fx-eq-n --release      # also installs it in this user's CLAP folder
+cargo xtask fetch                            # plugins from other repositories its tests load
+cargo test -p mxm-fx-eq-n-host-tests         # the slow tier: through MXM Player
 ```
 
 Before a push, run the first three on Windows; Linux and macOS are checked
@@ -188,4 +189,4 @@ later, together (the owner, 2026-10-06). CI runs the same on Windows, macOS and 
 |---|---|
 | [`crates/mxm-fx-eq-n-dsp/AGENTS.md`](crates/mxm-fx-eq-n-dsp/AGENTS.md) | The matched SVF bands, the cramping choice, transitions and parking, solo, precision and the measured cost |
 | [`plugins/AGENTS.md`](plugins/AGENTS.md) | Shared plugin conventions: nice-plug, the init patch, presets, `process()` rules, the editor contract, and installing a bundle in a DAW |
-| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 146 permanent parameters and their reserved stepped domains, the empty-EQ Init, solo, the analyser and meter, the graph-and-column editor, the graph as a surface, plain undo |
+| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 146 permanent parameters and their reserved stepped domains, the empty-EQ Init, solo, the analyser and meter, the graph-and-column editor, the graph as a surface, plain undo, the factory set, the host tests |

@@ -3,6 +3,14 @@ resolver = "3"
 members = [
     "crates/mxm-fx-eq-n-dsp",
     "plugins/mxm-fx-eq-n",
+    "plugins/mxm-fx-eq-n/host-tests",
+    "xtask",
+]
+# The fast tier: `cargo build` and `cargo test` here never build MXM Player or a
+# standalone audio backend; `cargo test --workspace` adds the host tests (the slow tier).
+default-members = [
+    "crates/mxm-fx-eq-n-dsp",
+    "plugins/mxm-fx-eq-n",
     "xtask",
 ]
 
@@ -16,13 +24,15 @@ repository = "https://github.com/mxm-audio/mxm-fx-eq-n"
 
 [workspace.dependencies]
 # Pinned exactly, as in every MXM repository; Cargo.lock is committed. Own crates by path, the
-# kit's from mxm-kit's main.
+# kit's and the player's from their repositories' `main`, locked to a commit.
 egui = "=0.36.1"
 mxm-fx-eq-n-dsp = { path = "crates/mxm-fx-eq-n-dsp" }
 mxm-fft = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-keys = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-measure = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-params = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
+mxm-player = { git = "https://github.com/mxm-audio/mxm-player", branch = "main" }
+mxm-player-harness = { git = "https://github.com/mxm-audio/mxm-player", branch = "main" }
 mxm-plugin-test = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-preset = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }
 mxm-telemetry = { git = "https://github.com/mxm-audio/mxm-kit", branch = "main" }

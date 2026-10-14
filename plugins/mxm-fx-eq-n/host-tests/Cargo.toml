@@ -1,0 +1,23 @@
+[package]
+name = "mxm-fx-eq-n-host-tests"
+description = "mxm-fx-eq-n hosted by MXM Player: discovery, the state path and the effect chain through the real host, against its release bundle. The slow tier: `cargo test -p mxm-fx-eq-n` never builds the player."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+# The tests are in `tests/`; the library is empty and not test-built.
+test = false
+doctest = false
+
+[dev-dependencies]
+mxm-player.workspace = true
+mxm-player-harness.workspace = true
+# A band is set the way a host restores one, through the CLAP state; the player's own versions.
+clack-extensions = { version = "=0.1.1", default-features = false, features = ["clack-host", "state"] }
+clack-host = "=0.1.1"
+serde_json = "=1.0.145"

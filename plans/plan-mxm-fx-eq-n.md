@@ -1,6 +1,6 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
+**Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
 crate unchanged, the shell onto nice-plug 0.4.2, the editor onto the kit's keyboard language
 (`mxm_ui::navigation`, `mxm-keys`) in place of the archive's `held` layer, and the analyser on the
@@ -14,7 +14,7 @@ are the owner's last rulings: plain undo, and the plan cut back to requirements.
 unreviewed.** Written from the
 owner's rulings of 2026-10-12 and the evidence base `research:effects/parametric-equalizers.md`.
 **Built so far:** E0, the brief, signed; E0.5, the hand-judged interaction probe, code-reviewed and
-approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by the agent-loop in round 6; **E2, the plugin shell** (2026-10-13), bundled, `clap-validator` clean, and its code approved by the agent-loop in round 1; **E3, the editor** (2026-10-13), not yet reviewed. E4 is next.
+approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by the agent-loop in round 6; **E2, the plugin shell** (2026-10-13), bundled, `clap-validator` clean, and its code approved by the agent-loop in round 1; **E3, the editor** (2026-10-13), ported here and its code approved by the agent-loop in round 6; **E4** (2026-10-14), the factory set and the host tests, its review below. E5 is next.
 
 | Rev | Change |
 |---|---|
@@ -32,6 +32,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 21 | **E4 built** (2026-10-14): thirteen factory presets generated from a design table in the editor's units, the brief's eight examples plus five so every shape is used, each in the lowest slots at Init's output; `host-tests/` through MXM Player: discovered as an effect, the editor offered, Init bit-exact dry in the chain, a band restored through the CLAP state heard and ringing down to exact silence, the player's bypass bit-exact; the lock on kit `f459221` and player `cd3eae3`. |
 | 20 | **Moved to its own repository**, `mxm-audio/mxm-fx-eq-n` (2026-10-13): the archive was the wrong home. The DSP crate came across unchanged (50 tests, on 1.87 too); the FFT became mxm-kit's `mxm-fft`; the shell and the editor are ported onto the live kit, the editor's keys onto its keyboard language. |
 | 19 | **E3 built** (2026-10-13): the graph, the column of tree cards, the Out meter, the held-key keyboard (`crates/ui`'s `held`), plain undo with epochs, held solo, the analyser on `crates/mxm-fft` (X0, X1) within a 2 ms budget, accessibility, the editor checks; the probe deleted. Undo records at the editor's own host context, so §5.4's binding observer and §6's `mxm-preset` change were not needed. |
 | 18 | **E2 built** (2026-10-13): `plugins/mxm-fx-eq-n`, 146 permanent parameters with reserved stepped domains, the empty-EQ Init, the preset seam, solo as a transient command, the analyser ring and the Out meter, no editor yet. `clap-validator`'s parameter fuzz found a subnormal output, now flushed in the DSP. |
@@ -558,7 +559,7 @@ the same parameter starts from the value before it. A pending-aware read there, 
 | **E1** | `crates/mxm-fx-eq-n-dsp`: bands, cascade, smoothing, transitions, the cramping choice, precision, cost at the cap, tail and activity, silence/NaN/reset tests; MSRV 1.87 verified. **Built** (2026-10-13), 49 tests; the worst case measures about 20 % steady and up to 57 % with every band crossfading and gliding at 192 kHz. Its code was reviewed by the agent-loop and **approved in round 6** (2026-10-13; 16 findings fixed, none rejected), inside A6's 35 % and 70 % | Measurements in its `AGENTS.md` |
 | **E2** | `plugins/mxm-fx-eq-n` shell: the slot pool, layouts, Init, presets seam, telemetry rings, meters, permanent-id test. **Built** (2026-10-13): 30 tests; the release bundle passes `clap-validator` (33 passed, 0 failed, in debug and release); code **approved by the agent-loop in round 1** | Unit tests; bundle; `clap-validator` |
 | **E3** | The editor: graph, column, analyser, held-key commands with the 3×3 map, undo, band identity, accessibility, every editor check. **Built** (2026-10-13): 25 tests in the editor and its modules, 59 in the plugin, and a release cost measurement; the analyser within its budget; the probe deleted. For the owner's eye: points at their own gain, solo held, an edge key keeps the other edge, K1 as newDAWn has it **Ported** to this repository (2026-10-13) onto the live kit: the keys are the language, the graph a surface; 64 tests, the column under the shared keyboard check. **Code review approved** (agent-loop, six rounds, 2026-10-13) at `6a45037`; the kit side (mxm-fft, `navigation::surface`) in three rounds, on kit main since `69083b4` | Editor tests; owner by eye |
-| **E4** | Factory presets, `host-tests/`, inventories, DOX closeout (§10) | Merge gate |
+| **E4** | Factory presets, `host-tests/`, inventories, DOX closeout (§10). **Built** (2026-10-14): thirteen presets from `preset.rs`'s design table, generated and tested in each preset's own state; five host tests through MXM Player (`Harness::with_fx`, the CLAP state path); the DOX closeout below done, the durable rules in the plugin's and the DSP's `AGENTS.md` | Merge gate |
 | **E5** | Listening, by-eye and DAW checks | Owner sign-off |
 
 v1 is E0–E5. F1–F8 follow in the owner's order.
@@ -569,6 +570,14 @@ On delivery: new `plugins/mxm-fx-eq-n/AGENTS.md` and `crates/mxm-fx-eq-n-dsp/AGE
 contracts and measured figures; the §6 owners updated; `crates/ui/AGENTS.md` for the held-key
 layer. The durable rules then leave this plan for those files: the slot lifecycle,
 the keyboard model, the cramping choice and the side-column exception.
+
+**Done at E4** (2026-10-14). The slot lifecycle, the keyboard model and the side-column exception
+are in `plugins/mxm-fx-eq-n/AGENTS.md`, the cramping choice in `crates/mxm-fx-eq-n-dsp/AGENTS.md`;
+the surface is in mxm-kit's `crates/ui/AGENTS.md` and `docs/plugin-conventions.md`, which also
+carries this plugin's row; the workspace lists the repository (`repos.txt`). Left for the owner:
+two inventories in public repositories still count ten effects — the workspace's `AGENTS.md`
+(changed locally, not pushed) and mxm-kit's `docs/plugin-conventions.md`, whose table also lacks
+`mxm-fx-oldify`'s row.
 
 **Evidence:** `research:effects/parametric-equalizers.md`, a comparative survey dated 2026-10-12. Its
 §25 validation programme is what E1–E5 draw on.

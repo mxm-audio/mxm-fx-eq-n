@@ -1,7 +1,7 @@
 # NOTES.md — plugins/mxm-fx-eq-n
 
 The detail behind this folder's AGENTS.md: the reasons for each deviation, the solo and handoff
-design, the editor's interaction in full and the analyser's measurements. AGENTS.md is the
+design, the editor's interaction in full, the analyser's measurements and the factory set. AGENTS.md is the
 contract; this file is the reference it links to.
 
 ## Deviations from the shared parameter rules, and why
@@ -169,3 +169,27 @@ and `audition.rs`'s tests hold the lifecycle.
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo held, not latched; the bands' keys are the language's, MOVE on an edge keeping the other one.
 The probe's band curves (owner: "mostly visual noise") are not drawn.
+
+## The factory set
+
+The brief asks for about a dozen presets named for the job and gives eight examples (brief B,
+*Factory presets*, signed 2026-10-12); the fifty-preset floor is for instruments. Thirteen ship
+(E4, 2026-10-14): the eight examples, then *Bass weight*, *Band pass sweep*, *Snare crack* and
+two hum notches, chosen so every shape is used at least once — the low shelf and the band pass
+had no example. Each is a starting point, a few bands of the usual move, not a finished mix.
+
+- **Why the lowest slots.** Automation belongs to the slot number (decision 10) and a new band
+  takes the lowest Off slot, so a preset in slots 1…n leaves the player's next band in n + 1, and
+  a preset's band 3 is always slot 3 in a saved project.
+- **Why Init's output and gain scale.** A preset that also moved the output would be louder or
+  quieter for a reason the graph does not show; the gain scale at 100 % means the drawn gains are
+  the heard ones.
+- **Why a design table in the editor's units.** A file stores normalised values, and a design
+  written in them says nothing until it is generated and its `text` read back (`mxm-mono-08`'s
+  design table, whose own comment says so). This table says *Bell 300 Hz, −3 dB, Q 1.2*, and the
+  generator turns it into the file. A gainless shape
+  stores 0 dB and a shape without a slope the default slope, as the editor would.
+- **The values** are conventional moves, not measured ones: a 60 Hz low cut at 12 dB/octave; voice
+  presence at 3.5 kHz; mud at 300 Hz; air as a 12 kHz shelf; a kick's thump at 60 Hz, box at
+  350 Hz and beater at 4 kHz; the telephone band's 300 Hz – 3.4 kHz; mains hum at 50 and 60 Hz
+  with three harmonics each, notched at Q 10. E5's listening judges them.

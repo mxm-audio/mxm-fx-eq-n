@@ -7,15 +7,16 @@ Parent: [`../AGENTS.md`](../AGENTS.md). The detail behind the rules: [NOTES.md](
 `mxm-fx-eq-n`, an original parametric EQ with only the bands you need: up to 24, made on demand,
 over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The product contract is
 [`plans/plan-mxm-fx-eq-n.md`](../../plans/plan-mxm-fx-eq-n.md) and the signed brief
-[`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E3**: the host
-surface, the preset seam, solo's command path, the analyser and the meter (E2), and the editor (E3).
-Factory presets and `host-tests/` are E4's.
+[`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E4**: the host
+surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
+and the factory set and the host tests (E4). DAW and listening checks are E5's.
 
 # Ownership
 
 - `src/lib.rs`: identity, layouts, the lifecycle and `process`.
 - `src/params.rs`: the permanent parameters, their domains and readings.
-- `src/preset.rs`: the `mxm_preset::Instrument` seam.
+- `src/preset.rs`: the `mxm_preset::Instrument` seam and the factory set's design.
+- `presets/`: the factory set, generated from that design, never hand-edited.
 - `src/audition.rs`: band solo, the transient command.
 - `src/telemetry.rs`: the editor link and the Out meter, two of mxm-kit's `PeakMeter`s.
 - `src/analyser.rs`: the analyser's audio half.
@@ -24,6 +25,7 @@ Factory presets and `host-tests/` are E4's.
   `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs` the
   analyser's editor half; `tests.rs` its tests.
 - `src/tests.rs`: the shell's tests.
+- `host-tests/`: the slow tier, the release bundle through MXM Player.
 
 # Local Contracts
 
@@ -75,7 +77,19 @@ The engine then leaves the buffer untouched, NaN and subnormals included
 (`the_init_preset_is_the_parameter_defaults_and_the_empty_eq`).
 
 **Presets are parameters only** (plan §5.4): no custom state, no fingerprint, no dirty-only
-transaction. The factory set is E4's.
+transaction.
+
+## The factory set is generated — [NOTES.md § The factory set](NOTES.md#the-factory-set)
+
+- **`FACTORY_DESIGN`** (`preset.rs`'s tests) states each preset in the editor's units, a band at
+  a time; `write_the_factory_presets` (ignored) writes `presets/`, texts read in each preset's own
+  state, and `shipped_files_are_exactly_the_readable_design` fails when a file differs.
+- **A preset's bands fill slots 1…n**, none bypassed, the rest Off, and the output and gain scale
+  stay at Init's, so a band the player adds takes the next slot and a preset changes the sound
+  only through its bands (`every_factory_preset_is_heard_and_fills_the_lowest_slots`, which also
+  asks the shipped cascade for at least 1 dB of change).
+- **About a dozen, named for the job, every shape used** (brief B), the brief's examples by name
+  (`the_set_is_the_briefs_and_uses_every_shape`).
 
 ## Band solo is a transient command — [NOTES.md § Why](NOTES.md#band-solo-is-a-transient-command-never-a-parameter)
 
@@ -133,10 +147,18 @@ transaction. The factory set is E4's.
   decimated long window for the lows; settings are view state (`view.rs`), persisted, dirty-only;
   within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).
 
+## The host tests (`host-tests/`)
+
+- **Product code is not linked into the host**: a band is set as a host restores a saved EQ,
+  through the CLAP state, and read back by the host under its slot's name.
+- They hold the bundle's boundary (plan §8): discovered as an effect with no map, the editor
+  offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
+  ringing down to exact silence, and the player's bypass bit-exact dry.
+
 ## Not here, by plan
 
 - **No control map** (plan §6): no collection role fits on-demand bands, and a map is optional.
-- **Factory presets and `host-tests/`** are E4's; DAW and listening checks are E5's.
+- **DAW and listening checks** are E5's.
 
 # Work Guidance
 
@@ -151,12 +173,14 @@ cargo test -p mxm-fx-eq-n
 cargo clippy -p mxm-fx-eq-n --all-targets
 cargo xtask bundle mxm-fx-eq-n --release
 clap-validator validate target/bundled/mxm-fx-eq-n.clap
+cargo xtask fetch
+cargo test -p mxm-fx-eq-n-host-tests
 ```
 
 The validator's random parameter fuzz once found a subnormal output, now flushed in the DSP. The
 analyser's cost: `cargo test -p mxm-fx-eq-n --release --lib analyser_cost -- --ignored --nocapture`.
 The pictures: `cargo test -p mxm-fx-eq-n --lib pictures`, into `target/layout-tree/mxm-fx-eq-n/`.
-There are no `host-tests/` until E4.
+The factory set: `cargo test -p mxm-fx-eq-n --lib write_the_factory_presets -- --ignored`.
 
 # Child DOX Index
 
