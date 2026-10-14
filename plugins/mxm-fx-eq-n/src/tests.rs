@@ -517,3 +517,23 @@ fn a_dynamic_band_cuts_what_gets_loud_and_tells_only_an_editor() {
         "a connect clears them"
     );
 }
+
+/// **The heard scale is the engine's, where it has glided** (plan §7.1): published with the gains
+/// while an editor is connected, between the old and new scale during the glide, and at the new
+/// one once it has arrived.
+#[test]
+fn the_editor_hears_the_gain_scale_where_it_has_glided() {
+    let mut plugin = prepared(2);
+    plugin.telemetry.connect(true);
+    let mut quiet = vec![vec![0.0f32; 512], vec![0.0f32; 512]];
+    run(&mut plugin, &mut quiet);
+    assert_eq!(plugin.telemetry.heard_scale(), 1.0);
+    set_float(&plugin.params.gain_scale, 0.5);
+    let mut short = vec![vec![0.0f32; 64], vec![0.0f32; 64]];
+    run(&mut plugin, &mut short);
+    let gliding = plugin.telemetry.heard_scale();
+    assert!(0.5 < gliding && gliding < 1.0, "mid-glide: {gliding}");
+    let mut long = vec![vec![0.0f32; 48_000], vec![0.0f32; 48_000]];
+    run(&mut plugin, &mut long);
+    assert!((plugin.telemetry.heard_scale() - 0.5).abs() < 1e-4);
+}

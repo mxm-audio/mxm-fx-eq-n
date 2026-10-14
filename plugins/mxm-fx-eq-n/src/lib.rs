@@ -161,6 +161,8 @@ impl MxmFxEqN {
             for (meter, peak) in self.telemetry.output.iter().zip(peaks) {
                 meter.publish(peak);
             }
+            self.telemetry
+                .publish_heard_scale(self.engine.gain_scale() as f32);
             for slot in 0..mxm_fx_eq_n_dsp::SLOTS {
                 if let Some((drawn, heard)) = self.engine.gains_db(slot) {
                     self.telemetry

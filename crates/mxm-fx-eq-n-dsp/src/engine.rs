@@ -653,6 +653,12 @@ impl Engine {
         self.gain_scale.retarget(scale);
     }
 
+    /// The gain scale where it has glided to: what [`gains_db`](Self::gains_db)'s gains are heard
+    /// under now, for the editor.
+    pub fn gain_scale(&self) -> f64 {
+        self.gain_scale.value()
+    }
+
     /// The band to audition, or none. Honoured only while that band is live and offers solo.
     pub fn set_solo(&mut self, slot: Option<usize>) {
         self.solo.wanted = slot.filter(|&slot| slot < SLOTS);

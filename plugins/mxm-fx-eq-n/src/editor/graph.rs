@@ -95,7 +95,8 @@ pub struct Curves {
     pub freqs: Vec<f32>,
     pub composite: Vec<f32>,
     /// The composite at the gains the bands have now, when a dynamic band is moving (plan §7.1):
-    /// what is heard. The drawn composite stays the one a click and a drag work on.
+    /// what is heard, every band with a gain at its published heard gain. The drawn composite stays
+    /// the one a click and a drag work on.
     pub moving: Option<Vec<f32>>,
     sample_rate: f64,
 }
@@ -121,23 +122,31 @@ impl Curves {
                 sample_rate,
             ))
         });
-        // The bands as heard: each moving dynamic band at the gain the DSP has it at now, from the
-        // audio thread, glide and bound included, before the gain scale.
-        let mut any_moving = false;
-        let moving_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
+        // The bands as heard, once a dynamic band moves: every band with a gain at the gain the DSP
+        // has it at now, from the audio thread, glide, movement and bound included, before the
+        // gain scale. Frequency and Q are not published, so they are drawn as set. A slot's gains
+        // are a block old at most, its last band's for that block after a change of band.
+        let moving_now = |slot: usize| {
             let band = app.band_now(slot);
-            let shape = band.shape.filter(|_| !band.bypass)?;
             let (drawn, heard) = app.telemetry.gains(slot);
-            if !shape.is_dynamic() || (heard - drawn).abs() < MOVING_DB {
-                return None;
-            }
-            any_moving = true;
+            band.shape.is_some_and(|shape| shape.is_dynamic())
+                && !band.bypass
+                && (heard - drawn).abs() >= MOVING_DB
+        };
+        let any_moving = (0..SLOTS).any(moving_now);
+        let heard_scale = app.telemetry.heard_scale();
+        let heard_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
+            let band = app.band_now(slot);
+            let shape = band
+                .shape
+                .filter(|shape| any_moving && !band.bypass && shape.has_gain())?;
+            let (_, heard) = app.telemetry.gains(slot);
             Some(design(
                 Design {
                     shape,
                     slope: band.slope,
                     freq: f64::from(band.freq),
-                    gain_db: f64::from(heard * scale),
+                    gain_db: f64::from(heard * heard_scale),
                     q: f64::from(band.q),
                 },
                 sample_rate,
@@ -164,7 +173,7 @@ impl Curves {
         if any_moving {
             let heard: Vec<&Cascade> = (0..SLOTS)
                 .filter_map(|slot| {
-                    moving_cascades[slot]
+                    heard_cascades[slot]
                         .as_ref()
                         .or(curves.cascades[slot].as_ref())
                 })

@@ -3,7 +3,8 @@
 //!
 //! **Each band's two gains** (plan §7.1): the drawn gain where the DSP has glided it, and the gain
 //! heard, the drawn plus the dynamic moving part held inside ±30 dB, both before the gain scale.
-//! The editor's moving curve draws the heard one, and its meter their difference.
+//! The editor's moving curve draws the heard one, and its meter their difference, both under the
+//! gain scale where the DSP has glided it, published beside them.
 //!
 //! The meter is mxm-kit's `PeakMeter`, one per channel, the collection's one policy: a peak is
 //! max-combined and reset on read, a peak at or above full scale latches the clip until the player
@@ -23,6 +24,8 @@ pub struct Telemetry {
     pub output: [PeakMeter; 2],
     /// Each slot's drawn and heard gains in dB, as `f32` bits.
     gains: [[AtomicU32; 2]; mxm_fx_eq_n_dsp::SLOTS],
+    /// The gain scale the gains are heard under now, as `f32` bits.
+    heard_scale: AtomicU32,
 }
 
 impl Default for Telemetry {
@@ -33,6 +36,7 @@ impl Default for Telemetry {
             sample_rate: AtomicU32::new(48_000f32.to_bits()),
             output: [PeakMeter::new(), PeakMeter::new()],
             gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
+            heard_scale: AtomicU32::new(1f32.to_bits()),
         }
     }
 }
@@ -51,6 +55,17 @@ impl Telemetry {
                 gain.store(0, Ordering::Relaxed);
             }
         }
+        self.heard_scale.store(1f32.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The gain scale where the DSP has glided it, from the audio thread after a block.
+    pub fn publish_heard_scale(&self, scale: f32) {
+        self.heard_scale.store(scale.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The gain scale the published gains are heard under: 1 before any.
+    pub fn heard_scale(&self) -> f32 {
+        f32::from_bits(self.heard_scale.load(Ordering::Relaxed))
     }
 
     /// A slot's drawn and heard gains, from the audio thread after a block.

@@ -97,7 +97,8 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
   step did not move it and its peak asks for no move: once an interval is complete any move, before
   that only an attack.
 - **The bound**: the heard gain, the drawn gain plus the moving part, is held inside ±30 dB each
-  interval, before the gain scale; `Engine::gains_db` gives the editor the drawn and heard gains.
+  interval, before the gain scale; `Engine::gains_db` gives the editor the drawn and heard gains,
+  and `Engine::gain_scale` the scale where it has glided, which they are heard under.
 - **A band that listens never parks**: Range or a moving part not 0, and the gain scale not 0 %;
   otherwise it parks and re-enters as v1 bands do.
 - **Activity**: a moving part keeps `is_ringing` true, so a host's sleep starts from rest.

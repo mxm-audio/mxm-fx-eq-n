@@ -1919,9 +1919,11 @@ fn the_meter_and_the_range_line_follow_the_gain_scale() {
         (0.0, 0.0, 0.0),
         (2.0, -36.0, -16.0),
     ] {
+        // The audio thread's scale has glided there too.
         set_plain(&rig.app.params.gain_scale, scale);
         rig.press(Vec::new());
         rig.app.telemetry.publish_gains(0, 6.0, -2.0);
+        rig.app.telemetry.publish_heard_scale(scale);
         let at = rig.app.range_reach_db(0).expect("a dynamic bell");
         assert!(
             (at - reach).abs() < 1e-3,
@@ -1936,4 +1938,99 @@ fn the_meter_and_the_range_line_follow_the_gain_scale() {
     set_plain(&rig.app.params.dynamics[0].range, 0.0);
     rig.press(Vec::new());
     assert_eq!(rig.app.range_reach_db(0), None, "a static band has no line");
+}
+
+/// **The curve as heard is every band as heard** (plan §7.1): while one band moves, a second,
+/// static band the DSP is still gliding is drawn where the DSP has it, not at its target.
+#[test]
+fn while_a_band_moves_every_band_is_drawn_as_heard() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    rig.app.insert_at(8_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.bands[1].gain, 24.0);
+    rig.press(Vec::new());
+    rig.app.telemetry.publish_gains(0, 0.0, -6.0);
+    rig.app.telemetry.publish_gains(1, 0.0, 0.0);
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    let moving = curves.moving.as_ref().expect("band 1 moves");
+    let at = curves
+        .freqs
+        .iter()
+        .position(|&freq| freq >= 8_000.0)
+        .unwrap();
+    assert!(curves.composite[at] > 20.0, "drawn at its target");
+    assert!(
+        moving[at].abs() < 1.5,
+        "heard where the DSP has it: {}",
+        moving[at]
+    );
+}
+
+/// **The meter and the curve as heard follow the scale the audio thread has glided to**, not the
+/// parameter's target: halfway down a glide to 0 %, half the movement is heard.
+#[test]
+fn the_heard_display_follows_the_glided_gain_scale() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.gain_scale, 0.0);
+    rig.press(Vec::new());
+    rig.app.telemetry.publish_gains(0, 0.0, -6.0);
+    rig.app.telemetry.publish_heard_scale(0.5);
+    assert!(
+        (rig.app.moving_db(0) + 3.0).abs() < 1e-4,
+        "{}",
+        rig.app.moving_db(0)
+    );
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    let centre = curves
+        .freqs
+        .iter()
+        .position(|&freq| freq >= 1_000.0)
+        .unwrap();
+    let moving = curves.moving.as_ref().expect("the curve as heard");
+    assert!((moving[centre] + 3.0).abs() < 0.2, "{}", moving[centre]);
+}
+
+/// **Undo and redo of a dynamics edit show its band** (`slot_of`): with another band selected,
+/// the band whose Range changed back is the one in the column.
+#[test]
+fn undoing_a_dynamics_edit_shows_its_band() {
+    assert_eq!(slot_of(band_index(3, Field::Gain)), Some(3));
+    assert_eq!(slot_of(OUTPUT_INDEX), None);
+    assert_eq!(slot_of(GAIN_SCALE_INDEX), None);
+    assert_eq!(slot_of(dynamics_index(5, DynamicsField::Release)), Some(5));
+
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    rig.app.insert_at(4_000.0);
+    rig.press(Vec::new());
+    // A Range edit as a slider makes it, through the editor's recording context.
+    let range = &rig.app.params.dynamics[0].range;
+    let gui = rig.app.gui.clone().expect("attached");
+    let setter = gui.param_setter();
+    setter.begin_set_parameter(range);
+    setter.set_parameter(range, -12.0);
+    setter.end_set_parameter(range);
+    rig.press(Vec::new());
+    assert!((rig.app.params.dynamics[0].range.value() + 12.0).abs() < 1e-3);
+
+    rig.app.selected = Some(1);
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert_eq!(rig.app.selected, Some(0), "undo shows the band it changed");
+    assert_eq!(rig.app.params.dynamics[0].range.value(), 0.0);
+    rig.app.selected = Some(1);
+    rig.app.redo();
+    rig.press(Vec::new());
+    assert_eq!(rig.app.selected, Some(0), "and so does redo");
+    assert!((rig.app.params.dynamics[0].range.value() + 12.0).abs() < 1e-3);
 }

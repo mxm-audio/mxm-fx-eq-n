@@ -126,6 +126,18 @@ pub enum DynamicsField {
 pub fn dynamics_index(slot: usize, field: DynamicsField) -> usize {
     crate::params::DYNAMICS_BASE + slot * crate::params::DYNAMICS_FIELDS.len() + field as usize
 }
+
+/// The slot a history index belongs to: a band field's or a dynamics field's, none for a global.
+pub fn slot_of(index: usize) -> Option<usize> {
+    let dynamics = crate::params::DYNAMICS_BASE;
+    if index < OUTPUT_INDEX {
+        Some(index / BAND_FIELDS.len())
+    } else if index >= dynamics {
+        Some((index - dynamics) / crate::params::DYNAMICS_FIELDS.len()).filter(|&slot| slot < SLOTS)
+    } else {
+        None
+    }
+}
 pub const OUTPUT_INDEX: usize = SLOTS * BAND_FIELDS.len();
 pub const GAIN_SCALE_INDEX: usize = OUTPUT_INDEX + 1;
 
@@ -343,10 +355,10 @@ impl EqApp {
     }
 
     /// How far a dynamic band moves now, as heard: the audio thread's movement under the gain
-    /// scale, as the audio applies it (the Band card's meter).
+    /// scale where the audio thread has glided it (the Band card's meter).
     pub(crate) fn moving_db(&self, slot: usize) -> f32 {
         let (drawn, heard) = self.telemetry.gains(slot);
-        (heard - drawn) * self.gain_scale_now()
+        (heard - drawn) * self.telemetry.heard_scale()
     }
 
     /// A slot as this editor last set it ([`normalised_now`](Self::normalised_now)'s values).
@@ -487,6 +499,17 @@ impl EqApp {
     pub(crate) fn current_plain(&self, index: usize) -> f32 {
         let params = &self.params;
         let normalised = self.normalised_now(index);
+        if index >= crate::params::DYNAMICS_BASE {
+            let at = index - crate::params::DYNAMICS_BASE;
+            let fields = crate::params::DYNAMICS_FIELDS.len();
+            let dynamics = &params.dynamics[(at / fields).min(SLOTS - 1)];
+            return match at % fields {
+                0 => dynamics.range.preview_plain(normalised),
+                1 => dynamics.threshold.preview_plain(normalised),
+                2 => dynamics.attack.preview_plain(normalised),
+                _ => dynamics.release.preview_plain(normalised),
+            };
+        }
         if index >= OUTPUT_INDEX {
             return if index == OUTPUT_INDEX {
                 params.output.preview_plain(normalised)
@@ -668,8 +691,7 @@ impl EqApp {
         if let (Some(writes), Some(host)) = (writes, self.host.as_ref()) {
             history::write(host, &self.history, &self.pointers, &writes);
             // The band the action touched is shown, so what changed is in front of the player.
-            if let Some(&(index, _)) = writes.iter().find(|(index, _)| *index < OUTPUT_INDEX) {
-                let slot = index / BAND_FIELDS.len();
+            if let Some(slot) = writes.iter().find_map(|&(index, _)| slot_of(index)) {
                 let shape_index = band_index(slot, Field::Type);
                 let shape = writes
                     .iter()
