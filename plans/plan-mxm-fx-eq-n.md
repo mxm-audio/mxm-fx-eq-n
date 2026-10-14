@@ -1,6 +1,8 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
+**Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
+12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
+all accepted). Waiting for the owner's approval, then F1.0's addendum to sign. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
 crate unchanged, the shell onto nice-plug 0.4.2, the editor onto the kit's keyboard language
 (`mxm_ui::navigation`, `mxm-keys`) in place of the archive's `held` layer, and the analyser on the
@@ -32,6 +34,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 23 | **F1 designed** (2026-10-14), §7.1, for the owner's approval: Pro-Q's range-only controls, each band's own region as its detector, no external side chain yet (decisions 12–14); four parameters appended per slot; Wise's form (audio in series, detectors in parallel, a fixed detector filter); a dynamic band never parks; delivery F1.0–F1.5. |
 | 22 | **E5, first findings** (the owner in MXM Player, 2026-10-14): solo is a toggle, not held; the gain scale fades while no band in the sound has a gain; the empty Band card's hover says how to get a band. A freeze found on the way is the baseview fork's (its frame clock starved input on a 59 Hz screen), fixed there. Then: Solo is the kit's toggle; a silence empties the spectrum, the long window's lows included. Code review approved in three rounds, with the baseview fix (2026-10-14). |
 | 21 | **E4 built** (2026-10-14): thirteen factory presets generated from a design table in the editor's units, the brief's eight examples plus five so every shape is used, each in the lowest slots at Init's output; `host-tests/` through MXM Player: discovered as an effect, the editor offered, Init bit-exact dry in the chain, a band restored through the CLAP state heard and ringing down to exact silence, the player's bypass bit-exact; the lock on kit `f459221` and player `cd3eae3`. |
 | 20 | **Moved to its own repository**, `mxm-audio/mxm-fx-eq-n` (2026-10-13): the archive was the wrong home. The DSP crate came across unchanged (50 tests, on 1.87 too); the FFT became mxm-kit's `mxm-fft`; the shell and the editor are ported onto the live kit, the editor's keys onto its keyboard language. |
@@ -65,6 +68,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 9 | The later phases run in order, F1 to F8 | **Settled** (owner, 2026-10-12) | — |
 | 10 | **Automation belongs to the slot number** (option A): lowest free slot, presets in their saved slots, no ownership protection | **Settled** (owner, 2026-10-12) | — |
 | 11 | ~~Undo on echoing hosts~~ **Moot**: undo is plain (owner, 2026-10-12, *"simplify undo"*), with no provenance tracking (§5.4) | **Settled** | — |
+| 12 | F1's controls are **Pro-Q's, range only**: Threshold, Range, Attack, Release, a built-in soft knee, no ratio; the alternative was threshold, ratio and range (§7.1) | **Settled** (owner, 2026-10-14) | F1.0 |
+| 13 | **A dynamic band listens to its own region**; the alternative was a free trigger range per band (§7.1) | **Settled** (owner, 2026-10-14) | F1.1 |
+| 14 | **No external side chain in F1**: its own later step, once newDAWn routes a side chain (§7.1) | **Settled** (owner, 2026-10-14) | — |
 
 Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
 the state precision (§3.4) and the shape and slope set (§3.2).
@@ -518,7 +524,7 @@ the band pool and the analysis layer, not beside them.
 
 | Phase | What | Evidence | What it needs decided first |
 |---|---|---|---|
-| F1 | **Dynamic bands**: threshold, range, attack, release; the band's own filter as side chain; an external side-chain input | Research §7 (Wise 2009: side chains parallel, audio in series, one control across channels); `research:effects/dynamics-processing.md`. The band stays the v1 SVF if E1's gain-modulation measurement passes (§3.1) | Per-slot parameters appended (new permanent ids); an aux input layout |
+| F1 | **Dynamic bands**: threshold, range, attack, release; the band's own filter as side chain. Designed in §7.1 | Research §7 (Wise 2009: side chains parallel, audio in series, one control across channels); `research:effects/dynamics-processing.md`. The band stays the v1 SVF: E1's gain-modulation measurement passed (§3.1) | Decided (12–14). The external side-chain input is a later step of its own |
 | F2 | **Per-band stereo placement**: stereo, L, R, mid, side | Research §6: a minimum-phase band on one channel moves the image | How dynamic bands link across channels |
 | F3 | **Spectrum grab and analyser extras**: freeze, peak labels, drag a peak to create a bell; a reference overlay | Research §11: the gesture is documented, the peak picker is not | Which spectrum is grabbed; how peaks are chosen |
 | F4 | **Resonance finder**, writing ordinary cut bands | Research §8–§9: prominence, persistence and decay tests; professionals removed about a fifth of the excess; a cut does not shorten a ring | Detector and amount. Continuous spectral suppression must first clear oeksound's active patent, US 10,587,238 (research §9.6): a legal and product decision |
@@ -531,6 +537,120 @@ the band pool and the analysis layer, not beside them.
 parameter itself, so in any editor a control pressed within one host buffer of another write to
 the same parameter starts from the value before it. A pending-aware read there, like this editor's
 `normalised_now`, would close it for every editor (round 4 of the E3 code review, 2026-10-13).
+
+### 7.1 F1 — dynamic bands (revision 23, for the owner's approval)
+
+The owner's rulings of 2026-10-14 (decisions 12–14): **Pro-Q's controls** — Threshold, Range,
+Attack, Release, no ratio; **each band listens to its own region**; **no external side chain in F1**.
+That is a later step of its own, once newDAWn routes a side chain to a plugin's second input, so it
+can be tested on the work machine (MXM Player's chain has no side chains; newDAWn's extra inputs hear
+silence). mono-08's input was removed because a synth did not need it (the owner), not as a rule.
+
+**What a dynamic band is.** A **bell or shelf** whose gain moves with its own level: at or below its
+threshold it is the band as drawn; above it the gain moves toward the drawn gain plus Range. Range is
+signed: below 0 it cuts what gets loud (a resonance, sibilance), above 0 it lifts it. **A band is
+static while its Range is 0**, so every v1 patch, preset and project means what it meant. Cuts,
+notches and band passes have no gain; **the tilt is not dynamic either**: it lifts one side of its
+pivot and cuts the other, so "cut what gets loud" has no meaning for it (Pro-Q's flat tilt is not
+v1's tilt). None of them shows dynamics controls.
+
+**The parameters, appended, four per slot** (96, to 242): `range_<n>`, `threshold_<n>`, `attack_<n>`,
+`release_<n>`, permanent from their first release, after the 146, so no v1 id moves (§2.1).
+**Migration, both ways in**: a preset without them loads them at their defaults
+(`default_missing_legacy_parameter`); so does a host state, through the shell's `filter_state`, which
+writes each missing one at its default before nice-plug restores, since nice-plug touches only the
+ids a state holds (`kit/nice-plug/src/wrapper/state.rs`), and extends a loaded preset's persisted
+baseline with each at its default, as `mxm_preset::add_switches_off` does for switches, so an old
+project's preset keeps its clean or Modified meaning. Either restore into an instance already
+dynamic leaves every slot static.
+
+**F1.0, the brief's addendum, signed by the owner before any code:**
+- **Ranges**: Range −30 to +30 dB, default 0; Threshold −60 to 0 dB; Attack about 0.5–200 ms;
+  Release about 10–2,000 ms; the defaults.
+- **The law**, proposed: above Threshold, through a 6 dB soft knee, the band's gain moves at a fixed
+  slope — **3:1 for a cut, 1:1.5 for a lift** — and eases into Range rather than stopping at it: with
+  `a` the movement that slope asks for, the moving part is `Range · (1 − e^(−a/|Range|))`. So the
+  band never passes Range; a louder band never comes out quieter (its slope stays between 3:1 and
+  1:1); and at any level more Range never means less action, while Range toward 0 takes the band
+  smoothly back to static. The owner signs the slopes and the knee.
+- **The bound**: the heard gain — the gliding drawn gain plus the moving part — is held inside the
+  band's ±30 dB at every sample, as a static gain is, in the DSP and in the gain telemetry hands the
+  graph, so the two never differ; the moving part's own state is not clamped, so its ballistics run
+  on. Then the gain scale applies, and the DSP's ±60 dB domain (`MAX_EFFECTIVE_GAIN_DB`) holds
+  every case.
+- The names of two or three dynamic factory presets (a de-esser, a resonance tamer).
+
+**The signal path keeps Wise's form** (research §7):
+- **Audio in series, detectors in parallel**: every detector reads the EQ's input, never the bands
+  before it, so **the gain each band takes never depends on slot order**. The sound can, slightly:
+  filters whose gains move do not commute exactly. F1.1 measures two reacting bands swapped, in the
+  DSP's `AGENTS.md`; the owner is asked if it is audible.
+- **The detector's filter is the band's region, fixed**: the design solo plays (`design_solo` — a band
+  pass at the band's frequency and Q for a bell, the shelf's region for a shelf), its own state,
+  never moved by the dynamic gain.
+- **Linked peak level**, one gain for both channels, and **the ballistics smooth after the law**, as
+  `mxm-fx-curve`'s detector does (it measured −49.6 against −35.1 dB of gain-signal energy above 10 kHz
+  at its fastest when the level was smoothed first). **What they smooth is the moving part itself, signed, in
+  dB**: Attack while it moves away from rest (growing, in the law's sign), Release while it moves back
+  toward rest or across it, so a lift is timed as a cut is (`mxm-fx-curve` picks by the gain's
+  numeric direction, which would swap them for a lift). One pole per direction, so the state only
+  ever lies between where it was and where the law now asks: a Range edit, a sign change included,
+  never overshoots either. **Range glides** as the drawn gain does (§3.4).
+- **Zero latency**, no look-ahead (that needs F6's latency report); **the band is the v1 SVF** (§3.1:
+  envelope-rate gain modulation −89.7 dB above 5 kHz).
+
+**Idle.** A band whose Range is not 0 can be heard to move, so it runs, detector included, whatever its
+drawn gain — parking it between hits would bring every hit in through §3.5's slow re-entry fade. It
+parks, and re-enters as v1 bands do, whenever nothing it does can be heard: Range 0 with an identity
+drawn gain, **or the gain scale at 0 %**, which makes every bell and shelf flat (brief A5). Off and
+bypassed bands cost nothing, as before. **The host keeps calling until every moving part is at an
+exact rest**: a release ends, at an inaudible floor stated in the DSP's `AGENTS.md`, at exactly 0, and
+a detector's state is zeroed on silence as the filters' are; only then does the shell report
+`Normal`. So a host's sleep starts from rest, and waking is a silence that ran its course.
+
+**Cost.** A band that keeps reacting is a steady load, so **the steady budget applies: 35 %** (brief
+A6), with the worst case 24 dynamic bells moving, stereo, 192 kHz, editor open; 70 % is only for
+structural transitions on top. F1.1 measures it first. Over budget, the coefficients are recomputed
+at a decimated rate under the gain's smoothing, measured against per-sample; the owner is asked
+before any budget moves.
+
+**The editor.** The Band card gains a Dynamics group for bells and shelves — Range, Threshold,
+Attack, Release on the shared binding, and a meter of the band's moving gain; reserved to the tallest
+shape, so the opening size and minimum are re-measured (§8). The graph draws a dynamic band's range
+as a ring around its point, Pro-Q's way, and the curve at each band's gain now, from telemetry, the
+drawn curve faint beneath; both are the DSP's own design (§3.1). Telemetry is two gains per band — the
+heard (bounded) and the drawn as the DSP glides it — atomics, only with an editor connected (§4): the
+curve draws the heard one, and the meter their difference, the action heard. The controls are the column's, so the cursor reaches
+them; no new job in the language.
+
+**Tests**, research §25.4 first: the law against a steady tone's level across Threshold and Range,
+cut and lift, and the bound at every extreme of drawn gain, Range and gain scale; attack and release
+against their values, low and high, a lift timed as a cut is; the detector's band against the audio band, and a narrow cut's
+group-delay mismatch measured (Wise's "conundrum"); broadband energy at the fastest attack; sample-accurate Range automation through
+both signs inside the transition bound (§8); the law monotonic in level at every Range, and in Range at every level; the gains independent
+of slot order, and the swapped-order difference measured; the idle rule (Range 0, gain scale 0 %, a dynamic band never fading in on a
+hit); `Normal` reached after bounded silence, and no stale gain on the first audio after a host's sleep;
+a Range edit mid-action never past either law's response; a drawn-gain edit against an active
+moving part inside the bound, the graph's gain equal to the heard one; Init bit-exact dry; no allocation with every band dynamic; an old preset and an old host state
+leaving an already-dynamic instance static, and an old project's loaded preset still clean; 242 ids complete, unique and permanent; the Dynamics
+group's tree in every Band state; the ring, the moving curve and the meter only with an editor.
+
+**Rejected**, with reasons:
+- **Side chains in series** (MDynamicEq's default): slot order would change the sound, Wise's race.
+- **The band's own SVF as its detector**: its damping follows the gain (§3.1), so the detector's
+  width would move with the gain it decides.
+- **Smoothing the level before the law**: more gain-signal energy, as `mxm-fx-curve` measured.
+
+**Delivery**, each step reviewed by the agent-loop before the next:
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F1.0** | The brief's addendum: ranges, defaults, the law's slopes and knee, the bound, the presets' names | Owner |
+| **F1.1** | DSP: detector, law, bound, ballistics, the idle rule; the cost measured | Measurements in the DSP's `AGENTS.md` |
+| **F1.2** | Shell: the 96 parameters, both migrations, telemetry | Unit tests; bundle; `clap-validator` |
+| **F1.3** | Editor: the Dynamics group, the ring, the moving curve, the meter | Editor tests; owner by eye |
+| **F1.4** | The dynamic presets beside the thirteen static ones, the factory tests learning the new fields; host tests through MXM Player | Merge gate |
+| **F1.5** | Listening, and a DAW check at home (Bitwig) | Owner sign-off |
 
 ## 8. What must not break
 
