@@ -22,7 +22,9 @@ impl EqApp {
         self.text.values().any(Option::is_some) || self.presets.holds_the_keyboard()
     }
 
-    fn drain_analyser(&mut self, settings: &ViewSettings) {
+    /// The frame's blocks, after the spectrum has observed the frame's time (`now`), so audio after
+    /// a silence restarts its windows.
+    fn drain_analyser(&mut self, settings: &ViewSettings, now: f64) {
         let rate = self.telemetry.sample_rate();
         // Any change, the rule `ingest` keeps: a block at another rate is never analysed.
         if rate != self.spectrum.sample_rate() {
@@ -34,6 +36,7 @@ impl EqApp {
         }
         self.analyser_on = settings.analyser;
         self.spectrum.set_resolution(settings.resolution);
+        self.spectrum.observe(now);
         if let Some(consumer) = &mut self.analyser {
             while let Ok(block) = consumer.pop() {
                 if settings.analyser {
@@ -74,7 +77,7 @@ impl EqApp {
         }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
-        self.drain_analyser(&settings);
+        self.drain_analyser(&settings, ctx.input(|input| input.time));
         self.pointer_solo = None;
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.

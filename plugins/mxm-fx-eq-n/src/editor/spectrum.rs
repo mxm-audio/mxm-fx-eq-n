@@ -376,6 +376,22 @@ impl Spectrum {
         self.long = Long::new(&mut self.planner, resolution, self.sample_rate);
     }
 
+    /// The frame's time, before its blocks are ingested: a silence longer than
+    /// [`STALE_SECONDS`] since the last audio makes the windows stale here, so the audio that ends
+    /// it restarts them rather than being spliced on.
+    pub fn observe(&mut self, now: f64) {
+        let silent = self
+            .last_audio
+            .is_some_and(|last| now - last > STALE_SECONDS);
+        if silent && !self.fresh && !self.stale {
+            self.stale = true;
+            self.short.analysed = [false; 2];
+            if let Some(long) = &mut self.long {
+                long.window.analysed = [false; 2];
+            }
+        }
+    }
+
     pub fn ingest(&mut self, block: &Block) {
         if block.sample_rate != self.sample_rate {
             return;
@@ -437,16 +453,8 @@ impl Spectrum {
         let fall = settings.speed.release_db_per_second() * elapsed;
         if std::mem::take(&mut self.fresh) {
             self.last_audio = Some(now);
-        } else if self
-            .last_audio
-            .is_some_and(|last| now - last > STALE_SECONDS)
-            && !self.stale
-        {
-            self.stale = true;
-            self.short.analysed = [false; 2];
-            if let Some(long) = &mut self.long {
-                long.window.analysed = [false; 2];
-            }
+        } else {
+            self.observe(now);
         }
         if !self.stale {
             self.short.analyse(self.channels, settings.show);
@@ -772,6 +780,34 @@ mod tests {
             !spectrum.ready() && !spectrum.long_ready(),
             "restarted, not spliced"
         );
+    }
+
+    /// **Audio that ends a silence restarts the windows**, even when it arrives before any
+    /// analysis has seen the silence: the frame observes its time before it ingests.
+    #[test]
+    fn audio_ending_a_silence_restarts_the_windows_before_any_analysis_sees_it() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        spectrum.set_resolution(Resolution::High);
+        let mut seq = 0;
+        let rate = spectrum.sample_rate();
+        feed(&mut spectrum, &mut seq, 2.0, &mut |n| {
+            (std::f32::consts::TAU * 60.0 * n as f32 / rate).sin()
+        });
+        spectrum.analyse(&[60.0], 0.0, &flat());
+        assert!(spectrum.long_ready());
+        // The next frame is 0.31 s on, and its first block came with it.
+        spectrum.observe(0.31);
+        feed(&mut spectrum, &mut seq, 0.01, &mut |_| 0.0);
+        assert!(
+            !spectrum.ready() && !spectrum.long_ready(),
+            "restarted, not spliced"
+        );
+        // Within the threshold nothing restarts.
+        feed(&mut spectrum, &mut seq, 2.0, &mut |_| 0.0);
+        spectrum.analyse(&[60.0], 1.0, &flat());
+        spectrum.observe(1.2);
+        feed(&mut spectrum, &mut seq, 0.01, &mut |_| 0.0);
+        assert!(spectrum.long_ready(), "0.2 s is no silence");
     }
 
     #[test]
