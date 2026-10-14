@@ -1,6 +1,8 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
+**Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
+decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
+accepted, one premise rejected with the permanence it asked for stated). **Waiting for the owner's approval.** **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
 all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built; F1.2–F1.4, the shell, the editor and the two presets, built; their code review approved in round 3 (2026-10-14: 6 findings over two rounds, all accepted). F1.5, the owner's listening and DAW checks, is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
@@ -34,6 +36,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 24 | **The external side chain designed** (2026-10-14), §7.2, for the owner's approval: next, before F2, the EQ only and heard at home (decision 15); per band, the key band-limited as the input is (decision 16); solo plays what the band listens to (decision 17); one port, keyed layouts first; 24 switches appended |
 | 23 | **F1 designed** (2026-10-14), §7.1, for the owner's approval: Pro-Q's range-only controls, each band's own region as its detector, no external side chain yet (decisions 12–14); four parameters appended per slot; Wise's form (audio in series, detectors in parallel, a fixed detector filter); a dynamic band never parks; delivery F1.0–F1.5. |
 | 22 | **E5, first findings** (the owner in MXM Player, 2026-10-14): solo is a toggle, not held; the gain scale fades while no band in the sound has a gain; the empty Band card's hover says how to get a band. A freeze found on the way is the baseview fork's (its frame clock starved input on a 59 Hz screen), fixed there. Then: Solo is the kit's toggle; a silence empties the spectrum, the long window's lows included. Code review approved in three rounds, with the baseview fix (2026-10-14). |
 | 21 | **E4 built** (2026-10-14): thirteen factory presets generated from a design table in the editor's units, the brief's eight examples plus five so every shape is used, each in the lowest slots at Init's output; `host-tests/` through MXM Player: discovered as an effect, the editor offered, Init bit-exact dry in the chain, a band restored through the CLAP state heard and ringing down to exact silence, the player's bypass bit-exact; the lock on kit `f459221` and player `cd3eae3`. |
@@ -71,6 +74,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 12 | F1's controls are **Pro-Q's, range only**: Threshold, Range, Attack, Release, a built-in soft knee, no ratio; the alternative was threshold, ratio and range (§7.1) | **Settled** (owner, 2026-10-14) | F1.0 |
 | 13 | **A dynamic band listens to its own region**; the alternative was a free trigger range per band (§7.1) | **Settled** (owner, 2026-10-14) | F1.1 |
 | 14 | **No external side chain in F1**: its own later step, once newDAWn routes a side chain (§7.1) | **Settled** (owner, 2026-10-14) | — |
+| 15 | **The external side chain next**, before F2: the EQ only, proved by tests here and heard in Bitwig at home; the alternatives were a key source in MXM Player, or newDAWn's routing first (§7.2) | **Settled** (owner, 2026-10-14) | — |
+| 16 | **Per band**: each dynamic band listens to its own input or the side chain, the key band-limited as the input is (Pro-Q 4's way); the alternative is one switch for every band (§7.2) | **Proposed** | SC.1 |
+| 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Proposed** | SC.1 |
 
 Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
 the state precision (§3.4) and the shape and slope set (§3.2).
@@ -542,7 +548,7 @@ the same parameter starts from the value before it. A pending-aware read there, 
 
 The owner's rulings of 2026-10-14 (decisions 12–14): **Pro-Q's controls** — Threshold, Range,
 Attack, Release, no ratio; **each band listens to its own region**; **no external side chain in F1**.
-That is a later step of its own, once newDAWn routes a side chain to a plugin's second input, so it
+That is a later step of its own (§7.2, now designed), once newDAWn routes a side chain to a plugin's second input, so it
 can be tested on the work machine (MXM Player's chain has no side chains; newDAWn's extra inputs hear
 silence). mono-08's input was removed because a synth did not need it (the owner), not as a rule.
 
@@ -651,6 +657,87 @@ group's tree in every Band state; the ring, the moving curve and the meter only 
 | **F1.3** | Editor: the Dynamics group, the ring, the moving curve, the meter | Editor tests; owner by eye |
 | **F1.4** | The dynamic presets beside the thirteen static ones, the factory tests learning the new fields; host tests through MXM Player | Merge gate |
 | **F1.5** | Listening, and a DAW check at home (Bitwig) | Owner sign-off |
+
+### 7.2 The external side chain (revision 24, for the owner's approval)
+
+The owner put it next, before F2 (2026-10-14, *"make the external side chain next"*), and chose
+**the EQ only, heard at home** (decision 15): neither host on the work machine routes a side chain
+(MXM Player's chain is one line; newDAWn feeds extra inputs silence until its after-v1 routing), so
+the key path is proved by tests here and heard in Bitwig with F1.5.
+
+**What it is, Pro-Q's way** (decision 16; `research:effects/parametric-equalizers.md` §7, Pro-Q 4's
+manual: a per-band button "between triggering on the plug-in input signal, or the external side
+chain input"): **each dynamic band chooses what it listens to** — its own input, as F1, or the
+side-chain input — and **the key is band-limited exactly as the input is**, through the band's own
+detector filter (§7.1). Only the detector's source changes: the law, the bound, the ballistics and
+the audio path are F1's. Wise's form holds — the detectors stay in parallel, now on two inputs.
+
+**The port.** One auxiliary input, **"Side chain"**, with the main input's channel count. The
+layouts become *stereo + stereo key*, *mono + mono key*, *stereo*, *mono*, in that order:
+- the keyed layouts first: nice-plug starts on the first layout, so a host that never selects a
+  configuration offers the input (whether Bitwig selects one is SC.4's check);
+- **the configuration ids are set here, once, and permanent from SC.2 on**, as parameter ids are:
+  nice-plug's id is the layout's index, and the EQ has never been released (private, pre-alpha, no
+  tags) and its one host so far, MXM Player, negotiates on every load and saves no id, so no project
+  holds the old ones. The layouts test pins the four, ports and names;
+- MXM Player picks the first configuration with one input port (`envelope.rs`,
+  `select_effect_configuration`), the plain stereo one, so it keeps loading the EQ; newDAWn accepts
+  extra ports and feeds them silence.
+Brief A1 gains the port (SC.0). Still zero latency, no look-ahead.
+
+**A keyed band with no key hears silence.** Unrouted, a layout without the port, or a host feeding
+silence: the band releases to rest and is the band as drawn. It never falls back to its own input —
+a dropped route must not silently change what triggers the band. The hover says so.
+
+**Parameters.** One per slot, appended after the dynamics so nothing moves (266 in all): `key_<n>`,
+a switch named "Band n side chain", Off by default. An older preset (`default_missing_legacy_parameter`)
+or host state (`filter_state`, mxm-kit's `add_switches_off`, made for exactly this) restores every
+band to its own input, a loaded preset still clean. It matters only for a dynamic shape; the
+engine ignores it elsewhere, as it does Range. **It is a slot field like the other ten**: a new band
+writes it Off, so a slot never inherits a deleted band's source, and a copy carries the original's
+(the editor's `slot_writes`, eleven fields).
+
+**The DSP.** The engine's block calls take an optional key (`process_stereo_keyed`,
+`process_mono_keyed`, the old calls passing none): per sample, a keyed band's detector reads the
+key's sample, linked across its channels, in place of the dry input's. Switching a band's source
+starts its detector fresh, as a shape change does; the moving part carries on through the ballistics,
+so a switch never steps the gain. With no band keyed the output is bit-exact what F1's is, key or no
+key. **Activity:** a keyed band that is moving keeps the host calling (`is_ringing`, F1's rule), so a
+key that plays while the main input rests leaves the band where the key put it when the main input
+returns; with every band at rest the idle rule is F1's.
+
+**Solo plays what the band listens to** (decision 17; Pro-Q's audition "listen to the current
+triggering signal"): for a keyed band, the key through the band's detector filter. For every other
+band solo is unchanged — it already is the band's own detector signal (§7.1). A keyed band with no
+key solos silence, as it hears silence.
+
+**The editor.** The Dynamics group gains a **Side chain** toggle (the kit's `toggle_sized`, as Solo
+and Analyser), its hover saying what it listens to and that with nothing routed the band stays as
+drawn. A keyed band's ring is dashed on the graph. The column is re-measured: one row more, and the
+opening still inside 1920 × 1080 (§8). No side-chain spectrum: that is F3's analyser work.
+
+**No factory preset.** A keyed preset does nothing until a route exists, so it would read as broken
+in MXM Player; F1's two cover the dynamic starting points.
+
+**Tests** (written and run at the end, the owner's rule): the key, not the input, triggers a keyed
+band (a loud key cuts a quiet input; a loud input with a silent key does not), linked across the key's
+channels; a source switch mid-stream steps nothing and starts the detector fresh; no band keyed is
+bit-exact F1, key present or absent; no allocation with a key; a keyed band unrouted is the band as
+drawn; solo of a keyed band is the band-limited key; the layouts' order and port names; the 266 ids;
+both migrations; a new band in a keyed slot is unkeyed and a copy of a keyed band is keyed; the
+toggle's group, keyboard reach and hover; the opening size. Through MXM Player:
+the EQ still loads, on the plain stereo configuration, and every existing host test passes. The key
+path through a real host is the owner's check at home.
+
+**Delivery** (one review over SC.1–SC.3, tests at the end):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **SC.0** | Decisions 15–17 and brief A1's port, signed | Owner |
+| **SC.1** | DSP: the keyed block calls, the detector's source per band, solo's source | DSP tests at the end |
+| **SC.2** | Shell: the port and layouts, 24 switches, both migrations | Unit and host tests at the end; `clap-validator` |
+| **SC.3** | Editor: the toggle, the dashed ring, the re-measured column | Editor tests at the end; one agent-loop review of SC.1–SC.3 |
+| **SC.4** | Listening in Bitwig at home, a kick keying a bass's low bell, with F1.5 | Owner sign-off |
 
 ## 8. What must not break
 
