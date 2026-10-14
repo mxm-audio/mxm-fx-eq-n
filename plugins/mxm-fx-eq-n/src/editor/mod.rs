@@ -605,6 +605,16 @@ impl EqApp {
         self.normalised_now(key_index(slot)) >= 0.5
     }
 
+    /// Whether a slot's band hears the side chain: its switch on and its shape a dynamic one, so a
+    /// switch kept from an earlier shape means nothing (plan §7.2).
+    pub(crate) fn listens_to_key(&self, slot: usize) -> bool {
+        self.key_now(slot)
+            && self
+                .band_now(slot)
+                .shape
+                .is_some_and(|shape| shape.is_dynamic())
+    }
+
     /// A slot's dynamics as this editor last set them ([`normalised_now`](Self::normalised_now)'s
     /// values).
     pub(crate) fn dynamics_now(&self, slot: usize) -> mxm_fx_eq_n_dsp::Dynamics {

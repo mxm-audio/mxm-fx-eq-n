@@ -593,7 +593,7 @@ impl EqApp {
                                 "Solo",
                                 &mut on,
                                 false,
-                                if self.key_now(slot) {
+                                if self.listens_to_key(slot) {
                                     SOLO_KEYED_DESCRIPTION
                                 } else {
                                     SOLO_DESCRIPTION

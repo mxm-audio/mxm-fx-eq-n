@@ -229,3 +229,25 @@ fn solo_plays_the_key_for_a_keyed_band_and_fades_through_a_switch() {
         "the key has faded out"
     );
 }
+
+/// **Only a dynamic shape listens to the key**: a keyed bell changed to a low cut keeps its switch,
+/// and its solo plays the input it removes, not the absent key's silence.
+#[test]
+fn a_switch_kept_from_a_dynamic_shape_does_not_key_another_shape() {
+    let mut engine = keyed_engine();
+    engine.set_band(
+        0,
+        Band {
+            shape: Some(Shape::LowCut),
+            ..bell()
+        },
+    );
+    engine.set_solo(Some(0));
+    let mut input = sine(48_000, 100.0, 0.25);
+    engine.process_mono(&mut input);
+    let heard = tone_db(&input, 100.0, 0.25, 24_000);
+    assert!(
+        heard > -3.0,
+        "the cut's solo plays the lows it removes: {heard} dB"
+    );
+}

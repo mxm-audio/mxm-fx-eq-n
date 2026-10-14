@@ -1021,8 +1021,14 @@ impl Engine {
         let valid = self.solo_wanted();
         let bands = &self.bands;
         let solo = &mut self.solo;
+        // Only a dynamic shape listens to the key; any other plays its region of the input, the
+        // switch it may have kept from an earlier shape aside (plan §7.2).
+        let keyed = |band: &BandEngine, structure: Option<Structure>| {
+            band.side_chain && structure.is_some_and(|structure| structure.shape.is_dynamic())
+        };
         let matches = |slot: usize, solo: &Solo| {
-            bands[slot].destination == solo.structure && bands[slot].side_chain == solo.keyed
+            bands[slot].destination == solo.structure
+                && keyed(&bands[slot], solo.structure) == solo.keyed
         };
         let current = solo.slot.is_some()
             && solo.slot == valid
@@ -1041,7 +1047,7 @@ impl Engine {
                     {
                         solo.slot = Some(slot);
                         solo.structure = Some(structure);
-                        solo.keyed = band.side_chain;
+                        solo.keyed = keyed(band, Some(structure));
                         solo.filter = Filter::fresh(&cascade);
                     }
                 }

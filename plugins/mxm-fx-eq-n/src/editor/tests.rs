@@ -2057,3 +2057,20 @@ fn set_plain_bool(param: &BoolParam, plain: bool) {
             ._internal_set_normalized_value(param.preview_normalized(plain));
     }
 }
+
+/// **The editor counts the switch only on a bell or shelf**, as the DSP does: a band changed to a
+/// cut with its switch still on does not listen to the side chain.
+#[test]
+fn a_switch_kept_from_a_dynamic_shape_means_nothing_to_another() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain_bool(&rig.app.params.keys[0].side_chain, true);
+    rig.press(Vec::new());
+    assert!(rig.app.listens_to_key(0));
+    set_plain_int(&rig.app.params.bands[0].kind, type_of(Some(Shape::LowCut)));
+    rig.press(Vec::new());
+    assert!(rig.app.key_now(0), "the switch is kept");
+    assert!(!rig.app.listens_to_key(0), "but a cut does not listen");
+}

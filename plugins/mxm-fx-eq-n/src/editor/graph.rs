@@ -750,7 +750,7 @@ impl EqApp {
                 }
                 // Dashed for a band that listens to the side chain (plan §7.2).
                 let ring = Stroke::new(AXIS_STROKE, tokens.accent);
-                if self.key_now(slot) {
+                if self.listens_to_key(slot) {
                     let radius = POINT_RADIUS + 2.5;
                     let points: Vec<Pos2> = (0..=48)
                         .map(|step| {
