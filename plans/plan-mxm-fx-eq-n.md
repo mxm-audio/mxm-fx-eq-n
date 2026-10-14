@@ -1,7 +1,8 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
 **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
-§7.3, decisions 18–21). **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
+§7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
+two rounds, all accepted). **Waiting for the owner's approval.** **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
 (2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), their code review approved in round 2 (one finding,
@@ -82,8 +83,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 16 | **Per band**: each dynamic band listens to its own input or the side chain, the key band-limited as the input is (Pro-Q 4's way); the alternative is one switch for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 | 18 | **F2's placements are Pro-Q's five**: Stereo, Left, Right, Mid, Side; **no Split button yet** (duplicate and set the placement; a one-press split is F8's); the alternative adds Split now (§7.3) | **Proposed** | F2.1 |
 | 19 | **In mono, a placed band is disabled** and keeps its placement (Pro-Q's way); the alternative plays it as Stereo (§7.3) | **Proposed** | F2.1 |
-| 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; the alternative detects every band on the linked peak (§7.3) | **Proposed** | F2.1 |
+| 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; a Left/Right pair then moves independently, Wise's phase intermodulation; the alternative links every band to the stereo peak, so a Left band also reacts to the right (§7.3) | **Proposed** | F2.1 |
 | 21 | **Two Side presets**, *Mono bass* and *Wider air*; the alternative ships none (§7.3) | **Proposed** | F2.2 |
+| 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Proposed** | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
 Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
@@ -183,7 +185,8 @@ in ──► band 1 ─► band 2 ─► … ─► band N ─► output gain �
 ```
 
 - **Series, in dB.** Bands compose by adding their dB responses, so the drawn curve is the sum of the
-  drawn bands (research §3.6). Slot order is irrelevant to the linear result.
+  drawn bands (research §3.6). Slot order is irrelevant to the linear result (with F2's placements,
+  through §7.3's fixed family order).
 - **Layouts**: mono→mono and stereo→stereo, the two channels processed identically in v1. Per-band
   stereo placement (L, R, M, S) is F2.
 - **An empty EQ is bit-exact dry**: no slot in use and output gain at 0 dB means output equals input,
@@ -755,9 +758,16 @@ The next phase in the owner's order (decision 9), after the side chain. **Pro-Q'
 
 **What a placed band does.** With `M = (L + R)/2` and `S = (L − R)/2` (research §6): a Left band
 filters the left channel only, a Right band the right; a Mid band filters `M` and a Side band `S`,
-each then decoded, `L′ = M′ + S′`, `R′ = M′ − S′`. Audio stays in series, in slot order, each band on
-its own channels. A placed band runs one channel of its filter, so it costs no more than a stereo one.
-**With every band on Stereo the output is bit-exact what it is today.**
+each then decoded, `L′ = M′ + S′`, `R′ = M′ − S′`. A placed band runs one channel of its filter, so it
+costs no more than a stereo one. **With every band on Stereo the output is bit-exact what it is
+today.**
+
+**Slot order still never matters** (§2.2), because the order is fixed by family (decision 22): audio
+runs in series through **every Stereo, Left and Right band, then every Mid and Side band**. Within a
+family the bands commute — a Stereo band is one filter on both channels and commutes with any band,
+Left and Right bands each touch one channel, Mid and Side bands one of `M` and `S` — so only a
+channel band and a mid/side band fail to, and their order is the fixed one: fix a channel, then
+shape the image. Moving gains commute only as closely as F1 measured (§7.1).
 
 **The image moves, as in Pro-Q** (research §6, derived): any phase in a channel-only minimum-phase
 filter puts sound where the other channel had none — a 24 dB/oct high-pass at 100 Hz on Mid sends a
@@ -765,14 +775,29 @@ hard-left 140 Hz source to the right 4.4 dB louder than the left. Pro-Q allows i
 phase, which is F6 here. F2 allows it too; the placement's hover says a Mid or Side cut moves the
 image near it. No warning is drawn on the panel (the workspace rule).
 
-**A placement change is click-free**: placement joins the band's structure with its shape and slope,
-so changing it crossfades the old band into the new over the fade it already takes (§3.3).
+**A placement change is click-free**: placement joins the band's structure with its shape and slope.
+**Within a family** (Left to Right, Mid to Side, Stereo to Left or Right) the change crossfades the old
+band into the new, as a shape change does (§3.3). **Across the family boundary** (Left to Mid, Side to
+Stereo) the old and new bands belong at different places in the order, so the change is a delete and
+a create at once: the old band fades out to identity at its old family's place while the new one
+fades in from identity at its own, each over the fade a band's removal and creation already take.
+**Each arm runs in its own family's stage, not where the band was**: the cascade is two stages, the
+channel stage (every Stereo, Left and Right arm) then the mid/side stage (every Mid and Side arm). A
+fading arm is still a band of its family — its filter mixed with identity on the same channels — so
+it commutes within its stage, and the order holds at every sample, however many bands cross at once
+and in either direction (two bands swapping families put both old arms and both new arms each in
+their own stage). Each band keeps the two filter states it has today, and the cost is the two
+filters a crossfade already runs.
 
-**Dynamic bands** (decision 20, the F2 row's open question): **a placed band detects the channel it
-works on** — a Left band its left, a Mid band `M` — so its one gain answers what it changes. A Stereo
-band keeps F1's linked peak. A keyed band reads the same channel of the key (§7.2), so a Side band on
-a mono key hears silence, as the key has no side. Wise's rule holds: one control per band, the
-detectors in parallel on the input.
+**Dynamic bands** (decision 20, the F2 row's open question, for the owner): **proposed, a placed band
+detects the channel it works on** — a Left band its left, a Mid band `M` — so a band placed on one
+channel answers that channel. A Stereo band keeps F1's linked peak; detectors stay in parallel on the
+input; a keyed band reads the same channel of the key (§7.2), so a Side band on a mono key hears
+silence. **The consequence, for the owner:** a Left/Right pair of dynamic bands then moves
+independently, which is the per-channel dynamic filtering Wise found causes "phase intermodulation"
+(research §6–§7), a moving, "space-y" image; a pair that must move together is a Stereo band. The
+alternative links every band to the stereo peak: a pair moves as one, but a Left band then also
+reacts to the right channel.
 
 **Solo plays what the band works on, where it sits**: a Left band's region in the left, a Mid band's
 in the centre, a Side band's as side (`L = S`, `R = −S`). Every other rule of solo is §5's and §7.2's.
@@ -795,10 +820,14 @@ Stereo, a copy keeps its original's placement (`slot_writes`, twelve fields).
   The opening is at 1204 × 1048 now; a row more would pass 1080, so the selector shares a row with
   Shape. The tree checks and the opening size are re-measured (§8).
 - **The graph groups the curves by the channels they act on**, Pro-Q's way: with every band on
-  Stereo it is today's one curve; with placed bands, one curve for each channel a band sits on, each
-  the Stereo bands plus that channel's own — Left, Right, Mid, Side. **Identity never rests on hue**
-  (§5): each curve is labelled with its channel's letter at its end, and a placed band's point
-  carries the same letter beside its number.
+  Stereo it is today's one curve. With placed bands, the EQ is a 2 × 2 response: **each curve is one
+  channel's response to itself** — Left and Right in the left/right basis when a Left or Right band
+  exists, Mid and Side in the mid/side basis when a Mid or Side band does — the diagonal of the
+  product of the DSP's own complex responses, in the order above (§3.1's rule, with placements). With
+  one family in use the off-diagonal is zero, so each curve is exactly what its channel hears; with
+  both, what moves between channels is not drawn. **Identity never rests on hue** (§5): each curve
+  is labelled with its channel's letter at its end, and a placed band's point carries the same
+  letter beside its number.
 - No Split button now (decision 18): duplicating a band and setting its placement does the same,
   and Pro-Q's one-press split is F8's workflow.
 
@@ -807,19 +836,20 @@ low cut at 100 Hz, gentle so the image moves little) and *Wider air* (a +3 dB hi
 
 **Tests** (written at the end): every band on Stereo is bit-exact today's output, NaN and silence
 included; each placement filters only its channels (a Left band leaves the right bit-exact; a Mid
-band leaves a side-only input bit-exact, and a Side band a mid-only one); a placement change steps
-nothing; a placed dynamic band detects its channel (a loud left with a quiet right moves a Left band,
+band leaves a side-only input bit-exact, and a Side band a mid-only one); a placement change within
+a family and one across it step nothing, two bands crossing in opposite directions at once included; a placed dynamic band detects its channel (a loud left with a quiet right moves a Left band,
 not a Right one); a Side band keyed from a mono key hears silence; solo of each placement; mono
-disables placed bands and keeps their values; the 290 ids, the reserved places, the migrations, the
-slot lifecycle; the selector's tree, keyboard and hover; the grouped curves against each channel's
-rendered response; no allocation with every placement changing; the cost with 24 Mid bells. Through
+disables placed bands and keeps their values, and its Stereo choice restores one; the family order
+(a Left band and a Mid band give the same output whichever slot holds which); the 290 ids, the
+reserved places, the migrations, the slot lifecycle; the selector's tree, keyboard and hover; each
+curve against its channel's rendered self-response, one family and both; no allocation with every placement changing; the cost with 24 Mid bells. Through
 MXM Player: every host test, and a placed band restored through the state heard on its channel.
 
 **Delivery** (tests at the end, one review over F2.1–F2.3):
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **F2.0** | Decisions 18–21, signed | Owner |
+| **F2.0** | Decisions 18–22, signed | Owner |
 | **F2.1** | DSP: placement in the band's structure, each channel's path, detection, solo, mono | DSP tests at the end |
 | **F2.2** | Shell: 24 placements, both migrations, the two presets, host tests | Unit and host tests at the end; `clap-validator` |
 | **F2.3** | Editor: the selector, the grouped curves and their letters, the point's letter | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
