@@ -615,8 +615,8 @@ impl EqApp {
             }
             Leaf::Moving => {
                 if let Some(slot) = selected {
-                    let (drawn, heard) = self.telemetry.gains(slot);
-                    self.paint_moving(ui, tokens, rect, heard - drawn);
+                    let moving = self.moving_db(slot);
+                    self.paint_moving(ui, tokens, rect, moving);
                 }
             }
             Leaf::Show | Leaf::Resolution | Leaf::Speed | Leaf::Tilt => {

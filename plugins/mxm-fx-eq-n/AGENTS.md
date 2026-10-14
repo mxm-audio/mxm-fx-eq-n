@@ -9,7 +9,8 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 [`plans/plan-mxm-fx-eq-n.md`](../../plans/plan-mxm-fx-eq-n.md) and the signed brief
 [`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E4**: the host
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
-and the factory set and the host tests (E4). DAW and listening checks are E5's.
+and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
+and two presets (F1.1–F1.4). DAW and listening checks are E5's and F1.5's.
 
 # Ownership
 

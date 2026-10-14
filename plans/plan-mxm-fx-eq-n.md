@@ -2,7 +2,7 @@
 
 **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
-all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built. F1.2 is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
+all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built; F1.2–F1.4, the shell, the editor and the two presets, built and in review. F1.5, the owner's listening and DAW checks, is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
 crate unchanged, the shell onto nice-plug 0.4.2, the editor onto the kit's keyboard language
 (`mxm_ui::navigation`, `mxm-keys`) in place of the archive's `held` layer, and the analyser on the
@@ -620,7 +620,7 @@ shape, so the opening size and minimum are re-measured (§8). The graph draws a 
 as a ring around its point, Pro-Q's way, and the curve at each band's gain now, from telemetry, the
 drawn curve faint beneath; both are the DSP's own design (§3.1). Telemetry is two gains per band — the
 heard (bounded) and the drawn as the DSP glides it — atomics, only with an editor connected (§4): the
-curve draws the heard one, and the meter their difference, the action heard. The controls are the column's, so the cursor reaches
+curve draws the heard one, and the meter their difference, both under the gain scale as the audio applies it: the action heard. The controls are the column's, so the cursor reaches
 them; no new job in the language.
 
 **Tests**, research §25.4 first: the law against a steady tone's level across Threshold and Range,

@@ -1874,6 +1874,19 @@ fn a_moving_band_is_drawn_as_heard_over_the_drawn_curve() {
         moving[centre]
     );
 
+    // A drawn-gain edit the DSP is still gliding to: the curve is the heard gain, not the target
+    // plus the movement.
+    set_plain(&rig.app.params.bands[0].gain, 24.0);
+    rig.press(Vec::new());
+    rig.app.telemetry.publish_gains(0, 0.0, -6.0);
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    let moving = curves.moving.as_ref().expect("the curve as heard");
+    assert!(
+        (moving[centre] + 6.0).abs() < 0.2,
+        "heard, not drawn: {}",
+        moving[centre]
+    );
+
     set_plain_int(&rig.app.params.bands[0].kind, type_of(Some(Shape::LowCut)));
     rig.press(Vec::new());
     assert!(graph::Curves::compute(&rig.app, &axes).moving.is_none());
@@ -1886,4 +1899,41 @@ fn set_plain_int(param: &IntParam, plain: i32) {
             .as_ptr()
             ._internal_set_normalized_value(param.preview_normalized(plain));
     }
+}
+
+/// **The meter and the range line are what is heard, under the gain scale** (plan §7.1): the
+/// range line ends at the drawn gain plus Range, bounded, times the scale; the meter is the
+/// movement times the scale; at 0 % both are nothing, as the audio is.
+#[test]
+fn the_meter_and_the_range_line_follow_the_gain_scale() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.bands[0].gain, 6.0);
+    set_plain(&rig.app.params.dynamics[0].range, -24.0);
+    rig.press(Vec::new());
+    for (scale, reach, moving) in [
+        (1.0, -18.0, -8.0),
+        (0.5, -9.0, -4.0),
+        (0.0, 0.0, 0.0),
+        (2.0, -36.0, -16.0),
+    ] {
+        set_plain(&rig.app.params.gain_scale, scale);
+        rig.press(Vec::new());
+        rig.app.telemetry.publish_gains(0, 6.0, -2.0);
+        let at = rig.app.range_reach_db(0).expect("a dynamic bell");
+        assert!(
+            (at - reach).abs() < 1e-3,
+            "{scale}: the line ends at {at}, not {reach}"
+        );
+        let meter = rig.app.moving_db(0);
+        assert!(
+            (meter - moving).abs() < 1e-3,
+            "{scale}: the meter reads {meter}"
+        );
+    }
+    set_plain(&rig.app.params.dynamics[0].range, 0.0);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.range_reach_db(0), None, "a static band has no line");
 }

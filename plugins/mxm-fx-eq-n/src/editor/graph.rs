@@ -106,10 +106,7 @@ const MOVING_DB: f32 = 0.01;
 impl Curves {
     pub fn compute(app: &EqApp, axes: &Axes) -> Curves {
         let sample_rate = app.sample_rate();
-        let scale = app
-            .params
-            .gain_scale
-            .preview_plain(app.normalised_now(super::GAIN_SCALE_INDEX));
+        let scale = app.gain_scale_now();
         let cascades = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
             let shape = band.shape.filter(|_| !band.bypass)?;
@@ -124,25 +121,23 @@ impl Curves {
                 sample_rate,
             ))
         });
-        // The bands as heard: each dynamic band's movement, from the audio thread, on the gain the
-        // editor last set, held inside the band's range as the DSP holds it.
+        // The bands as heard: each moving dynamic band at the gain the DSP has it at now, from the
+        // audio thread, glide and bound included, before the gain scale.
         let mut any_moving = false;
         let moving_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
             let shape = band.shape.filter(|_| !band.bypass)?;
             let (drawn, heard) = app.telemetry.gains(slot);
-            let movement = heard - drawn;
-            if !shape.is_dynamic() || movement.abs() < MOVING_DB {
+            if !shape.is_dynamic() || (heard - drawn).abs() < MOVING_DB {
                 return None;
             }
             any_moving = true;
-            let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
             Some(design(
                 Design {
                     shape,
                     slope: band.slope,
                     freq: f64::from(band.freq),
-                    gain_db: f64::from((band.gain_db + movement).clamp(-range, range) * scale),
+                    gain_db: f64::from(heard * scale),
                     q: f64::from(band.q),
                 },
                 sample_rate,
@@ -259,11 +254,20 @@ impl EqApp {
     }
 
     /// Where slot `slot`'s point is drawn: at its own gain, at the frequency it runs at.
+    /// Where a dynamic band's Range would take its gain, as heard: the drawn gain plus Range, held
+    /// inside ±30 dB, under the gain scale. `None` for a static band or a shape with no dynamics.
+    pub(crate) fn range_reach_db(&self, slot: usize) -> Option<f32> {
+        let band = self.band_now(slot);
+        let range = self.dynamics_now(slot).range_db;
+        if !band.shape.is_some_and(|shape| shape.is_dynamic()) || range == 0.0 {
+            return None;
+        }
+        let limit = GAIN_RANGE as f32;
+        Some((band.gain_db + range).clamp(-limit, limit) * self.gain_scale_now())
+    }
+
     pub(crate) fn point_position(&self, axes: &Axes, band: &Band) -> Pos2 {
-        let scale = self
-            .params
-            .gain_scale
-            .preview_plain(self.normalised_now(super::GAIN_SCALE_INDEX));
+        let scale = self.gain_scale_now();
         let db = match band.shape {
             Some(shape) if shape.has_gain() => band.gain_db * scale,
             _ => 0.0,
@@ -720,20 +724,21 @@ impl EqApp {
         }
 
         // Points, numbered; a bypassed band hollow, the selected one ringed. A dynamic band has its
-        // own ring and a line from the point to where its Range would take it.
+        // own ring and a line from the point to where its Range would take it, bounded and scaled
+        // as the audio has it, so a gain scale of 0 % leaves no line.
         let number_font = egui::FontId::proportional(11.0);
         for (slot, at) in self.positions(axes) {
             let band = self.band_now(slot);
-            let range = self.dynamics_now(slot).range_db;
-            if band.shape.is_some_and(|shape| shape.is_dynamic()) && range != 0.0 {
-                let limit = GAIN_RANGE as f32;
-                let reach = pos2(at.x, axes.y((band.gain_db + range).clamp(-limit, limit)));
-                let colour = tokens.accent.gamma_multiply(0.6);
-                painter.line_segment([at, reach], Stroke::new(EMPHASIS_STROKE, colour));
-                painter.line_segment(
-                    [reach - vec2(5.0, 0.0), reach + vec2(5.0, 0.0)],
-                    Stroke::new(EMPHASIS_STROKE, colour),
-                );
+            if let Some(reach_db) = self.range_reach_db(slot) {
+                let reach = pos2(at.x, axes.y(reach_db));
+                if (reach.y - at.y).abs() >= 1.0 {
+                    let colour = tokens.accent.gamma_multiply(0.6);
+                    painter.line_segment([at, reach], Stroke::new(EMPHASIS_STROKE, colour));
+                    painter.line_segment(
+                        [reach - vec2(5.0, 0.0), reach + vec2(5.0, 0.0)],
+                        Stroke::new(EMPHASIS_STROKE, colour),
+                    );
+                }
                 painter.circle_stroke(
                     at,
                     POINT_RADIUS + 2.5,

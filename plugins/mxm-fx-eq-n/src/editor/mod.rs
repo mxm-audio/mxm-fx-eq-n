@@ -335,6 +335,20 @@ impl EqApp {
         })
     }
 
+    /// The gain scale as this editor last set it, as the factor the audio applies (1 at 100 %).
+    pub(crate) fn gain_scale_now(&self) -> f32 {
+        self.params
+            .gain_scale
+            .preview_plain(self.normalised_now(GAIN_SCALE_INDEX))
+    }
+
+    /// How far a dynamic band moves now, as heard: the audio thread's movement under the gain
+    /// scale, as the audio applies it (the Band card's meter).
+    pub(crate) fn moving_db(&self, slot: usize) -> f32 {
+        let (drawn, heard) = self.telemetry.gains(slot);
+        (heard - drawn) * self.gain_scale_now()
+    }
+
     /// A slot as this editor last set it ([`normalised_now`](Self::normalised_now)'s values).
     pub(crate) fn band_now(&self, slot: usize) -> mxm_fx_eq_n_dsp::Band {
         let band = &self.params.bands[slot];
