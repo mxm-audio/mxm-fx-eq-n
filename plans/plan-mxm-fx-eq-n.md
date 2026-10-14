@@ -3,7 +3,8 @@
 **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
-(2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), in code review. **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
+(2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), their code review approved in round 2 (one finding,
+accepted: only a dynamic shape's solo listens to the key). SC.4, listening in Bitwig at home, is next. **Revision 23 — F1, dynamic bands, designed for the owner's approval** (2026-10-14; §7.1, decisions
 12–14; its design approved by the agent-loop in round 8, 2026-10-14: 17 findings over seven rounds,
 all accepted). **Approved by the owner** (2026-10-14, *"Approve, values as proposed"*); F1.0 done, the brief's §C; F1.1, the DSP, built; F1.2–F1.4, the shell, the editor and the two presets, built; their code review approved in round 3 (2026-10-14: 6 findings over two rounds, all accepted). F1.5, the owner's listening and DAW checks, is next. **Revision 21 — E4 built** (2026-10-14): the factory set and the host tests, below. **Revision 20 — moved to its own repository** (2026-10-13). E1–E3 were built in the archived
 monorepo after the split, by mistake, and are being ported here onto the live mxm-kit: the DSP
@@ -735,9 +736,9 @@ path through a real host is the owner's check at home.
 | Step | Delivers | Gate |
 |---|---|---|
 | **SC.0** | Decisions 15–17 and brief A1's port, signed. **Done** (2026-10-14) | Owner |
-| **SC.1** | DSP: the keyed block calls, the detector's source per band, solo's source | DSP tests at the end |
-| **SC.2** | Shell: the port and layouts, 24 switches, both migrations | Unit and host tests at the end; `clap-validator` |
-| **SC.3** | Editor: the toggle, the dashed ring, the re-measured column | Editor tests at the end; one agent-loop review of SC.1–SC.3 |
+| **SC.1** | DSP: the keyed block calls, the detector's source per band, solo's source. **Built** (2026-10-14): 8 side-chain tests, the realtime test keyed | DSP tests at the end |
+| **SC.2** | Shell: the port and layouts, 24 switches, both migrations. **Built**: MXM Player selects configuration 2 | Unit and host tests at the end; `clap-validator` |
+| **SC.3** | Editor: the toggle, the dashed ring, the re-measured column (opening 1204 × 1048). **Built**; review approved in round 2 | Editor tests at the end; one agent-loop review of SC.1–SC.3 |
 | **SC.4** | Listening in Bitwig at home, a kick keying a bass's low bell, with F1.5 | Owner sign-off |
 
 ## 8. What must not break
