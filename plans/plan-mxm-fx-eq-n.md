@@ -1,6 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
+**Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
+35–37). **Its design approved by the agent-loop in round 2** (2026-10-15): round 1's four blockers
+— the kernel designed off the audio thread into preallocated banks, old and new banks on one
+delay line, the editor following the mode in force, the window and centring exact — and its
+other findings, all accepted and applied here. Decisions 35–37 wait for the owner. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
 §7.6, decisions 31–34). **Its design approved by the agent-loop in round 3** (2026-10-15): rounds
 1–2 filed five blockers — the level taken out after the Amount, the EQ counted through the source's
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
@@ -58,6 +62,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 28 | **F5 designed** (2026-10-15), §7.6, for the owner's approval: the side-chain input is the reference (decision 31); the fit writes only into free slots, the EQ as heard counted (decision 32), through the source's covariance; one Amount, 40 % by default (decision 33); the Match card (decision 34), signed with 33 and 34's alternatives, a Detail control and the card under Resonances; power-mean long-term spectra of both inputs before the EQ, smoothed by the wider of a third of an octave and an ERB, the level taken out after the Amount so the loudness is kept, Ramos & López's greedy fit refined by Levenberg–Marquardt on the actual responses |
 | 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
 | 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
@@ -117,6 +122,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 32 | **The fit writes only into free slots, the EQ as heard counted**, so the player's bands never change; the alternative replaces the EQ, every band refitted (§7.6) | **Settled** (owner, 2026-10-15) | F5.1 |
 | 33 | **One Amount, 40 % by default, and Pro-Q's detail control, a band count the player sets**; the proposal had no detail control, the fit stopping only where what is left is just audible or the slots run out (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
 | 34 | **The Match card goes under Resonances** in the second column, beside the other proposal tool, the window opening taller; the proposal put it under the Band card in the first (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
+| 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Open**, for the owner | F6.1 |
+| 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Open**, for the owner | F6.1 |
+| 37 | **Dynamic bands are held at their drawn gain in Linear phase**, coming back in Zero latency; the alternative lets them move through the kernel, as Pro-Q allows up to High: a new kernel every 21 ms, their detector on the input delayed by the latency so it hears what the output plays, the gain then acting at least one update interval later still (a bank designed, taken at a boundary and faded in) and an Attack under 21 ms acting as 21 ms, at the cost of a kernel design every interval while any band moves (§7.7) | **Open**, for the owner | F6.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
@@ -562,7 +570,8 @@ and a cut's.
 | mxm-kit `crates/ui` | `navigation::surface` and `surface_outputs`, the sheet naming a surface's jobs (on main since `69083b4`) |
 | mxm-kit `crates/mxm-fft` | New and shared (on main since `69083b4`); this plugin's editor is its first consumer |
 | `crates/mxm-preset` | Nothing: undo records at the editor's own host context (§5.4, E3) |
-| `vendor/nice-plug` | Nothing in v1. F6 makes the collection's first latency report: `set_latency_samples` and `request_restart` exist, but the player's headless restart path is untested (`plugins/mxm-mono-00/AGENTS.md`) |
+| `vendor/nice-plug` | Nothing. F6 reports a latency at activation, as mxm-fx-oldify does, and a change from `process`, which nice-plug turns into the host's restart; MXM Player's headless path does not restart, so there a change waits for the next activation (§7.7) |
+| Root `AGENTS.md` | F6: the DSP crate's MSRV row loses *zero runtime dependencies*: its one is mxm-kit's `mxm-fft` (decision 6) |
 | The workspace | `repos.txt` gains the repository once the owner creates it on GitHub |
 | This repository | `bundler.toml`, `README.md`, `Cargo.toml`: its own, as every product's |
 | Control map | None in v1. No role fits on-demand bands, and a map is optional |
@@ -579,7 +588,7 @@ the band pool and the analysis layer, not beside them.
 | F3 | **Spectrum grab and analyser extras**: freeze, peak labels, drag a peak to create a bell; a reference overlay | Research §11: the gesture is documented, the peak picker is not | Which spectrum is grabbed; how peaks are chosen |
 | F4 | **Resonance finder**, writing ordinary cut bands. Designed in §7.5 | Research §8–§9: prominence, persistence and decay tests; professionals removed about a fifth of the excess; a cut does not shorten a ring | Decisions 27–30. Continuous spectral suppression must first clear oeksound's active patent, US 10,587,238 (research §9.6): a legal and product decision, outside F4 |
 | F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands. Designed in §7.6 | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | Decisions 31–34 |
-| F6 | **Phase modes**: linear, perhaps analogue-matched | Research §5: 100–400 ms pre-ring on narrow low cuts | The collection's first latency report (§6) |
+| F6 | **Phase modes**: linear, perhaps analogue-matched. Designed in §7.7 | Research §5: 100–400 ms pre-ring on narrow low cuts | Decisions 35–37 |
 | F7 | **Candidates**: character/saturation, auto-gain, band modulation, cross-instance collision | Research §13–§15, §12 | Each one is the owner's call |
 | F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
 
@@ -1354,6 +1363,145 @@ and the keyboard reaching it; the listening inside the analyser's 2 ms budget (�
 | **F5.1** | The match's analysis and fit: the two long-term spectra and the source's cross-spectrum, smoothing, the difference, the EQ as heard, the target and its level, the greedy fit and its refinement (`editor/matcher.rs`), run on the worker. **Built** (2026-10-15), with the match's tests: the ease made the fit's weight and every frame counted, found by them | Unit tests at the end |
 | **F5.2** | The editor: the Match card, Amount, Apply, the graph's curve and diamonds, the toggles' rules, the key's switch, the worker's latest-wins jobs; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, the scope descriptions in the existing Child DOX Index rows of `plugins/AGENTS.md` and the root `AGENTS.md`, and this plan's status line and F5's delivery rows. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `match_cost`'s, recorded in the plugin's `NOTES.md` (*Match*) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin and its host tests, `cargo test -p mxm-fx-eq-n`, the release cost measurement; one agent-loop review of F5.1–F5.2 |
 | **F5.3** | The owner by ear, in Bitwig with a reference on the side chain | Owner sign-off |
+
+### 7.7 F6 — phase modes (revision 29, for the owner's approval)
+
+The next phase in the owner's order (decision 9). Every band so far is minimum phase: a cascade of
+matched SVF sections (§3.1), its magnitude fitted to the analogue prototype's, and since an
+analogue bell, shelf or cut is minimum phase too, its phase follows the analogue's wherever the
+magnitude does. Research §5 says what the other mode buys and costs. A **linear-phase** EQ is a
+symmetric FIR: no phase shift between frequencies, so a placed band adds no phase between the
+channels — a Mid or Side band puts sound in the other channel only by its magnitude, never where
+it is flat (§6) — and a steep cut leaves transients' shape alone; but its latency is the kernel's
+centre, its ringing sits before a transient as much as after, and narrow low cuts pre-ring for
+100–400 ms (§5.2, 10–40 times the backward masking). FabFilter: "not better or more transparent …
+it is different" (§5.2). So it is a mode the player picks for a job, never the default.
+
+**The modes** (decision 35): **Zero latency**, the EQ as it is, and **Linear phase**. Pro-Q's third
+mode, Natural phase, matches the analogue phase too at a small latency (§5.3, method undisclosed);
+here Zero latency already does, being minimum phase with the analogue's magnitude, except in the
+top octave where the matched magnitude leaves the prototype's, so a third mode would buy little.
+
+**Linear phase.** The EQ's magnitude, as Zero latency would hear it, made into a zero-phase FIR
+kernel and run by uniformly partitioned FFT convolution:
+- **The kernel** is designed on N points: per bin the EQ's static magnitude — every band in the
+  sound, its design, gain scale, bypass and placement as §7.3 has them — taken as a real,
+  zero-phase response, inverse-transformed, shifted circularly by N/2 and multiplied by the
+  periodic Hann window `w[m] = sin²(π·m/N)`, zero at m = 0 and symmetric about N/2, each tap pair
+  about N/2 then mirrored (the mean of the two taken for both): so the kernel is symmetric to the
+  bit about its centre tap N/2 over taps 1…N−1 (tap 0 is zero), its tails end at zero, and a feature narrower than a few bins is smoothed, which is what the resolution means.
+  It is then transformed into partitions of B. With every band Stereo it is one kernel
+  for both channels; with Left or Right bands, one per channel; with Mid or Side bands the two
+  stages' magnitudes make a real 2×2 matrix per bin (`L′ = a·l·L + b·r·R`, `R′ = b·l·L + a·r·R`,
+  `a, b = (m ± s)/2`, each zero phase), four kernels, so placed bands stay exactly linear phase
+  with no stage run twice (Pro-Q 4 doubles its latency there, §5.2).
+- **Its length N** (decision 36) is the resolution: **Low, Medium or High**, 4,096, 8,192 or
+  16,384 points at 44.1–48 kHz (85, 171 or 341 ms), twice that at 88.2–96 kHz and four times at
+  176.4–192 kHz, at another rate the power of two nearest the same time. A bin is `fs/N` wide and
+  the window blurs about two: a band wider than eight bins is heard within a quarter of a dB of
+  Zero latency's magnitude — at 48 kHz, Medium any band wider than 47 Hz (Q 1 at 50 Hz, Q 20 at
+  1 kHz), High one wider than 23 Hz (Q 2 at 50 Hz); a narrower one is smoothed, and drawn so
+  (below). A narrow low cut is what pre-rings longest (§5.2), so the resolutions stop at High.
+  **Medium** by default.
+- **The latency** is `N/2 + B`, B the convolution's partition, 256 samples at 44.1–48 kHz (5.3 ms)
+  and scaled with the rate as N is: Medium is 4,352 samples at 48 kHz, 91 ms.
+- **A change is heard through a new kernel, designed off the audio thread.** At an update boundary
+  (every 4·B samples, 21 ms at 48 kHz) after anything the kernel hears has moved, the audio thread
+  copies what it hears — every band's design and placement and the gain scale, plain data — into a
+  request. The engine's own **design thread** (spawned when the engine is built in Linear phase,
+  joined when it is dropped; it looks for a request every millisecond) designs the kernels into one
+  of three banks preallocated at activation and publishes it through atomics. **The audio thread
+  never waits**: at a boundary it takes the newest finished bank. In the host's **offline** mode it
+  waits, at the boundary after it asked, for the bank it asked for, so a bounce is the same every
+  time. So a change is heard from the second boundary after it at the earliest, and fully, its
+  crossfade done, by the third; in realtime as soon after as the thread has designed it.
+- **Old and new kernels hear the same past.** The convolver keeps one frequency-domain delay line
+  of the input's partitions; a bank is only coefficients, so a new bank's first output is already
+  its convolution of everything heard, and over the interval after it is taken both banks run on
+  that same line and their outputs crossfade. Glides and fades are the crossfade's; the output gain
+  stays a ramp after the convolution, as in Zero latency. A drag is heard in 21 ms steps, each
+  crossfaded, behind the latency.
+- **An empty EQ is a pure delay**: with no band in the sound the convolution stops and the input
+  comes out of a delay line of the latency, bit-exact; the output gain applies as in Zero latency.
+- **Dynamic bands** (decision 37) **are held at their drawn gain** while Linear phase is on: a
+  kernel steps every 21 ms, coarser than any Attack; a detector on the input as heard would lead
+  the delayed output by the latency (a look-ahead nobody asked for), and one delayed to line up
+  would answer 21 ms late at best. Their Range, side chain and meter stay set and come back in
+  Zero latency; the card's hover says so, and the graph draws no ring.
+- **Solo** plays its band pass as in Zero latency, on the input delayed by the latency, so an
+  audition lines up with what it auditions.
+- **The tail** is the kernel's: the output is exactly zero once the last partition holding sound has
+  left the delay line, from N + 2B samples after the input's last nonzero sample on at the latest
+  (the delay line, empty, holds spectra that are exactly zero); `KeepAlive` until then.
+
+**One latency per activation** (the kit's *Latency is fixed*): **Phase** and **Resolution** are
+permanent stepped parameters, appended after the placements (`phase`, 0–7: 0 Zero latency,
+1 Linear phase; `resolution`, 0–7: 0 Low, 1 Medium, 2 High; the rest unassigned, read *Unavailable
+n*, heard as Zero latency and Medium), **not automatable** (`ParamFlags::NON_AUTOMATABLE`), so
+saved in presets and projects but never ridden. **Activation builds the mode the parameters hold
+and reports its latency** (`ActivateContext::set_latency_samples`; 0 in Zero latency); a change
+while active is reported from `process` (`ProcessContext::set_latency_samples`), which nice-plug
+turns into the host's restart (CLAP `request_restart`), and until the host restarts the plugin
+the mode in force stays — the bands keep sounding, never a gap. Bitwig restarts at once; MXM
+Player's headless path does not restart (its `request_restart` is a flag), so there a change
+applies at the next activation. **What runs and what is asked**: the shell publishes the mode and
+resolution in force (`Telemetry`), set at activation; the editor's curve and Phase's latency
+hover follow what is in force, and while a change waits for the restart the selectors show what
+was asked and their hover says it applies when the host restarts the plugin. A state or preset
+from before F6 loads Zero latency and Medium (`default_missing_legacy_parameter`,
+`add_missing_at_defaults` and the baselines they extend); the factory set is regenerated from its
+design (`write_the_factory_presets`), Init and every preset Zero latency and Medium.
+
+**The DSP crate** gains its first runtime dependency, mxm-kit's **`mxm-fft`** (MSRV 1.87, MIT,
+`realfft` beneath): the owner's decision 6 rules one shared FFT, never another in a crate. The
+convolver and the kernel design live in `crates/mxm-fx-eq-n-dsp/src/linear.rs`, allocated in
+`Engine::new` for the rate's largest resolution and never on the audio thread.
+
+**In the editor**: **Phase** and **Resolution** selectors share a row in the Output card,
+Resolution enabled only in Linear phase; Phase's hover gives the latency in milliseconds. **The
+drawn curve is the heard curve** in both modes: in Linear phase the editor draws the kernel's
+own magnitude, from the DSP's design function, so a band narrower than the resolution reads as it
+sounds: the kernel the current settings make, which the bank heard reaches within the update
+intervals above. The Output card grows by its row; the window opens taller, hugged, inside the budget.
+
+**Cost** (plan §3.5, brief A6's 35 % steady and 70 % moving): at 192 kHz, High, four kernels and
+every slot in use, in release, by the cost example (`eq_n_cost`), not by wall-clock assertions in
+tests: the audio thread's share of a core steady and while a bank fades (two banks on the line),
+and the design thread's time per bank. Within A6, or the plan says what does not fit.
+
+**Not in F6**: Natural phase; per-band phase; dynamic bands moving in Linear phase; a resolution
+above High; Find's and Match's proposals made linear (they are bands like any other, heard in
+whatever mode is on).
+
+**Tests** (written at the end): at every resolution, a band wider than eight bins heard within
+0.25 dB of Zero latency's magnitude, and the drawn curve within 0.1 dB of what the kernel does;
+the kernel exactly symmetric about tap N/2, so its group delay is the latency at every frequency;
+a hard-left sine through a Mid bell (+6 dB, 1 kHz, Q 1) in Linear phase putting exactly
+`(|m| − 1)/2` of it into the right channel, within 0.1 dB, at 100 Hz, 1 kHz and 10 kHz (Zero
+latency adds a phase term there, §6); an empty EQ the input delayed by the latency, bit for bit;
+the latency reported at activation for each mode, resolution and rate family, and a change asking
+for a restart while the mode in force stays until it comes; after 2 s of sustained noise a kernel
+change, its output once the fade is done the new kernel's convolution of the whole input within
+−90 dB of the output's RMS, and click-free (during the fade no step between samples larger than
+the larger of the two kernels' own outputs' over the same samples, plus 1 % of the signal's
+peak); in offline mode a change heard from the
+second update boundary after it and fully by the third, the same on every run; the audio thread
+never waiting in realtime mode; a dynamic band static in Linear phase and moving again in Zero
+latency; solo lined up with the delayed input; exact silence from N + 2B samples after the input
+ends; the editor drawing what is in force while a change waits; states and presets from before F6
+in Zero latency and Medium, the factory set regenerated; the parameters 292 and permanent, their
+stepped places pinned; the allocation guard in Linear phase with every slot changing; the Output
+card's row in the opening size and the keyboard; the cost at 192 kHz.
+
+**Delivery** (tests at the end, one review over F6.1–F6.3):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F6.0** | Decisions 35–37, signed | Owner |
+| **F6.1** | The DSP: `linear.rs` (the kernel design, the 2×2 matrix, the partitioned convolver and its one delay line, the banks, the design thread and its handoff, the offline wait, the crossfade), the engine's mode and its latency, `mxm-fft`; the DSP's `AGENTS.md` and `NOTES.md` (the cost) | Unit tests at the end; the cost measurement |
+| **F6.2** | The shell: `phase` and `resolution` (292 parameters), activation's report, the change reported from `process`, the mode in force published, the tail, old states and presets, the factory set regenerated; the host test of a linear-phase EQ through MXM Player | Unit and host tests at the end |
+| **F6.3** | The editor: the Output card's row, the drawn curve in Linear phase as in force, the hovers; the DOX: the plugin's `AGENTS.md` and `NOTES.md`; the root `AGENTS.md`'s MSRV row (the DSP's one runtime dependency) and the parameter count in its and `plugins/AGENTS.md`'s index rows; this plan's status | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, its DSP and host tests, `cargo test` on both; one agent-loop review of F6.1–F6.3 |
+| **F6.4** | The owner by ear, in Bitwig: Linear phase on a low cut and on a Mid band, the restart on a change | Owner sign-off |
 
 ## 8. What must not break
 
