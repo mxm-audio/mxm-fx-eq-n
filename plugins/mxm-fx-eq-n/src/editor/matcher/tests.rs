@@ -409,6 +409,48 @@ fn silence_counts_for_nothing_and_ten_seconds_come_first() {
     }
 }
 
+/// **Quiet frames still count** (plan §7.6): after the ten seconds, frames below −60 dBFS change
+/// the long-term means and are something new, so the match is fitted again; they add no seconds
+/// heard.
+#[test]
+fn quiet_frames_change_the_means_and_ask_a_new_fit() {
+    let mut matcher = fixture(12.0, 1.0);
+    let (revision, heard) = (matcher.revision(), matcher.spectra().heard_seconds());
+    let before = curves(matcher.spectra(), &flat());
+    let mut noise = Noise(99);
+    let mut chain = Chain::new(&cascades(&[MatchBand {
+        shape: Shape::Bell,
+        freq: 1_000.0,
+        gain_db: 12.0,
+        q: 1.0,
+    }]));
+    let quiet = 1.0e-4;
+    for seq in 0..(RATE * 4.0) as u64 / BLOCK_FRAMES as u64 {
+        let mut block = Block {
+            seq: seq + 1_000_000,
+            generation: 0,
+            sample_rate: RATE,
+            channels: 2,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for index in 0..BLOCK_FRAMES {
+            let x = quiet * noise.next();
+            let y = chain.tick(x);
+            for channel in 0..2 {
+                block.pre[channel][index] = x;
+                block.key[channel][index] = y;
+            }
+        }
+        matcher.ingest(&block);
+    }
+    assert_ne!(matcher.revision(), revision, "something new");
+    assert_eq!(matcher.spectra().heard_seconds(), heard, "no seconds heard");
+    let after = curves(matcher.spectra(), &flat());
+    assert_ne!(before, after, "the means moved");
+}
+
 /// **A fit is deterministic** (plan §7.6): the same spectra give the same bands, bit for bit.
 #[test]
 fn a_fit_is_deterministic() {

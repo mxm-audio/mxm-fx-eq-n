@@ -6,7 +6,7 @@
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
 incremental fit — and nine further findings, all accepted and applied here. **Signed by the owner**
 (2026-10-15): decisions 31 and 32 as proposed; 33 and 34 their alternatives — a Detail control, and
-the Match card under Resonances, approved by the agent-loop in round 4; F5.0 done. F5.1–F5.2 built (2026-10-15); their code review is next. **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
+the Match card under Resonances, approved by the agent-loop in round 4; F5.0 done. F5.1–F5.2 built (2026-10-15) and their code approved by the agent-loop in round 2 (one blocker: quiet frames now ask a new fit); F5.3, the owner's listening in Bitwig, is next. **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
 decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-10-15): rounds 1–2
 filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Approved
 by the owner** (2026-10-15, *"Approve all and build"*, decisions 27–30 as proposed); F4.0 done.

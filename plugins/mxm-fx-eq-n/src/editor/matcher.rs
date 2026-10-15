@@ -268,16 +268,14 @@ impl Matcher {
 
     /// A width frame: its power joins the input's long-term sums, whatever its level, so every
     /// rung's mean is a time average alike (a frame gated as F4's would weigh a quiet passage
-    /// differently on rungs of different lengths, a step at their edges). Only a heard one counts
-    /// towards the seconds heard, and is something new.
+    /// differently on rungs of different lengths, a step at their edges); so every frame is
+    /// something new. Only a heard one counts towards the seconds heard.
     fn width_frame(&mut self, input: usize, index: usize) {
         let channels = self.spectra.channels;
         let rung = &mut self.inputs[input][index];
-        if heard(rung.width.transform(channels)) {
-            self.revision = self.revision.wrapping_add(1);
-            if index == 0 {
-                self.spectra.heard[input] += rung.width.hop as f64 / f64::from(rung.rate);
-            }
+        self.revision = self.revision.wrapping_add(1);
+        if heard(rung.width.transform(channels)) && index == 0 {
+            self.spectra.heard[input] += rung.width.hop as f64 / f64::from(rung.rate);
         }
         let sums = &mut self.spectra.rungs[index];
         sums.frames[input] += 1;

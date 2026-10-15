@@ -148,8 +148,11 @@ const AMOUNT_DESCRIPTION: &str = "How much of each resonance a proposed cut take
 const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in one step Undo takes back.";
 /// The Amount slider's key in the cursor's registry and its held value's.
 const AMOUNT_KEY: &str = "amount";
-const MATCH_DESCRIPTION: &str = "Listens to the sound coming in and to the side chain, and proposes      the bands that bring the sound's tone towards the side chain's. Route a reference track to      the side chain. Needs the analyser.";
-const MATCH_NO_PORT_DESCRIPTION: &str = "Needs a side chain, which this layout does not have. Use      the EQ with its side-chain input to match to a reference track.";
+const MATCH_DESCRIPTION: &str = "Listens to the sound coming in and to the side chain, and proposes \
+     the bands that bring the sound's tone towards the side chain's. Route a reference track to \
+     the side chain. Needs the analyser.";
+const MATCH_NO_PORT_DESCRIPTION: &str = "Needs a side chain, which this layout does not have. Use \
+     the EQ with its side-chain input to match to a reference track.";
 const MATCH_FULL_DESCRIPTION: &str =
     "Every band slot is in use, so no band can be proposed. Delete a band to make room.";
 const MATCH_NO_GAIN_DESCRIPTION: &str =
@@ -158,7 +161,8 @@ const MATCH_AMOUNT_DESCRIPTION: &str =
     "How much of the difference from the reference the match takes.";
 const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
-const MATCH_HEARD_DESCRIPTION: &str = "How long the sound coming in and the side chain have been      heard. Thirty seconds or more of each makes a steadier match.";
+const MATCH_HEARD_DESCRIPTION: &str = "How long the sound coming in and the side chain have been \
+     heard. Thirty seconds or more of each makes a steadier match.";
 const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in one step Undo takes back.";
 const MATCH_AMOUNT_KEY: &str = "match amount";
 const DETAIL_KEY: &str = "detail";
