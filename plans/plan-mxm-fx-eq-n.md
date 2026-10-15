@@ -2,7 +2,10 @@
 
 **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
 decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-10-15): rounds 1–2
-filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
+filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Approved
+by the owner** (2026-10-15, *"Approve all and build"*, decisions 27–30 as proposed); F4.0 done.
+The owner also set the rest of the plan's course: F5 to F8 phase by phase, each designed, reviewed
+and signed before it is built. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
 all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
 proposed); F3.0–F3.3 done, their code review approved in round 7; F3.4, the owner by eye and ear, next. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
@@ -100,10 +103,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 24 | **Peaks**: at least 6 dB of prominence within a third of an octave, within 40 dB of the loudest band, a sixth of an octave apart, at most eight; the alternative is a looser or tighter rule (§7.4) | **Settled** (owner, 2026-10-15) | F3.1 |
 | 25 | **A grab makes a static bell**, Q from the peak's 3 dB width; the alternative makes a dynamic band directly (§7.4) | **Settled** (owner, 2026-10-15) | F3.2 |
 | 26 | **The reference overlay is the side-chain input's spectrum**; the alternative is a captured snapshot of the EQ's own (§7.4) | **Settled** (owner, 2026-10-15) | F3.3 |
-| 27 | **F4 proposes static cut bells and the player applies them**: the EQ's own bands, never continuous per-bin suppression; the alternative proposes dynamic bands (§7.1) directly (§7.5) | **Proposed** | F4.2 |
-| 28 | **The finder listens for peaks that stay put**: a long, high-resolution listen to the input that keeps a peak only if it holds its frequency through most of what was heard; the alternative takes F3's frozen peaks as the candidates (§7.5) | **Proposed** | F4.1 |
-| 29 | **One Amount, 20 % by default**: each cut takes that share of its peak's prominence, at most 12 dB; the alternative starts at 50 % (§7.5) | **Proposed** | F4.2 |
-| 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Proposed** | F4.2 |
+| 27 | **F4 proposes static cut bells and the player applies them**: the EQ's own bands, never continuous per-bin suppression; the alternative proposes dynamic bands (§7.1) directly (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
+| 28 | **The finder listens for peaks that stay put**: a long, high-resolution listen to the input that keeps a peak only if it holds its frequency through most of what was heard; the alternative takes F3's frozen peaks as the candidates (§7.5) | **Settled** (owner, 2026-10-15) | F4.1 |
+| 29 | **One Amount, 20 % by default**: each cut takes that share of its peak's prominence, at most 12 dB; the alternative starts at 50 % (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
+| 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
@@ -1126,7 +1129,7 @@ reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **F4.0** | Decisions 27–30, signed | Owner |
+| **F4.0** | Decisions 27–30, signed. **Done** (2026-10-15) | Owner |
 | **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`) | Unit tests at the end |
 | **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md` | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
