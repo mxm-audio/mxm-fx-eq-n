@@ -1,8 +1,8 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
 **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
-decisions 27–30). **Its plan review is in progress, not approved**: rounds 1–2 filed seven MAJOR
-findings, all accepted and applied here; round 3 is next. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
+decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-10-15): rounds 1–2
+filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
 all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
 proposed); F3.0–F3.3 done, their code review approved in round 7; F3.4, the owner by eye and ear, next. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
@@ -49,7 +49,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
-| 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30) |
+| 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
 | 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
 | 25 | **F2 designed** (2026-10-14), §7.3: Pro-Q's five placements and, by the owner's choice, its Split on a Stereo band (L/R, or M/S with Alt) (decision 18); placed bands disabled in mono (decision 19); a placed dynamic band detects its own channel (decision 20); no new presets (decision 21); channel bands before mid/side bands (decision 22); 24 placements appended; curves each a channel's self-response, labelled. Approved by the owner 2026-10-15 |
 | 24 | **The external side chain designed** (2026-10-14), §7.2, for the owner's approval: next, before F2, the EQ only and heard at home (decision 15); per band, the key band-limited as the input is (decision 16); solo plays what the band listens to (decision 17); one port, keyed layouts first; 24 switches appended |
@@ -985,123 +985,150 @@ inside its 2 ms budget (§4); the opening size with the new toggles.
 
 ### 7.5 F4 — the resonance finder (revision 27, for the owner's approval)
 
-The next phase in the owner's order (decision 9). Cutting a peak is solved (the bell's half-gain Q
-makes an exact inverse, research §9.2); deciding **what counts as a resonance** and **how much to
-take away** is not. A resonance is a peak at a **fixed frequency** weighting the notes that reach it;
-a note's harmonics move with the note (§8.2). The published mix detectors are magnitude-only and
-short-window (§8.5). In mix EQ a false alarm, cutting a wanted harmonic, is the expensive error, so
-the criteria are conjunctive and the first cuts shallow (§8.3). And the amount is contested:
-professionals removed 6–47 % of each peak's excess, median 19 % (Grachten 2019, §8.5).
+The next phase in the owner's order (decision 9). Cutting a peak is solved: the bell's half-gain Q
+makes an exact inverse (research §9.2). Deciding **what is a resonance** and **how much to take**
+is not. A resonance is a peak at a **fixed frequency** weighting every note that reaches it, where a
+note's harmonics move with the note (§8.2); the published mix detectors are magnitude-only and
+short-window (§8.5); in mix EQ the expensive error is a false alarm, a wanted harmonic cut, so the
+criteria are conjunctive and the cuts shallow (§8.3); and professionals removed 6–47 % of each
+peak's excess, median 19 % (Grachten 2019, §8.5).
 
-**What F4 writes** (decision 27). The finder **proposes cut bells; the player applies them**, and
-then they are ordinary static bands, editable and deletable like any other. It never applies a curve
-by itself and never moves while the music plays. That keeps F4 on the documented route of static
-notches at measured peaks (Corbach 2009, feedback suppressors; §9.1) and off what oeksound's active
-patents claim: a per-bin curve over a detrended spectrum, made minimum phase and convolved, its
-sub-band form and its shape/level blend (US 10,587,238 and two later families, §9.6). That is a
-product reading of the claims as the research records them, not a legal opinion; continuous
-suppression stays out of this plan unless the owner has it cleared. A proposed band can be made
-dynamic afterwards (§7.1), as a grab's can.
+**What F4 writes** (decision 27): the finder **proposes cut bells and the player applies them**;
+applied, they are ordinary static bands, editable, deletable and able to be made dynamic (§7.1). It
+never applies a curve itself and never moves while the music plays: the documented route of static
+notches at measured peaks (Corbach 2009; feedback suppressors, §9.1), clear of what oeksound's
+patents claim, a per-bin curve over a detrended spectrum made minimum phase (US 10,587,238 and two
+later families, §9.6). That is a product reading of the claims as the research records them, not
+legal advice; continuous suppression stays out of this plan unless the owner has it cleared.
 
-**Find** (decision 28). A **Find** toggle listens to the **input before the EQ**, so the player's own
-boosts are never taken for resonances (§8.2) and editing bands does not disturb the listen. It needs
-the analyser on, and it and Freeze are exclusive. The listen accumulates from when Find is turned on;
-proposals appear after four seconds of audio above −60 dBFS and update about twice a second.
-- **Two kinds of evidence, as the research separates them** (§8.6): long frames measure a width,
-  short ones show whether a peak moves. Both are ladders on the analyser's decimator (§4): the input
-  at up to 48 kHz (decimated first at 96 and 192 kHz, so the cost does not scale with rate), then a
-  quarter and a sixteenth of that, each read in its own octaves.
-  - **Width** from 8,192-point windows, about 4/B seconds for a bandwidth B: a Q-32 resonance is
-    measured from about 50 Hz up, and the lowest frames are 2.7 s, so low candidates firm up over a
-    longer listen than four seconds.
-  - **Movement** from 2,048-point windows, in each octave about the shortest frame that tells notes a
-    semitone apart (about 67/f seconds: 0.2 s at 300 Hz). **The limit is physical**: below about
-    200 Hz a semitone takes longer to resolve than a short note lasts, so a fast bass line can look
-    fixed there. Find's hover says so.
-- **Placed where the excess is.** Left, right, mid and side are heard on their own (§4), and a
-  proposal takes F2's placement (§7.3) that leaves every domain without the excess untouched: only
-  on one channel, Left or Right; only in the mid or only in the side, Mid or Side; on both channels
-  but more than 3 dB apart, a Left and a Right band, each its own depth; otherwise Stereo, measured
-  on the channels' power average. A mono input proposes Stereo bands.
-- **A peak counts in a frame** by F3's prominence rule (decision 24), the leakage bins either side
-  skipped (§8.3).
-- **Persistence decides**, on the short frames: a **candidate** is present, within half a semitone,
-  in at least half of the frames that could show it, those whose third of an octave around it is
-  within 40 dB of their loudest third, so a passage that never excites the region does not vote a
-  resonance away. **And across different excitations**: those frames must show at least two, their
-  strongest other peak in that third a semitone or more apart. A region only one note ever reaches
-  gives no verdict and nothing is proposed there, since one note cannot show whether a peak is its
-  own or the room's. Moving harmonics fail; a room, body or cabinet resonance passes. A drone, a held
-  note and a reflection's comb ripple persist too (§8.2): the player decides each proposal, and a
-  varied passage is the remedy.
-- **Measured on the long-term spectrum**, the average of every long frame's power: the centre by a
-  three-point parabola, the prominence P, and the width where it stands P/2 below its peak.
-- **Ranked by audibility** (§8.8): by how far P exceeds the deviation Toole & Olive found just audible
-  on music, about 1.5 dB at Q 1, 3 dB at Q 10 and 5 dB at Q 50 (1.5·Q^0.3 dB). At most eight, a sixth
-  of an octave apart, never more than the free slots.
+**Find** (decision 28), a toggle that **listens to the input before the EQ**, so the player's own
+boosts are never taken for resonances and editing bands does not disturb it. Like Freeze it is
+offered only with the analyser on; turning one of Find and Freeze on turns the other off; the
+analyser off turns Find off, and back on leaves it off. The listen runs from when Find is turned on.
+- **Two kinds of evidence** (§8.6), on three rungs, each a frequency's only home, so no peak is found
+  twice: **width** from 8,192-point frames (about 4/B seconds for a bandwidth B: Q 32 from about
+  50 Hz up) and **movement** from 2,048-point frames, about the shortest that tells notes a semitone
+  apart (67/f seconds). Hann windows, a hop of half a frame. At 48 kHz:
 
-**How much** (decision 29). One **Amount**, 0–100 %, **20 % by default** (Grachten's median), sets
-every proposal's depth: **−Amount × P**, never deeper than **−12 dB** (Ramos & López's cap, §8.4).
-**Q comes from the width at P/2**, so at 100 % the bell is the peak's exact inverse in the band's
-half-gain convention (§3.2; research §9.2), held inside **0.5–20**: past Corbach's Q 20 a cut's own
-ringing and a slight mistuning cost more than the resonance (Fazenda, §8.4). Amount is view state,
-saved with the analyser's settings (§4). **What is left decides what is proposed**: each candidate's
-prominence is measured again on the input's long-term spectrum plus the EQ as heard (gain scale,
-bypass and placement included, a dynamic band at its drawn gain). Where the EQ already takes
-Amount × P off it, it is **treated** and not proposed; otherwise the proposal is the remainder, as a
-further band. So after an Apply, a bypass or a larger Amount, Find shows what is left. **Depths are
-solved together**: bells in series add in dB, so a neighbour's skirt cuts into a centre; the
-proposals' depths are chosen so that all of them together, on top of the EQ as heard, meet each
-centre's target (a linear system of at most eight, refined once with the bells' actual responses,
-as Ramos & López refine theirs, §8.4). Each proposal shows the depth Apply all would give it.
+  | Rung | Rate | Its frequencies | Width frames | Movement frames |
+  |---|---|---|---|---|
+  | 0 | the input, decimated first by the smallest power of two that brings it to at most 64 kHz (1 at 44.1–48 kHz, 2 at 88.2–96, 4 at 176.4–192) | 1.6 kHz and up | 0.17 s | 43 ms |
+  | 1 | a quarter of rung 0's | 400 Hz up to 1.6 kHz | 0.68 s | 0.17 s |
+  | 2 | a sixteenth | below 400 Hz | 2.7 s | 0.68 s |
 
-**On the graph**, while Find has proposals: **the curve they would make**, dashed over the EQ's own,
-and a **downward triangle** at each candidate on the spectrum, labelled with frequency and depth
-(`320 Hz −2.1 dB`), told apart by shape and text, never hue; overlapping labels follow F3's rule. **A
-click on a triangle applies it; a drag applies it with the gain following the drag** (F3's grab);
-either is one undo step, BACK during the drag leaving nothing, and a band's point under the pointer
-comes first. **The keyboard**, with Find on and no band selected: ← → walk the proposals, the focused
-one's label always drawn, and ADD applies it.
+  The ranges are half-open and fixed at every rate; each decimation is the display's anti-alias low
+  pass (§4), run on left and right, mid and side formed after. A rung's spectrum runs past its own frequencies, so a peak near a boundary is
+  measured whole. Below about 200 Hz a semitone takes longer than a short note, so a fast bass line
+  can look fixed there; Find's hover says so.
+- **Only heard frames count**: a frame whose input, both channels' power averaged, is at least
+  −60 dBFS. Quiet frames enter nothing, long-term spectrum included. Proposals appear after four
+  seconds of heard input and update about twice a second.
+- **Five spectra**: left, right, mid (`(L + R)/2`), side (`(L − R)/2`) and the channels' power
+  average; a mono input has the one. **Candidates** are the peaks of each spectrum's **long-term
+  spectrum**, every heard width frame's power averaged, by F3's rule (decision 24) with the leakage
+  bins either side skipped (§8.3); the five lists are merged within half a semitone, the most
+  prominent standing for the others. Each is measured there: the centre by a three-point parabola,
+  the prominence P, the width at P/2 below the peak. A candidate needs two heard width frames in its
+  rung.
+- **Placed where the excess is**, with F2's placements (§7.3), the first rule that holds: the peak
+  in one of left and right only, **Left** or **Right**; in both, their P more than 3 dB apart, a
+  **Left and a Right** band, each its own depth; in the side and not the mid, **Side**; in the mid
+  and not the side, where the side's level there is within 20 dB of the mid's, **Mid**; otherwise
+  **Stereo**, on the power average. (A one-channel resonance shows in mid and side alike, and a side
+  one in left and right alike, so the order separates them.) What follows is judged on the
+  placement's own spectrum, each channel's for a pair.
+- **Persistence decides**, on the movement frames. A candidate is present, within half a semitone,
+  in at least half of the frames that could show it — those whose third of an octave around it is
+  within 40 dB of their loudest third, at least eight of them, so a passage that never reaches the
+  region does not vote it away — **and those frames show at least two excitations**: their strongest
+  other peak in that third differs by a semitone or more between them. A region only one note reaches
+  gives no verdict and nothing is proposed there. Moving harmonics fail; a room, body or cabinet
+  resonance passes; a drone, a held note and a reflection's comb persist too (§8.2), so the player
+  decides each proposal.
+- **Ranked by audibility** (§8.8): how far P exceeds the deviation just audible on music, 1.5·Q^0.3
+  dB (Toole & Olive: about 1.5 dB at Q 1, 3 at Q 10, 5 at Q 50). **At most eight candidates**, a
+  sixth of an octave apart; a pair is one candidate with two bands at one centre. In rank order a
+  candidate is proposed only if its bands fit the free slots still left; one that does not is passed
+  over.
 
-**The Resonances card**: **Find**, **Amount**, and **Apply all**, which writes every proposal shown
-into the lowest free slots as one undo step, disabled with none; with every slot in use nothing is
+**How much** (decision 29). One **Amount**, 0–100 %, **20 % by default** (Grachten's median): each
+proposal's target is **−Amount × P**, never deeper than **−12 dB** (Ramos & López, §8.4), and its
+**Q is the width at P/2**, held inside **0.5–20** (past Corbach's Q 20 a cut's own ringing and
+mistuning cost more than the resonance, Fazenda, §8.4). For one isolated peak, inside those bounds,
+where the EQ does nothing, that bell at 100 % is the peak's exact inverse in the band's half-gain
+convention (§3.2). **Amount is view state**, in whole percent, saved with the analyser's settings
+(§4): a project from before loads it at 20 % (the settings' own default), a change marks the project
+dirty, and it is not part of a freeze's basis (§7.4). Find, what it heard and its proposals are the
+editor's moment, never saved.
+- **What is left decides.** Each candidate's prominence is measured again on its spectrum plus the
+  EQ as heard there — the graph's self-response for that channel (§7.3), gain scale, bypass and
+  placement included, a dynamic band at its drawn gain. Where the EQ already takes Amount × P off to
+  within 0.5 dB, the candidate is **treated** and not proposed; otherwise the remainder is proposed as
+  a further band. A shown proposal goes only once under 0.25 dB, so updates do not flicker. After an
+  Apply, a bypass or a larger Amount, Find shows what is left.
+- **Depths are solved together**, since a neighbour's skirt cuts into a centre. **What is solved**:
+  at each candidate's centre, its spectrum's response — the self-response the graph draws for that
+  channel (§7.3), and for Stereo the power average of the left's and the right's — of the EQ as heard
+  plus every proposal, of every placement, should stand at the EQ's own plus the target. What crosses
+  between channels is not modelled, as the graph does not draw it. **How**: each depth starts at its
+  target, then 32 sweeps of projected Gauss–Seidel in rank order: each depth moves by its centre's
+  remaining error, on the actual responses, and is held inside −12…0 dB (cut only). It converges
+  wherever each bell is deepest at its own centre, as a cut bell is, and it is bounded and
+  deterministic everywhere: where the cap or a Q bound puts targets out of reach together, the
+  sweeps end where they end and those centres stay short (Ramos & López also refine iteratively).
+  Each proposal shows the depth Apply all gives it.
+
+**On the graph**, while Find has proposals: **the curve they would make**, dashed over the EQ's, and
+a **downward triangle** at each candidate labelled with frequency and depth (`320 Hz −2.1 dB`, a
+pair's two depths), told apart by shape and text, never hue; labels overlap by F3's rule. **A click
+on a triangle applies it; a drag applies it with the gain following the drag** (F3's grab; a pair's
+two gains move together). Either is one undo step, BACK during the drag leaves nothing, and a band's
+point under the pointer comes first. **The keyboard**, with Find on and no band selected: ← → walk
+the proposals, the focused one's label always drawn, and ADD applies it. **Every path writes a band's
+every field** (`slot_writes`): a static, unkeyed bell at its placement, whatever an Off slot held.
+
+**The Resonances card**: **Find**, **Amount** and **Apply all**, which writes every proposal shown
+into the lowest free slots as one undo step, disabled with none. With every slot in use nothing is
 proposed and Find's hover says why. Hover only, no help text.
 
-**A second column** (decision 30). The column is at 1,048 of the 1,080 px budget, so a fourth card
-cannot go under the others; the owner (2026-10-15): *"you can also expand sideways"*. The cards
-become **two columns** right of the graph: the **Band** card alone in the first, **Output, Analyser
-and Resonances** in the second. The window opens 328 px wider, inside the 1,920 px budget, hugged to
-the taller column. §5.1's rules hold for the pair: never under the graph, the graph shrinking to its
-floor first, then the surface scrolling sideways; the columns scroll vertically together.
+**A second column** (decision 30). The column stands at 1,048 of the 1,080 px budget, so a fourth
+card cannot go under the others, and the owner allowed the window to grow sideways (2026-10-15,
+*"you can also expand sideways"*). The cards become **two columns** right of the graph: **Band**
+alone in the first, **Output, Analyser and Resonances** in the second. The window opens 328 px
+wider, inside the 1,920 px budget, hugged to the taller column. §5.1's rules hold for the pair:
+never under the graph, the graph shrinking to its floor first, then the surface scrolling sideways;
+the columns scroll vertically together.
 
-**What ends a listen**: Find off, the analyser off, Freeze on, closing the editor; a reset or a new
-rate starts it again, as the display's windows restart (§4). It is the editor's moment, never saved.
+**A listen ends** with Find off, the analyser off, Freeze on or the editor closed; a reset or a new
+rate starts it again, as the display's windows restart (§4).
 
-**Not in F4**: continuous or dynamic suppression; proposing dynamic bands; a decay test (it works only
-where excitation stops, and ringing is a poor guide to audibility, §8.4); excluding a note's
-multiples by pitch tracking (§8.2); finding in the side chain or the output; auditioning a candidate
-before it is applied.
+**Not in F4**: continuous or dynamic suppression; proposing dynamic bands; a decay test (it needs the
+excitation to stop, and ringing is a poor guide to audibility, §8.4); excluding a note's multiples
+by pitch tracking (§8.2); finding in the side chain or the output; auditioning a candidate before it
+is applied.
 
 **Tests** (written at the end): a fixed Q-10 resonance at 1 kHz under a melody of quarter-second
-notes is found within a forty-eighth of an octave, its Q within 20 %, and the melody's harmonics are
-not, nor a lone note's in a region nothing else reaches; a resonance on the left only becomes a Left band, one in the side only a Side band, and unequal
-channels a Left and Right pair; resonances at 60 Hz (Q 15) and 8 kHz (Q 20)
-are found; quiet frames do not count, and a reset restarts the listen; at 100 % the applied bell
-cancels a cookbook-shaped peak within 1 dB across its width; two candidates a sixth of an octave
-apart, applied together, each land within 0.5 dB of its target; depth, cap and Q bounds; a candidate
-the heard EQ treats is not proposed, and is again when that band is bypassed or Amount raised; the
-count, spacing and free slots; Apply all, a click and a drag each one undo step, BACK leaving
-nothing; the keyboard walk and ADD; Find and Freeze exclusive, Find needing the analyser, closing the
-editor ending it, only Amount saved; the opening size and narrow window with two columns; the
-keyboard reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192 kHz.
+notes is found within a forty-eighth of an octave, its Q within 20 %, and neither the melody's
+harmonics nor a lone note's in a region nothing else reaches; resonances at 60 Hz (Q 15) and 8 kHz
+(Q 20) found; a left-only resonance a Left band, a side-only one a Side band, unequal channels a
+Left and Right pair, and a centred one Stereo; quiet frames not counting, a reset restarting the
+listen; at 100 % the applied bell cancelling a cookbook-shaped peak within 1 dB across its width;
+two candidates a sixth of an octave apart, applied together, each within 0.5 dB of its target, and
+two overlapping in different placements within 1 dB; a target past the cap held at −12 dB; the Q
+bounds; a treated candidate not proposed, and proposed again when its band is bypassed or Amount
+raised, with no flicker at the threshold; the count, spacing and free slots, a pair passed over with
+one slot left; every field written over a stale Off slot; Apply all, a click and a drag each one undo
+step, BACK leaving nothing; the keyboard walk and ADD; the toggles' rules; Amount saved, an old
+project at 20 %, Find never saved; the opening size and narrow window with two columns, the keyboard
+reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192 kHz.
 
 **Delivery** (tests at the end, one review over F4.1–F4.2):
 
 | Step | Delivers | Gate |
 |---|---|---|
 | **F4.0** | Decisions 27–30, signed | Owner |
-| **F4.1** | The finder's analysis: the window ladder, peaks per frame, persistence, the long-term spectrum, candidates and their ranking (`editor/finder.rs`) | Unit tests at the end |
-| **F4.2** | Proposals: depth, Q, treated candidates; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card and the second column | Editor tests at the end; one agent-loop review of F4.1–F4.2 |
+| **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`) | Unit tests at the end |
+| **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md` | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
 
 ## 8. What must not break
