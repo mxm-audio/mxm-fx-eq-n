@@ -4,7 +4,8 @@
 35–37). **Its design approved by the agent-loop in round 2** (2026-10-15): round 1's four blockers
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its
-other findings, all accepted and applied here. Decisions 35–37 wait for the owner. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
+other findings, all accepted and applied here. **Signed by the owner** (2026-10-15, decisions
+35–37 as proposed); F6.0 done, F6.1–F6.3 next. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
 §7.6, decisions 31–34). **Its design approved by the agent-loop in round 3** (2026-10-15): rounds
 1–2 filed five blockers — the level taken out after the Amount, the EQ counted through the source's
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
@@ -122,9 +123,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 32 | **The fit writes only into free slots, the EQ as heard counted**, so the player's bands never change; the alternative replaces the EQ, every band refitted (§7.6) | **Settled** (owner, 2026-10-15) | F5.1 |
 | 33 | **One Amount, 40 % by default, and Pro-Q's detail control, a band count the player sets**; the proposal had no detail control, the fit stopping only where what is left is just audible or the slots run out (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
 | 34 | **The Match card goes under Resonances** in the second column, beside the other proposal tool, the window opening taller; the proposal put it under the Band card in the first (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
-| 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Open**, for the owner | F6.1 |
-| 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Open**, for the owner | F6.1 |
-| 37 | **Dynamic bands are held at their drawn gain in Linear phase**, coming back in Zero latency; the alternative lets them move through the kernel, as Pro-Q allows up to High: a new kernel every 21 ms, their detector on the input delayed by the latency so it hears what the output plays, the gain then acting at least one update interval later still (a bank designed, taken at a boundary and faded in) and an Attack under 21 ms acting as 21 ms, at the cost of a kernel design every interval while any band moves (§7.7) | **Open**, for the owner | F6.1 |
+| 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
+| 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
+| 37 | **Dynamic bands are held at their drawn gain in Linear phase**, coming back in Zero latency; the alternative lets them move through the kernel, as Pro-Q allows up to High: a new kernel every 21 ms, their detector on the input delayed by the latency so it hears what the output plays, the gain then acting at least one update interval later still (a bank designed, taken at a boundary and faded in) and an Attack under 21 ms acting as 21 ms, at the cost of a kernel design every interval while any band moves (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
@@ -1497,7 +1498,7 @@ card's row in the opening size and the keyboard; the cost at 192 kHz.
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **F6.0** | Decisions 35–37, signed | Owner |
+| **F6.0** | Decisions 35–37, signed. **Done** (2026-10-15) | Owner |
 | **F6.1** | The DSP: `linear.rs` (the kernel design, the 2×2 matrix, the partitioned convolver and its one delay line, the banks, the design thread and its handoff, the offline wait, the crossfade), the engine's mode and its latency, `mxm-fft`; the DSP's `AGENTS.md` and `NOTES.md` (the cost) | Unit tests at the end; the cost measurement |
 | **F6.2** | The shell: `phase` and `resolution` (292 parameters), activation's report, the change reported from `process`, the mode in force published, the tail, old states and presets, the factory set regenerated; the host test of a linear-phase EQ through MXM Player | Unit and host tests at the end |
 | **F6.3** | The editor: the Output card's row, the drawn curve in Linear phase as in force, the hovers; the DOX: the plugin's `AGENTS.md` and `NOTES.md`; the root `AGENTS.md`'s MSRV row (the DSP's one runtime dependency) and the parameter count in its and `plugins/AGENTS.md`'s index rows; this plan's status | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, its DSP and host tests, `cargo test` on both; one agent-loop review of F6.1–F6.3 |
