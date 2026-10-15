@@ -2957,3 +2957,47 @@ fn a_loud_peak_is_drawn_and_grabbed_inside_the_graph() {
     rig.press(pointer(to, Some(false)));
     assert_eq!(rig.band(0).shape, Some(Shape::Bell), "grabbed");
 }
+
+/// **Any resize ends a freeze, however small** (plan §7.4): half a point wider keeps the number of
+/// points but moves the grid, and the freeze ends.
+#[test]
+fn a_resize_too_small_to_change_the_count_ends_the_freeze() {
+    let mut rig = frozen_rig(1_000.0);
+    let width = rig.app.graph_rect.width();
+    let delta = if (width / 2.0).fract() < 0.75 {
+        0.5
+    } else {
+        -0.5
+    };
+    let points = rig.app.frozen.as_ref().unwrap().freqs.len();
+    let size = Rig::opening() + egui::vec2(delta, 0.0);
+    rig.frame(size, Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    assert_eq!(
+        graph::Curves::compute(&rig.app, &axes).freqs.len(),
+        points,
+        "the count holds"
+    );
+    assert!(rig.app.frozen.is_none(), "the moved grid ended it");
+}
+
+/// **A label near either side stays inside the graph** (plan §7.4).
+#[test]
+fn a_label_near_a_side_is_shifted_into_the_graph() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let size = egui::vec2(48.0, 12.0);
+    let y = axes.rect.center().y;
+    for at in [
+        egui::pos2(axes.rect.left() + 3.0, y),
+        egui::pos2(axes.rect.right() - 3.0, y),
+    ] {
+        let label = graph::peak_label(&axes, at, size);
+        assert!(
+            axes.rect.contains_rect(label),
+            "{label:?} in {:?}",
+            axes.rect
+        );
+    }
+}

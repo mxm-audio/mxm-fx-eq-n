@@ -103,16 +103,19 @@ pub fn peak_marker(axes: &Axes, peak: &grab::Peak) -> Pos2 {
 }
 
 /// A peak's label of `size` for its marker at `at`: above it, or below where the graph's top
-/// leaves no room.
+/// leaves no room, and shifted sideways into the graph near either edge.
 pub fn peak_label(axes: &Axes, at: Pos2, size: Vec2) -> Rect {
     let size = size + vec2(4.0, 2.0);
     let offset = 2.0 * PEAK_MARKER_RADIUS + size.y / 2.0;
     let above = Rect::from_center_size(at - vec2(0.0, offset), size);
-    if above.top() >= axes.rect.top() {
+    let rect = if above.top() >= axes.rect.top() {
         above
     } else {
         Rect::from_center_size(at + vec2(0.0, offset), size)
-    }
+    };
+    let shift =
+        (axes.rect.left() - rect.left()).max(0.0) - (rect.right() - axes.rect.right()).max(0.0);
+    rect.translate(vec2(shift, 0.0))
 }
 
 const PEAK_MARKER_RADIUS: f32 = 4.0;
@@ -533,7 +536,7 @@ impl EqApp {
         if self
             .frozen
             .as_ref()
-            .is_some_and(|frozen| frozen.points() != curves.xs.len())
+            .is_some_and(|frozen| !frozen.drawn_on(&curves.freqs))
         {
             self.unfreeze();
         }
@@ -873,7 +876,7 @@ impl EqApp {
             if self
                 .frozen
                 .as_ref()
-                .is_some_and(|frozen| !frozen.holds(&basis, curves.xs.len()))
+                .is_some_and(|frozen| !frozen.holds(&basis, &curves.freqs))
             {
                 self.unfreeze();
             }
@@ -918,6 +921,7 @@ impl EqApp {
                         pre,
                         key,
                         peaks,
+                        freqs: curves.freqs.clone(),
                     });
                 }
             }

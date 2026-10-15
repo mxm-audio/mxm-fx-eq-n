@@ -937,7 +937,8 @@ frozen spectrum (they exist by the peak rule), held inside 0.5–12, and its gai
 through the gain scale (at 0 %, where every bell is drawn and heard flat, the drag sets none). It is one
 gesture and one undo step, BACK takes it away, and it takes the lowest Off slot like any new band;
 with every slot in use no peak is grabbable and the hover says why. A click on a label without a
-drag makes nothing. **The keyboard** reaches it in the graph's own language: while frozen, with no
+drag makes nothing. A band's point under the pointer comes first, before a peak's marker or label:
+a freeze never hides a band from the pointer. **The keyboard** reaches it in the graph's own language: while frozen, with no
 band selected, ← → walk the labelled peaks instead of the line, and ADD on one makes its bell, then
 VALUE sets its gain as for any band.
 

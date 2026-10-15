@@ -99,21 +99,19 @@ pub struct Frozen {
     pub key: Vec<f32>,
     /// The source's peaks, strongest first.
     pub peaks: Vec<Peak>,
+    /// The frequencies its lines were read at: the graph's grid when it was made.
+    pub freqs: Vec<f32>,
 }
 
 impl Frozen {
-    /// Whether `basis` still describes it, its lines `len` long.
-    pub fn holds(&self, basis: &Basis, len: usize) -> bool {
-        self.basis == *basis && self.points() == len
+    /// Whether `basis` still describes it and the graph still has its grid.
+    pub fn holds(&self, basis: &Basis, freqs: &[f32]) -> bool {
+        self.basis == *basis && self.drawn_on(freqs)
     }
 
-    /// How many points its grabbed line has: the graph's width when it was made.
-    pub fn points(&self) -> usize {
-        if self.source_post {
-            self.post.len()
-        } else {
-            self.pre.len()
-        }
+    /// Whether the graph's grid is the one it was made on: any resize moves the grid.
+    pub fn drawn_on(&self, freqs: &[f32]) -> bool {
+        self.freqs.as_slice() == freqs
     }
 }
 
