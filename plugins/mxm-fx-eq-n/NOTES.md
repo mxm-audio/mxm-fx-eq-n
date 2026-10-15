@@ -269,6 +269,19 @@ and `audition.rs`'s tests hold the lifecycle.
     (`Filter::fresh`), so their shapes hold to Nyquist; the source the same noise as the reference,
     so `D` is the EQ's response alone.
 
+- **Phase, the latency and its restart** (plan §7.7):
+  - *Reported at activation.* nice-plug defers `ActivateContext::set_latency_samples` until
+    `activate` returns, and a latency different from the last one asks the host for a restart once
+    the plugin is active; reporting the same again asks nothing, so the restart does not loop.
+    Through MXM Player (`a_restored_linear_phase_eq_delays_the_render_by_its_latency`) a restored
+    Linear phase's render is the dry one later by exactly the latency, 2,304 frames at Low.
+  - *Asked while active.* `process` reports the asked phase's latency once (`phase_change`); the
+    engine keeps the phase activation built until the host restarts the plugin, and the editor
+    draws the phase in force, not the one asked for. A resolution changed in Zero latency asks
+    nothing.
+  - *The Output card.* Phase and Resolution side by side were 333 px in a 308 px column, so they
+    stack; the window opens at `REFERENCE`, the second column grown by the two rows.
+
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.
 The probe's band curves (owner: "mostly visual noise") are not drawn.

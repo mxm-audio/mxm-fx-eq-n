@@ -5,8 +5,9 @@
 //! through the CLAP state. These hold the shipping boundary: the bundle is classified as an effect
 //! and offers its editor; inserted at Init it changes nothing, to the bit; a restored band is read
 //! back under its slot's own name, is heard, and rings down to exact silence; a dynamic band
-//! (F1) cuts the loud note, and a state from before F1 comes back with every band static; and the
-//! player's bypass restores the dry render to the bit.
+//! (F1) cuts the loud note, and a state from before F1 comes back with every band static; a
+//! restored Linear phase (F6) delays the render by its latency, to the bit; and the player's bypass
+//! restores the dry render to the bit.
 
 use mxm_player_harness::app_harness;
 use mxm_player_harness::harness;
@@ -137,14 +138,19 @@ enum Chain {
     Dynamic,
     /// The high cut, placed Left (plan §7.3): the left is cut and the right is the dry one.
     LeftCut,
+    /// The empty EQ in Linear phase at Low (plan §7.7): the dry render, delayed by the latency.
+    Linear,
 }
+
+/// Linear phase's latency at Low at the harness's 48 kHz: the kernel's centre and a partition.
+const LINEAR_LOW_LATENCY: usize = 2_048 + 256;
 
 /// The restored band, written into the instance's own saved state, values plain as nice-plug
 /// stores them. The default slot is checked first, so a changed state format fails here by name.
 fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     let mut state = save_state(instance);
     let params = state["params"].as_object_mut().expect("parameter map");
-    assert_eq!(params.len(), 290);
+    assert_eq!(params.len(), 292);
     assert_eq!(
         params["type_1"],
         json!({"i32": 0}),
@@ -217,7 +223,7 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
         if chain == Chain::LeftCut {
             let mut state = save_state(&mut effect.instance);
             let params = state["params"].as_object_mut().expect("parameter map");
-            assert_eq!(params.len(), 290);
+            assert_eq!(params.len(), 292);
             params.insert("type_1".into(), json!({"i32": 5}));
             params.insert("slope_1".into(), json!({"i32": 7}));
             params.insert("freq_1".into(), json!({"f32": 50.0}));
@@ -229,6 +235,16 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
             let state = dynamic_bell(&mut effect.instance);
             load_state(&mut effect.instance, &state);
             assert_eq!(text(&mut effect.instance, "Band 1 range"), "-24.0 dB");
+        }
+        if chain == Chain::Linear {
+            let mut state = save_state(&mut effect.instance);
+            let params = state["params"].as_object_mut().expect("parameter map");
+            assert_eq!(params["phase"], json!({"i32": 0}), "Init is Zero latency");
+            params.insert("phase".into(), json!({"i32": 1}));
+            params.insert("resolution".into(), json!({"i32": 0}));
+            load_state(&mut effect.instance, &state);
+            assert_eq!(text(&mut effect.instance, "Phase"), "Linear phase");
+            assert_eq!(text(&mut effect.instance, "Resolution"), "Low");
         }
         effect.bypassed.store(bypassed, Ordering::Relaxed);
     }
@@ -381,6 +397,7 @@ fn an_older_state_restores_every_band_static_through_the_host() {
         ]
         .iter()
         .any(|field| id.starts_with(field))
+            && !["phase", "resolution"].contains(&id.as_str())
     });
     assert_eq!(params.len(), 146);
     load_state(instance, &older);
@@ -410,4 +427,18 @@ fn a_restored_placed_band_is_heard_on_its_channel_only() {
         rms(&channel(&wet, 0)) < rms(&channel(&dry, 0)) / 10.0,
         "the left is cut"
     );
+}
+
+/// **A restored Linear phase delays the render by its latency, to the bit** (plan §7.7): the empty
+/// EQ in Linear phase is a pure delay, so through the player the render is the dry one, later by
+/// exactly the latency activation reported.
+#[test]
+fn a_restored_linear_phase_eq_delays_the_render_by_its_latency() {
+    let Some(dry) = render(Chain::Dry, false) else {
+        return;
+    };
+    let wet = render(Chain::Linear, false).expect("the bundle existed above");
+    let shift = LINEAR_LOW_LATENCY * CHANNELS;
+    assert!(wet[..shift].iter().all(|sample| *sample == 0.0));
+    assert_eq!(&wet[shift..], &dry[..dry.len() - shift]);
 }

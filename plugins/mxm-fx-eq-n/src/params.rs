@@ -1,13 +1,13 @@
 //! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
 //! **Twenty-four band slots, two globals, each slot's dynamics, side-chain switch and placement,
-//! 290 parameters.** The slots are
+//! and the phase mode and its resolution: 292 parameters.** The slots are
 //! nested, so their ids are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`,
 //! `slope_1`, through `slope_24`. The globals are `output` and `gainscale`. F1's dynamics (plan
 //! §7.1) come after them, four per slot: `range_1`, `threshold_1`, `attack_1`, `release_1`, through
 //! `release_24`, so no v1 id moved, the side-chain switches after those (plan §7.2), `key_1`
-//! through `key_24`, and the placements last (plan §7.3), `place_1` through `place_24`. Every id
-//! is permanent. A host keeps its parameter names from
+//! through `key_24`, the placements after those (plan §7.3), `place_1` through `place_24`, and last
+//! F6's `phase` and `resolution` (plan §7.7), not automatable. Every id is permanent. A host keeps its parameter names from
 //! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
 //! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
@@ -28,8 +28,8 @@ use mxm_fx_eq_n_dsp::dynamics::{
     THRESHOLD_DB_MIN,
 };
 use mxm_fx_eq_n_dsp::{
-    Band, Dynamics, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB,
-    Placement, Q_MAX, Q_MIN, SLOTS, Shape, Slope,
+    Band, Dynamics, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Phase,
+    Placement, Q_MAX, Q_MIN, Resolution, SLOTS, Shape, Slope,
 };
 use nice_plug::prelude::*;
 
@@ -74,8 +74,93 @@ pub const KEY_BASE: usize = DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len();
 /// Where the placements start in [`EqParams::erased`]'s order, one per slot (plan §7.3).
 pub const PLACE_BASE: usize = KEY_BASE + SLOTS;
 
+/// Where the phase mode sits in [`EqParams::erased`]'s order, its resolution after it (plan §7.7).
+pub const PHASE_INDEX: usize = PLACE_BASE + SLOTS;
+pub const RESOLUTION_INDEX: usize = PHASE_INDEX + 1;
+
 /// Every host parameter.
-pub const PARAMETERS: usize = PLACE_BASE + SLOTS;
+pub const PARAMETERS: usize = RESOLUTION_INDEX + 1;
+
+/// The phase mode's stepped domain, reserved: 0 Zero latency, 1 Linear phase, 2–7 unassigned,
+/// heard as Zero latency (plan §7.7).
+pub const PHASE_MAX: i32 = 7;
+/// The resolution's: 0 Low, 1 Medium, 2 High, 3–7 unassigned, heard as Medium.
+pub const RESOLUTION_MAX: i32 = 7;
+
+/// The phase modes' names at their values.
+pub const PHASE_NAMES: [&str; 2] = ["Zero latency", "Linear phase"];
+
+/// A resolution's name.
+pub fn resolution_name(resolution: Resolution) -> &'static str {
+    match resolution {
+        Resolution::Low => "Low",
+        Resolution::Medium => "Medium",
+        Resolution::High => "High",
+    }
+}
+
+/// The resolution at a stored value: an unassigned one is Medium.
+pub fn resolution_of(value: i32) -> Resolution {
+    usize::try_from(value)
+        .ok()
+        .and_then(|index| Resolution::ALL.get(index).copied())
+        .unwrap_or_default()
+}
+
+/// The phase at the stored mode and resolution: an unassigned mode is Zero latency.
+pub fn phase_of(mode: i32, resolution: i32) -> Phase {
+    if mode == 1 {
+        Phase::Linear(resolution_of(resolution))
+    } else {
+        Phase::ZeroLatency
+    }
+}
+
+/// The stored values of a phase: its mode and, in Linear phase, its resolution.
+pub fn phase_values(phase: Phase) -> (i32, Option<i32>) {
+    match phase {
+        Phase::ZeroLatency => (0, None),
+        Phase::Linear(resolution) => (
+            1,
+            Resolution::ALL
+                .iter()
+                .position(|other| *other == resolution)
+                .map(|index| index as i32),
+        ),
+    }
+}
+
+/// A stepped parameter's reading and parsing, as nice-plug takes them.
+type ValueToString = Arc<dyn Fn(i32) -> String + Send + Sync>;
+type StringToValue = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
+
+fn stepped_text(names: &'static [&'static str]) -> ValueToString {
+    Arc::new(move |value| {
+        match usize::try_from(value)
+            .ok()
+            .and_then(|index| names.get(index))
+        {
+            Some(name) => (*name).to_owned(),
+            None => format!("Unavailable {value}"),
+        }
+    })
+}
+
+fn stepped_parse(names: &'static [&'static str]) -> StringToValue {
+    Arc::new(move |text| {
+        let text = text.trim();
+        if let Some(index) = names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(text))
+        {
+            return Some(index as i32);
+        }
+        text.strip_prefix("Unavailable ")
+            .and_then(|number| number.parse().ok())
+    })
+}
+
+const RESOLUTION_NAMES: [&str; 3] = ["Low", "Medium", "High"];
 
 /// The placement's stepped domain, reserved now as `type`'s and `slope`'s are: 0 Stereo, 1 Left,
 /// 2 Right, 3 Mid, 4 Side, 5–7 unassigned (plan §7.3).
@@ -421,9 +506,15 @@ pub struct EqParams {
     /// The side-chain switches, after the dynamics so that nothing moved (plan §7.2).
     #[nested(array, group = "Band")]
     pub keys: [KeyParams; SLOTS],
-    /// The placements, last (plan §7.3).
+    /// The placements, after the side-chain switches (plan §7.3).
     #[nested(array, group = "Band")]
     pub places: [PlaceParams; SLOTS],
+    /// The phase mode, last (plan §7.7): not automatable, since a change restarts the plugin.
+    #[id = "phase"]
+    pub phase: IntParam,
+    /// Linear phase's resolution: its kernel's length, and so its latency.
+    #[id = "resolution"]
+    pub resolution: IntParam,
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
@@ -464,6 +555,28 @@ impl Default for EqParams {
             dynamics: std::array::from_fn(DynamicsParams::new),
             keys: std::array::from_fn(KeyParams::new),
             places: std::array::from_fn(PlaceParams::new),
+            phase: IntParam::new(
+                "Phase",
+                0,
+                IntRange::Linear {
+                    min: 0,
+                    max: PHASE_MAX,
+                },
+            )
+            .non_automatable()
+            .with_value_to_string(stepped_text(&PHASE_NAMES))
+            .with_string_to_value(stepped_parse(&PHASE_NAMES)),
+            resolution: IntParam::new(
+                "Resolution",
+                1,
+                IntRange::Linear {
+                    min: 0,
+                    max: RESOLUTION_MAX,
+                },
+            )
+            .non_automatable()
+            .with_value_to_string(stepped_text(&RESOLUTION_NAMES))
+            .with_string_to_value(stepped_parse(&RESOLUTION_NAMES)),
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
         }
@@ -491,7 +604,14 @@ impl EqParams {
         for place in &self.places {
             all.push(&place.placement);
         }
+        all.push(&self.phase);
+        all.push(&self.resolution);
         all
+    }
+
+    /// The phase the parameters ask for (plan §7.7).
+    pub fn phase_mode(&self) -> Phase {
+        phase_of(self.phase.value(), self.resolution.value())
     }
 
     /// [`erased`](Self::erased)'s parameter at `index`, without building the list: the editor
@@ -510,7 +630,9 @@ impl EqParams {
                 self.dynamics[at / DYNAMICS].parameters()[at % DYNAMICS]
             }
             index if index < PLACE_BASE => &self.keys[index - KEY_BASE].side_chain,
-            index => &self.places[(index - PLACE_BASE).min(SLOTS - 1)].placement,
+            index if index < PHASE_INDEX => &self.places[index - PLACE_BASE].placement,
+            PHASE_INDEX => &self.phase,
+            _ => &self.resolution,
         }
     }
 
@@ -543,6 +665,8 @@ impl EqParams {
         for place in &self.places {
             all.push(place.placement.as_ptr());
         }
+        all.push(self.phase.as_ptr());
+        all.push(self.resolution.as_ptr());
         all
     }
 }
@@ -604,6 +728,15 @@ pub fn place_ids() -> &'static [&'static str; SLOTS] {
 /// Whether `id` is a placement, which a preset or state from before §7.3 does not hold.
 pub fn is_place_id(id: &str) -> bool {
     PLACE_IDS.contains(&id)
+}
+
+/// The phase mode's and resolution's ids (plan §7.7).
+pub const PHASE_IDS: [&str; 2] = ["phase", "resolution"];
+
+/// Whether `id` is the phase mode or its resolution, which a preset or state from before F6 does
+/// not hold.
+pub fn is_phase_id(id: &str) -> bool {
+    PHASE_IDS.contains(&id)
 }
 
 /// Frequency: 10 Hz to 30 kHz, skewed so the middle of the travel is near 1 kHz, as a log axis
@@ -746,7 +879,7 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_290() {
+    fn the_ids_are_complete_unique_permanent_and_292() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()
@@ -759,12 +892,14 @@ mod tests {
         want.extend((0..SLOTS).flat_map(|slot| *dynamics_ids(slot)));
         want.extend(key_ids());
         want.extend(place_ids());
-        assert_eq!(want.len(), 290);
+        want.extend(PHASE_IDS);
+        assert_eq!(want.len(), 292);
         // In the host's order: every v1 id where it was, the dynamics after them.
         assert_eq!(ids[..DYNAMICS_BASE], want[..DYNAMICS_BASE]);
         assert_eq!(ids[DYNAMICS_BASE..KEY_BASE], want[DYNAMICS_BASE..KEY_BASE]);
         assert_eq!(ids[KEY_BASE..PLACE_BASE], want[KEY_BASE..PLACE_BASE]);
-        assert_eq!(ids[PLACE_BASE..], want[PLACE_BASE..]);
+        assert_eq!(ids[PLACE_BASE..PHASE_INDEX], want[PLACE_BASE..PHASE_INDEX]);
+        assert_eq!(ids[PHASE_INDEX..], ["phase", "resolution"]);
         for id in &want {
             assert!(ids.iter().any(|other| other == id), "missing {id}");
         }
@@ -791,6 +926,7 @@ mod tests {
         assert!(is_key_id("key_7") && !is_key_id("attack_7") && !is_dynamics_id("key_7"));
         assert_eq!((place_ids()[0], place_ids()[23]), ("place_1", "place_24"));
         assert!(is_place_id("place_7") && !is_place_id("key_7") && !is_key_id("place_7"));
+        assert!(is_phase_id("phase") && is_phase_id("resolution") && !is_phase_id("place_7"));
     }
 
     /// The editor's indices name the same parameters as the host's order.
@@ -809,6 +945,8 @@ mod tests {
         );
         assert_eq!(params.param(KEY_BASE + 6).name(), "Band 7 side chain");
         assert_eq!(params.param(PLACE_BASE + 6).name(), "Band 7 placement");
+        assert_eq!(params.param(PHASE_INDEX).name(), "Phase");
+        assert_eq!(params.param(RESOLUTION_INDEX).name(), "Resolution");
         assert_eq!(params.pointers().len(), PARAMETERS);
     }
 
@@ -824,7 +962,40 @@ mod tests {
     #[test]
     fn the_stepped_values_keep_their_normalised_places() {
         // A saved project holds these numbers. Moving any of them remaps every saved band.
-        let band = &EqParams::default().bands[0];
+        let params = EqParams::default();
+        for (param, max) in [
+            (&params.phase, PHASE_MAX),
+            (&params.resolution, RESOLUTION_MAX),
+        ] {
+            for value in 0..=max {
+                let normalized = param.preview_normalized(value);
+                assert_eq!(
+                    normalized,
+                    value as f32 / max as f32,
+                    "{} {value}",
+                    param.name()
+                );
+                assert_eq!(param.preview_plain(normalized), value);
+            }
+        }
+        // The phase heard at each value: unassigned ones are Zero latency and Medium (plan §7.7).
+        assert_eq!(phase_of(0, 2), Phase::ZeroLatency);
+        assert_eq!(phase_of(1, 0), Phase::Linear(Resolution::Low));
+        assert_eq!(phase_of(1, 2), Phase::Linear(Resolution::High));
+        assert_eq!(phase_of(1, 6), Phase::Linear(Resolution::Medium));
+        assert_eq!(phase_of(5, 0), Phase::ZeroLatency);
+        assert_eq!(
+            (params.phase.to_string(), params.resolution.to_string()),
+            ("Zero latency".to_owned(), "Medium".to_owned())
+        );
+        assert!(params.phase.flags().contains(ParamFlags::NON_AUTOMATABLE));
+        assert!(
+            params
+                .resolution
+                .flags()
+                .contains(ParamFlags::NON_AUTOMATABLE)
+        );
+        let band = &params.bands[0];
         for value in 0..=TYPE_MAX {
             let normalized = band.kind.preview_normalized(value);
             assert_eq!(normalized, value as f32 / TYPE_MAX as f32, "type {value}");

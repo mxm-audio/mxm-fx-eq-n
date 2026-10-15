@@ -702,3 +702,133 @@ fn copying_the_side_chain_never_allocates() {
     }
     assert!(blocks > 0);
 }
+
+// ---- Linear phase (plan §7.7) -----------------------------------------------------------------
+
+/// An activation context that remembers the latency it was told.
+#[derive(Default)]
+struct Activation {
+    latency: std::cell::Cell<Option<u32>>,
+}
+
+impl ActivateContext<MxmFxEqN> for Activation {
+    fn plugin_api(&self) -> PluginApi {
+        PluginApi::Clap
+    }
+    fn execute(&self, _task: ()) {}
+    fn set_latency_samples(&self, samples: u32) {
+        self.latency.set(Some(samples));
+    }
+    fn set_current_voice_capacity(&self, _capacity: u32) {}
+}
+
+fn activated(phase: i32, resolution: i32, rate: f32) -> (MxmFxEqN, Option<u32>) {
+    let mut plugin = MxmFxEqN::default();
+    set_int(&plugin.params.phase, phase);
+    set_int(&plugin.params.resolution, resolution);
+    let mut context = Activation::default();
+    let config = BufferConfig {
+        sample_rate: rate,
+        min_buffer_size: None,
+        max_buffer_size: 1_024,
+        process_mode: ProcessMode::Realtime,
+    };
+    assert!(plugin.activate(&MxmFxEqN::AUDIO_IO_LAYOUTS[2], &config, &mut context));
+    (plugin, context.latency.get())
+}
+
+/// **Activation builds the phase the parameters hold and reports its latency** (plan §7.7), and
+/// publishes it as the phase in force.
+#[test]
+fn activation_reports_the_latency_of_the_phase_held() {
+    use mxm_fx_eq_n_dsp::linear::Sizes;
+    use mxm_fx_eq_n_dsp::{Phase, Resolution};
+    for rate in [48_000.0f32, 96_000.0] {
+        let (plugin, latency) = activated(0, 1, rate);
+        assert_eq!(latency, Some(0), "Zero latency");
+        assert_eq!(plugin.telemetry.phase(), Phase::ZeroLatency);
+        for (value, resolution) in Resolution::ALL.into_iter().enumerate() {
+            let (plugin, latency) = activated(1, value as i32, rate);
+            let want = Sizes::new(f64::from(rate), resolution).latency() as u32;
+            assert_eq!(latency, Some(want), "{resolution:?} at {rate}");
+            assert_eq!(plugin.engine.latency(), want);
+            assert_eq!(plugin.telemetry.phase(), Phase::Linear(resolution));
+        }
+    }
+}
+
+/// **A change while active asks for a restart, and the phase in force plays on** (plan §7.7): its
+/// latency is reported once; the engine and the editor's phase stay as activated until the host
+/// restarts the plugin, which then builds the phase asked for.
+#[test]
+fn a_change_while_active_waits_for_the_restart() {
+    use mxm_fx_eq_n_dsp::linear::Sizes;
+    use mxm_fx_eq_n_dsp::{Phase, Resolution};
+    let mut plugin = prepared(2);
+    assert_eq!(plugin.phase_change(), None);
+    set_int(&plugin.params.phase, 1);
+    let want = Sizes::new(48_000.0, Resolution::Medium).latency() as u32;
+    assert_eq!(plugin.phase_change(), Some(want), "reported once");
+    assert_eq!(plugin.phase_change(), None);
+    // A resolution change in Zero latency asks for nothing; in Linear phase it does.
+    let mut buffers = vec![vec![0.25f32; 512], vec![-0.25f32; 512]];
+    run(&mut plugin, &mut buffers);
+    assert_eq!(
+        buffers[0],
+        vec![0.25f32; 512],
+        "still Zero latency, bit-exact dry"
+    );
+    assert_eq!(plugin.telemetry.phase(), Phase::ZeroLatency);
+    set_int(&plugin.params.resolution, 2);
+    assert_eq!(
+        plugin.phase_change(),
+        Some(Sizes::new(48_000.0, Resolution::High).latency() as u32)
+    );
+    // The host's restart.
+    assert!(plugin.prepare(48_000.0, 2, false));
+    assert_eq!(plugin.telemetry.phase(), Phase::Linear(Resolution::High));
+    assert_eq!(plugin.phase_change(), None);
+}
+
+/// **Through the shell, Linear phase delays an empty EQ by its latency, bit for bit, and a band
+/// rings until its tail is out** (plan §7.7).
+#[test]
+fn linear_phase_through_the_shell() {
+    let mut plugin = MxmFxEqN::default();
+    set_int(&plugin.params.phase, 1);
+    set_int(&plugin.params.resolution, 0);
+    assert!(plugin.prepare(48_000.0, 2, false));
+    let latency = plugin.engine.latency() as usize;
+    let mut seed = 7u32;
+    let input: Vec<f32> = (0..3 * latency).map(|_| 0.5 * noise(&mut seed)).collect();
+    let mut buffers = vec![input.clone(), input.clone()];
+    run(&mut plugin, &mut buffers);
+    assert!(buffers[0][..latency].iter().all(|x| *x == 0.0));
+    assert_eq!(&buffers[0][latency..], &input[..input.len() - latency]);
+
+    set_band(
+        &plugin.params.bands[0],
+        Some(Shape::Bell),
+        1_000.0,
+        9.0,
+        2.0,
+        Slope::Db12,
+    );
+    // Silence in, every block (processing is in place).
+    let silent = |plugin: &mut MxmFxEqN| {
+        let mut quiet = vec![vec![0.0f32; 256], vec![0.0f32; 256]];
+        run(plugin, &mut quiet)
+    };
+    let mut rang = false;
+    for _ in 0..40 {
+        if silent(&mut plugin) == ProcessStatus::KeepAlive {
+            rang = true;
+        }
+    }
+    assert!(rang, "kept alive while the tail was out");
+    assert_eq!(
+        silent(&mut plugin),
+        ProcessStatus::Normal,
+        "then free to sleep"
+    );
+}

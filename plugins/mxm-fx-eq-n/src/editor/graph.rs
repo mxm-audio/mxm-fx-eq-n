@@ -18,9 +18,10 @@
 //!   a bypassed one is hollow. The spectra are a fill (post) and an outline (pre).
 
 use egui::{Color32, Pos2, Rect, Sense, Shape as Painted, Stroke, Ui, Vec2, pos2, vec2};
+use mxm_fx_eq_n_dsp::linear::{Heard, Sizes, heard_lines};
 use mxm_fx_eq_n_dsp::{
-    Band, Cascade, Design, FREQ_MAX, FREQ_MIN, GAIN_RANGE, Placement, Q_MAX, Q_MIN, SLOTS, Shape,
-    design,
+    Band, Cascade, Design, FREQ_MAX, FREQ_MIN, GAIN_RANGE, Phase, Placement, Q_MAX, Q_MIN, SLOTS,
+    Shape, design,
 };
 use mxm_ui::theme::Tokens;
 use mxm_ui::visual::{AXIS_STROKE, CANVAS_RADIUS, EMPHASIS_STROKE};
@@ -250,6 +251,9 @@ pub struct Curves {
     /// the one a click and a drag work on.
     pub moving: Option<Vec<f32>>,
     sample_rate: f64,
+    /// In Linear phase, what the kernel hears and its sizes: the curve drawn is the kernel's own
+    /// (plan §7.7).
+    linear: Option<(Heard, Sizes)>,
 }
 
 /// A band's gain is moving when the heard gain is this far from the drawn one, in dB.
@@ -331,20 +335,52 @@ fn self_responses(
     lines
 }
 
-/// Every line of `self_responses` over `freqs`, in L, R, M, S order.
+/// Each channel's line in Linear phase (plan §7.7): the kernel's own magnitude, the window's
+/// smoothing included, as `self_responses` names the lines.
+fn linear_responses(
+    (heard, sizes): &(Heard, Sizes),
+    placements: &[Placement; SLOTS],
+    freq: f32,
+    sample_rate: f64,
+) -> [Option<(&'static str, f32)>; 4] {
+    let [ll, rr, mm, ss] = heard_lines(heard, f64::from(freq), sample_rate, *sizes);
+    let present = |placed: &dyn Fn(Placement) -> bool| {
+        heard
+            .bands
+            .iter()
+            .zip(placements)
+            .any(|(band, placement)| band.is_some() && placed(*placement))
+    };
+    let channels = present(&|p| matches!(p, Placement::Left | Placement::Right));
+    let mid_side = present(&|p| p.is_mid_side());
+    let db = |value: f64| (20.0 * value.abs().max(1.0e-12).log10()) as f32;
+    let mut lines = [None; 4];
+    if channels {
+        lines[0] = Some(("L", db(ll)));
+        lines[1] = Some(("R", db(rr)));
+    }
+    if mid_side {
+        lines[2] = Some(("M", db(mm)));
+        lines[3] = Some(("S", db(ss)));
+    }
+    lines
+}
+
+/// Every line of `self_responses` over `freqs`, in L, R, M, S order; in Linear phase the kernel's.
 fn lines_over(
     cascades: &[Option<Cascade>; SLOTS],
     placements: &[Placement; SLOTS],
     freqs: &[f32],
     sample_rate: f64,
+    linear: Option<&(Heard, Sizes)>,
 ) -> Vec<Line> {
     let mut lines: Vec<Line> = Vec::new();
     for (index, &freq) in freqs.iter().enumerate() {
-        for (slot, line) in self_responses(cascades, placements, freq, sample_rate)
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
+        let responses = match linear {
+            Some(linear) => linear_responses(linear, placements, freq, sample_rate),
+            None => self_responses(cascades, placements, freq, sample_rate),
+        };
+        for (slot, line) in responses.into_iter().flatten().enumerate() {
             if index == 0 {
                 lines.push(Line {
                     letter: line.0,
@@ -390,7 +426,12 @@ impl Curves {
                 && !band.bypass
                 && (heard - drawn).abs() >= MOVING_DB
         };
-        let any_moving = (0..SLOTS).any(moving_now);
+        // Linear phase holds a dynamic band at its drawn gain (decision 37): nothing moves.
+        let linear_sizes = match app.telemetry.phase() {
+            Phase::Linear(resolution) => Some(Sizes::new(sample_rate, resolution)),
+            Phase::ZeroLatency => None,
+        };
+        let any_moving = linear_sizes.is_none() && (0..SLOTS).any(moving_now);
         let heard_scale = app.telemetry.heard_scale();
         let heard_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
@@ -414,7 +455,15 @@ impl Curves {
             .map(|index| axes.rect.left() + axes.rect.width() * index as f32 / count as f32)
             .collect();
         let freqs: Vec<f32> = xs.iter().map(|&x| axes.freq(x)).collect();
+        let linear = linear_sizes.map(|sizes| {
+            let mut heard = Heard::EMPTY;
+            for (slot, cascade) in cascades.iter().enumerate() {
+                heard.bands[slot] = cascade.map(|cascade| (cascade, placements[slot]));
+            }
+            (heard, sizes)
+        });
         let mut curves = Curves {
+            linear,
             cascades,
             placements,
             channels: Vec::new(),
@@ -434,12 +483,13 @@ impl Curves {
                 &curves.placements,
                 &curves.freqs,
                 sample_rate,
+                curves.linear.as_ref(),
             );
             if any_moving {
                 let heard: [Option<Cascade>; SLOTS] =
                     std::array::from_fn(|slot| heard_cascades[slot].or(curves.cascades[slot]));
                 curves.moving_channels =
-                    lines_over(&heard, &curves.placements, &curves.freqs, sample_rate);
+                    lines_over(&heard, &curves.placements, &curves.freqs, sample_rate, None);
             }
         }
         curves.composite = curves
@@ -474,6 +524,17 @@ impl Curves {
     /// The line a click and the keyboard work on at `freq`: the one curve, or with placed bands
     /// the first channel line.
     pub fn composite_at(&self, freq: f32) -> f32 {
+        if let Some(linear) = &self.linear {
+            if !self.channels.is_empty() {
+                return linear_responses(linear, &self.placements, freq, self.sample_rate)
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .map_or(0.0, |(_, db)| db);
+            }
+            let [ll, ..] = heard_lines(&linear.0, f64::from(freq), self.sample_rate, linear.1);
+            return (20.0 * ll.abs().max(1.0e-12).log10()) as f32;
+        }
         if !self.channels.is_empty() {
             return self_responses(&self.cascades, &self.placements, freq, self.sample_rate)
                 .into_iter()
@@ -577,9 +638,11 @@ impl EqApp {
         let band = self.band_now(slot);
         let range = self.dynamics_now(slot).range_db;
         // A band the layout does not hear moves nothing, so it has no range to show (plan §7.3).
+        // Linear phase holds it at its drawn gain (decision 37), so it reaches nowhere.
         if !band.shape.is_some_and(|shape| shape.is_dynamic())
             || range == 0.0
             || !self.placement_heard(slot)
+            || matches!(self.telemetry.phase(), Phase::Linear(_))
         {
             return None;
         }

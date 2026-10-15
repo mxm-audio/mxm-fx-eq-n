@@ -96,6 +96,10 @@ pub enum Leaf {
     MatchHeard,
     /// Makes the match's bands.
     MatchApply,
+    /// Zero latency or Linear phase (plan §7.7).
+    PhaseMode,
+    /// Linear phase's resolution.
+    LinearResolution,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -519,11 +523,28 @@ pub fn band_title(app: &EqApp) -> String {
 }
 
 pub fn output_tree(app: &EqApp) -> Node<Leaf> {
+    let names = |all: &[&str]| all.iter().map(|name| (*name).to_owned()).collect();
     stack(vec![
         slider_leaf(&app.params, 0, Slider::Output),
         slider_leaf(&app.params, 0, Slider::GainScale),
+        selector_leaf(Leaf::PhaseMode, "Phase", names(&crate::params::PHASE_NAMES)),
+        selector_leaf(
+            Leaf::LinearResolution,
+            "Resolution",
+            names(&LINEAR_RESOLUTIONS),
+        ),
     ])
 }
+
+const LINEAR_RESOLUTIONS: [&str; 3] = ["Low", "Medium", "High"];
+const PHASE_ZERO_DESCRIPTION: &str = "Zero latency keeps the sound on time, its phase turning near \
+     each band as an analogue equaliser's does. Linear phase turns no phase, so a Mid or Side band \
+     moves nothing across and a steep cut keeps a hit's shape, at a delay; a narrow low cut then \
+     rings before the note as well as after.";
+const RESOLUTION_DESCRIPTION: &str = "How finely Linear phase follows narrow bands: Low delays the \
+     sound least, High holds a narrow low band best and delays most.";
+const PENDING_DESCRIPTION: &str =
+    " The change is heard once the host restarts the equaliser, which most do at once.";
 
 const SHOW_OPTIONS: [&str; 3] = ["Pre", "Post", "Both"];
 const RESOLUTION_OPTIONS: [&str; 3] = ["Low", "Medium", "High"];
@@ -1120,6 +1141,7 @@ impl EqApp {
                     self.apply_proposals(&all, false);
                 }
             }
+            Leaf::PhaseMode | Leaf::LinearResolution => self.paint_phase(ui, tokens, leaf),
             Leaf::Amount => self.paint_view_slider(ui, tokens, rect, ViewSlider::FindAmount),
             Leaf::MatchAmount => self.paint_view_slider(ui, tokens, rect, ViewSlider::MatchAmount),
             Leaf::Detail => self.paint_view_slider(ui, tokens, rect, ViewSlider::Detail),
@@ -1222,6 +1244,90 @@ impl EqApp {
             Leaf::Show | Leaf::Resolution | Leaf::Speed | Leaf::Tilt => {
                 self.paint_setting(ui, tokens, leaf);
             }
+        }
+    }
+
+    /// Phase and Resolution (plan §7.7): stepped parameters, not automatable, each change asked
+    /// for at once and heard after the host's restart. Resolution is offered only in Linear phase.
+    /// Their hovers give the latency and say when a change still waits.
+    fn paint_phase(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf) {
+        use mxm_fx_eq_n_dsp::Phase;
+        let asked = self.phase_asked();
+        let in_force = self.telemetry.phase();
+        let rate = self.telemetry.sample_rate();
+        let latency_ms = |phase: Phase| match phase {
+            Phase::ZeroLatency => 0.0,
+            Phase::Linear(resolution) => {
+                mxm_fx_eq_n_dsp::linear::Sizes::new(f64::from(rate), resolution).latency() as f32
+                    * 1_000.0
+                    / rate
+            }
+        };
+        let pending = if asked != in_force {
+            PENDING_DESCRIPTION
+        } else {
+            ""
+        };
+        let (index, key, label, names, mut current, enabled, description) = match leaf {
+            Leaf::PhaseMode => (
+                crate::params::PHASE_INDEX,
+                "phase",
+                "Phase",
+                &crate::params::PHASE_NAMES[..],
+                usize::from(matches!(asked, Phase::Linear(_))),
+                true,
+                match asked {
+                    Phase::ZeroLatency => format!("{PHASE_ZERO_DESCRIPTION}{pending}"),
+                    Phase::Linear(_) => format!(
+                        "{PHASE_ZERO_DESCRIPTION} Now the sound is {:.0} ms late; a mix plays it \
+                         on time, but monitoring live through it does not.{pending}",
+                        latency_ms(asked)
+                    ),
+                },
+            ),
+            _ => {
+                let resolution = match asked {
+                    Phase::Linear(resolution) => resolution,
+                    Phase::ZeroLatency => crate::params::resolution_of(
+                        self.params
+                            .resolution
+                            .preview_plain(self.normalised_now(crate::params::RESOLUTION_INDEX)),
+                    ),
+                };
+                (
+                    crate::params::RESOLUTION_INDEX,
+                    "resolution",
+                    "Resolution",
+                    &LINEAR_RESOLUTIONS[..],
+                    mxm_fx_eq_n_dsp::Resolution::ALL
+                        .iter()
+                        .position(|other| *other == resolution)
+                        .unwrap_or(1),
+                    matches!(asked, Phase::Linear(_)),
+                    format!("{RESOLUTION_DESCRIPTION}{pending}"),
+                )
+            }
+        };
+        let before = current;
+        let name = self.params.param(index).name();
+        let changed = navigation::at(ui, key, |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                mxm_ui::control::selector_named(
+                    ui,
+                    tokens,
+                    label,
+                    name,
+                    names,
+                    &mut current,
+                    None,
+                    None,
+                    &description,
+                )
+            })
+            .inner
+        });
+        if changed && current != before {
+            self.set_phase_value(index, current as i32);
         }
     }
 

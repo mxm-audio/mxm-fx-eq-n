@@ -225,3 +225,18 @@ real DAWs belong to E2 and E5.
 20.3–20.7 % after, about 2 ns per band per sample for the stage test every arm now passes. **24 mid
 bells** take 9.6–12.0 % at 192 kHz: a placed band runs one channel, and the mid/side stage's
 encoding is two adds a sample. Both inside the 35 % steady budget (plan §3.5).
+
+## Linear phase, measured (F6, 2026-10-15)
+
+`eq_n_cost` in release, one machine: **linear, steady** (High, 24 bells across Left, Right, Mid and
+Side, four kernels) takes 0.5 % of real time at 44.1–48 kHz and 1.9 % at 192 kHz; **linear,
+moving** (every band moved every block, so a kernel asked for at every boundary and two banks
+running through the fades) 1.2–1.3 % and 2.9 %, the IIR control intervals included. **A bank's
+design** on the design thread: 2.0–2.1 ms at 44.1–48 kHz, 5.1 ms at 192 kHz. All far inside brief
+A6's 35 % and 70 %.
+
+Found building it: the kernel's response at each bin is exactly the sampled magnitude smoothed
+¼, ½, ¼ (the periodic Hann's transform), so `heard_lines` draws what the kernel does from the
+designs alone, within 0.1 dB between bins for bands wider than eight bins
+(`the_drawn_curve_is_what_the_kernel_does`); the convolution in `f32` puts a kernel change within
+−90 dB of a fresh convolution of the whole input once its fade is done.

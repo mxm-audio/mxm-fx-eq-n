@@ -493,6 +493,10 @@
       "v": 0.5,
       "text": "0.00 dB"
     },
+    "phase": {
+      "v": 0.0,
+      "text": "Zero latency"
+    },
     "place_1": {
       "v": 0.0,
       "text": "Stereo"
@@ -876,6 +880,10 @@
     "release_9": {
       "v": 0.51501364,
       "text": "150 ms"
+    },
+    "resolution": {
+      "v": 0.14285715,
+      "text": "Medium"
     },
     "slope_1": {
       "v": 0.13333334,

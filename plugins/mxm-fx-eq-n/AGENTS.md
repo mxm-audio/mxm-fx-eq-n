@@ -11,9 +11,9 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
 and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's per-band stereo placement
-(plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan §7.5) and F5's EQ
-match (plan §7.6). DAW and listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's, F4.3's and
-F5.3's. No control map (plan §6): no collection role fits on-demand bands.
+(plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan §7.5), F5's EQ
+match (plan §7.6) and F6's phase modes (plan §7.7). DAW and listening checks are E5's, F1.5's,
+SC.4's, F2.4's, F3.4's, F4.3's, F5.3's and F6.4's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -44,7 +44,7 @@ F5.3's. No control map (plan §6): no collection role fits on-demand bands.
   plain stereo and mono, which MXM Player selects. A Stereo band treats both channels alike; a
   placed band works on its own channel (plan §7.3). No note port, so no developer channel
   (`plugins/AGENTS.md`, *A developer channel*).
-- **290 permanent parameters** (`params.rs`):
+- **292 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
@@ -55,11 +55,14 @@ F5.3's. No control map (plan §6): no collection role fits on-demand bands.
     in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved;
   - the side-chain switches after them (plan §7.2), `key_1` … `key_24`, "Band 7 side chain", from
     `params::KEY_BASE`;
-  - the placements last (plan §7.3), `place_1` … `place_24`, "Band 7 placement", stepped 0–7
+  - the placements (plan §7.3), `place_1` … `place_24`, "Band 7 placement", stepped 0–7
     (0 Stereo, 1 Left, 2 Right, 3 Mid, 4 Side, 5–7 unassigned, read *Unavailable n*, heard as
-    Stereo), from `params::PLACE_BASE`.
+    Stereo), from `params::PLACE_BASE`;
+  - F6's phase last (plan §7.7), **not automatable**: `phase` stepped 0–7 (0 Zero latency,
+    1 Linear phase, the rest heard as Zero latency) and `resolution` 0–7 (0 Low, 1 Medium,
+    2 High, the rest heard as Medium), at `params::PHASE_INDEX` and `RESOLUTION_INDEX`.
 
-  `the_ids_are_complete_unique_permanent_and_290` holds them.
+  `the_ids_are_complete_unique_permanent_and_292` holds them.
 - **A state or preset from before F1, §7.2 or §7.3 leaves every band static, on its own input, in
   Stereo**: a preset through `default_missing_legacy_parameter`, a host state through `filter_state`
   (`preset::add_missing_at_defaults`), which also extends a loaded preset's baseline so it stays
@@ -140,6 +143,13 @@ transaction.
 - **Activation below the DSP's `MIN_SAMPLE_RATE`**, or at a rate that is not finite, is refused.
 - **Activation and `reset` seed the engine from the parameters at once** (`Engine::reset`), so a
   saved EQ is heard from its first sample rather than fading in from dry.
+- **One latency per activation** (plan §7.7; the kit's *Latency is fixed*): activation builds the
+  engine in the phase the parameters hold (`Engine::with_phase`, Linear phase's kernel primed
+  before the first sample) and reports its latency (`ActivateContext::set_latency_samples`); a
+  phase asked for while active is reported from `process`, which nice-plug turns into the host's
+  restart, the phase in force playing on until then (MXM Player's headless path never restarts,
+  so there it waits for the next activation). `Telemetry::phase` publishes the phase in force;
+  `deactivate` drops Linear phase's engine and its design thread.
 
 ## The editor (plan §5) — [NOTES.md § The editor in full](NOTES.md#the-editor-in-full)
 
@@ -192,6 +202,11 @@ transaction.
   dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
   the GUI thread pays only for listening and a copy of the evidence, inside
   `spectrum::BUDGET_MS` (`finder_cost`).
+- **Phase** (plan §7.7, decisions 35–37; NOTES, *Phase*): the Output card's **Phase** and
+  **Resolution** selectors, each change one undo step, Resolution offered only in Linear phase;
+  their hovers give the latency and say when a change waits for the host's restart. **The drawn
+  curve follows the phase in force** (`Telemetry::phase`): in Linear phase the kernel's own
+  magnitude (`linear::heard_lines`), and a dynamic band shows no reach there, being held.
 - **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, under
   Resonances, offered only with the analyser on and the side-chain port; Find, Match and Freeze
   each end the others; it is never saved. It listens to the side chain and the pre-EQ input
@@ -209,7 +224,8 @@ transaction.
   offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
   ringing down to exact silence, a dynamic band cutting the loud note, a state from before F1
   restored static through the wrapper's own `filter_state`, the EQ on the plain stereo
-  configuration, and the player's bypass bit-exact dry. They read this repository's own
+  configuration, a restored Linear phase delaying the render by its latency to the bit, and the
+  player's bypass bit-exact dry. They read this repository's own
   `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle there first).
 
 # Work Guidance

@@ -5,7 +5,7 @@
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its
 other findings, all accepted and applied here. **Signed by the owner** (2026-10-15, decisions
-35–37 as proposed); F6.0 done, F6.1–F6.3 next. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
+35–37 as proposed); F6.0 done. F6.1–F6.3 built (2026-10-15); their code review is next. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
 §7.6, decisions 31–34). **Its design approved by the agent-loop in round 3** (2026-10-15): rounds
 1–2 filed five blockers — the level taken out after the Amount, the EQ counted through the source's
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
@@ -1455,15 +1455,16 @@ design (`write_the_factory_presets`), Init and every preset Zero latency and Med
 
 **The DSP crate** gains its first runtime dependency, mxm-kit's **`mxm-fft`** (MSRV 1.87, MIT,
 `realfft` beneath): the owner's decision 6 rules one shared FFT, never another in a crate. The
-convolver and the kernel design live in `crates/mxm-fx-eq-n-dsp/src/linear.rs`, allocated in
-`Engine::new` for the rate's largest resolution and never on the audio thread.
+convolver and the kernel design live in `crates/mxm-fx-eq-n-dsp/src/linear.rs`, allocated when
+activation builds the engine for Linear phase (`Engine::with_phase`), at its resolution, never on
+the audio thread; `Engine::new` stays Zero latency.
 
-**In the editor**: **Phase** and **Resolution** selectors share a row in the Output card,
-Resolution enabled only in Linear phase; Phase's hover gives the latency in milliseconds. **The
+**In the editor**: **Phase** and **Resolution** selectors in the Output card, one row each (side
+by side they do not fit the column), Resolution enabled only in Linear phase; Phase's hover gives the latency in milliseconds. **The
 drawn curve is the heard curve** in both modes: in Linear phase the editor draws the kernel's
 own magnitude, from the DSP's design function, so a band narrower than the resolution reads as it
 sounds: the kernel the current settings make, which the bank heard reaches within the update
-intervals above. The Output card grows by its row; the window opens taller, hugged, inside the budget.
+intervals above. The Output card grows by two rows; the window opens taller, hugged, inside the budget.
 
 **Cost** (plan §3.5, brief A6's 35 % steady and 70 % moving): at 192 kHz, High, four kernels and
 every slot in use, in release, by the cost example (`eq_n_cost`), not by wall-clock assertions in
@@ -1499,9 +1500,9 @@ card's row in the opening size and the keyboard; the cost at 192 kHz.
 | Step | Delivers | Gate |
 |---|---|---|
 | **F6.0** | Decisions 35–37, signed. **Done** (2026-10-15) | Owner |
-| **F6.1** | The DSP: `linear.rs` (the kernel design, the 2×2 matrix, the partitioned convolver and its one delay line, the banks, the design thread and its handoff, the offline wait, the crossfade), the engine's mode and its latency, `mxm-fft`; the DSP's `AGENTS.md` and `NOTES.md` (the cost) | Unit tests at the end; the cost measurement |
-| **F6.2** | The shell: `phase` and `resolution` (292 parameters), activation's report, the change reported from `process`, the mode in force published, the tail, old states and presets, the factory set regenerated; the host test of a linear-phase EQ through MXM Player | Unit and host tests at the end |
-| **F6.3** | The editor: the Output card's row, the drawn curve in Linear phase as in force, the hovers; the DOX: the plugin's `AGENTS.md` and `NOTES.md`; the root `AGENTS.md`'s MSRV row (the DSP's one runtime dependency) and the parameter count in its and `plugins/AGENTS.md`'s index rows; this plan's status | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, its DSP and host tests, `cargo test` on both; one agent-loop review of F6.1–F6.3 |
+| **F6.1** | The DSP: `linear.rs` (the kernel design, the 2×2 matrix, the partitioned convolver and its one delay line, the banks, the design thread and its handoff, the offline wait, the crossfade), the engine's mode and its latency, `mxm-fft`; the DSP's `AGENTS.md` and `NOTES.md` (the cost). **Built** (2026-10-15), with the DSP's Linear-phase tests; its cost is `eq_n_cost`'s, in the DSP's `NOTES.md` | Unit tests at the end; the cost measurement |
+| **F6.2** | The shell: `phase` and `resolution` (292 parameters), activation's report, the change reported from `process`, the mode in force published, the tail, old states and presets, the factory set regenerated; the host test of a linear-phase EQ through MXM Player. **Built** (2026-10-15), with the shell's tests and the host test | Unit and host tests at the end |
+| **F6.3** | The editor: the Output card's row, the drawn curve in Linear phase as in force, the hovers; the DOX: the plugin's `AGENTS.md` and `NOTES.md`; the root `AGENTS.md`'s MSRV row (the DSP's one runtime dependency) and the parameter count in its and `plugins/AGENTS.md`'s index rows; this plan's status. **Built** (2026-10-15), with the editor's tests | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, its DSP and host tests, `cargo test` on both; one agent-loop review of F6.1–F6.3 |
 | **F6.4** | The owner by ear, in Bitwig: Linear phase on a low cut and on a Mid band, the restart on a change | Owner sign-off |
 
 ## 8. What must not break

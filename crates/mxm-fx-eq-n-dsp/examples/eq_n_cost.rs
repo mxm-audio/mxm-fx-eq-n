@@ -27,8 +27,14 @@
 //!   bell with Range −30, Threshold −40, Attack 0.5 ms and Release 10 ms, spread from 100 Hz up,
 //!   on noise whose level drops 30 dB every other block, so every band's detector runs and its gain
 //!   moves and is redesigned all the time.
+//! - **linear, steady** (plan §7.7): Linear phase at High, 24 bells across Left, Right, Mid and
+//!   Side, so four kernels run on the delay line.
+//! - **linear, moving**: the same with every band's frequency moved every block, so a kernel is
+//!   asked for at every update boundary and two banks run through most fades.
+//! - **a bank's design**: the design thread's time for one bank of four kernels at High, as
+//!   activation's `Engine::prime` takes it.
 
-use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, Placement, SLOTS, Shape, Slope};
+use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, Phase, Placement, Resolution, SLOTS, Shape, Slope};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -43,6 +49,52 @@ enum Load {
     Dynamic,
     /// 24 bells on the mid: the mid/side stage at its fullest (plan §7.3).
     Mid,
+    LinearSteady,
+    LinearMoving,
+}
+
+/// Linear phase at High with 24 bells across the four placements: four kernels.
+fn linear_engine(rate: f64) -> Box<Engine> {
+    let mut engine = Box::new(Engine::with_phase(rate, Phase::Linear(Resolution::High), 2));
+    for slot in 0..SLOTS {
+        engine.set_band(slot, linear_bell(slot, 1.0));
+        engine.set_placement(
+            slot,
+            [
+                Placement::Left,
+                Placement::Right,
+                Placement::Mid,
+                Placement::Side,
+            ][slot % 4],
+        );
+    }
+    engine
+}
+
+fn linear_bell(slot: usize, wobble: f32) -> Band {
+    Band {
+        shape: Some(Shape::Bell),
+        bypass: false,
+        freq: 100.0 * 1.25f32.powi(slot as i32) * wobble,
+        gain_db: 3.0,
+        q: 1.0,
+        slope: Slope::Db12,
+    }
+}
+
+/// The time to design one bank, as `Engine::prime` takes it: the best of five, in milliseconds.
+fn design_ms(rate: f64) -> f64 {
+    let mut engine = linear_engine(rate);
+    (0..5)
+        .map(|attempt| {
+            for slot in 0..SLOTS {
+                engine.set_band(slot, linear_bell(slot, 1.0 + 0.01 * attempt as f32));
+            }
+            let start = Instant::now();
+            engine.prime();
+            start.elapsed().as_secs_f64() * 1_000.0
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 fn cut(freq: f32, slope: Slope) -> Band {
@@ -61,8 +113,15 @@ fn shaped(shape: Shape, freq: f32, slope: Slope) -> Band {
 }
 
 fn measure(load: Load, rate: f64) -> f64 {
-    let mut engine = Box::new(Engine::new(rate));
-    for slot in 0..SLOTS {
+    let linear = matches!(load, Load::LinearSteady | Load::LinearMoving);
+    let mut engine = if linear {
+        let mut engine = linear_engine(rate);
+        engine.prime();
+        engine
+    } else {
+        Box::new(Engine::new(rate))
+    };
+    for slot in (0..SLOTS).filter(|_| !linear) {
         let band = match load {
             Load::Parked => Band {
                 shape: Some(Shape::Bell),
@@ -174,6 +233,12 @@ fn measure(load: Load, rate: f64) -> f64 {
                         );
                     }
                 }
+                Load::LinearMoving => {
+                    let wobble = if index % 2 == 0 { 1.1 } else { 0.9 };
+                    for slot in 0..SLOTS {
+                        engine.set_band(slot, linear_bell(slot, wobble));
+                    }
+                }
                 Load::Gliding => {
                     let wobble = if index % 2 == 0 { 1.5 } else { 0.7 };
                     for slot in 0..SLOTS {
@@ -215,6 +280,8 @@ fn main() {
         ("8 bells", Load::Typical),
         ("24 dynamic bells", Load::Dynamic),
         ("24 mid bells", Load::Mid),
+        ("linear, steady", Load::LinearSteady),
+        ("linear, moving", Load::LinearMoving),
     ] {
         print!("{label:<18}");
         for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {
@@ -227,4 +294,9 @@ fn main() {
         }
         println!();
     }
+    print!("{:<18}", "a bank's design");
+    for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {
+        print!(" {:>17.1} ms  ", design_ms(rate));
+    }
+    println!();
 }

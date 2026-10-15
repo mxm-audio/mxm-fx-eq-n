@@ -33,6 +33,10 @@ pub struct Telemetry {
     gains: [[AtomicU32; 2]; mxm_fx_eq_n_dsp::SLOTS],
     /// The gain scale the gains are heard under now, as `f32` bits.
     heard_scale: AtomicU32,
+    /// The phase in force (plan §7.7), set at activation: 0 Zero latency, else 1 + the
+    /// resolution's place. A change asked for waits for the host's restart; the editor draws
+    /// what runs.
+    phase: AtomicU32,
 }
 
 impl Default for Telemetry {
@@ -47,6 +51,7 @@ impl Default for Telemetry {
             output: [PeakMeter::new(), PeakMeter::new()],
             gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
             heard_scale: AtomicU32::new(1f32.to_bits()),
+            phase: AtomicU32::new(0),
         }
     }
 }
@@ -108,6 +113,33 @@ impl Telemetry {
     /// Whether the audio thread should hand blocks to the analyser at all.
     pub fn analyser_wanted(&self) -> bool {
         self.connected() && self.analyser_on.load(Ordering::Relaxed)
+    }
+
+    /// The phase activation built (plan §7.7).
+    pub fn publish_phase(&self, phase: mxm_fx_eq_n_dsp::Phase) {
+        let code = match phase {
+            mxm_fx_eq_n_dsp::Phase::ZeroLatency => 0,
+            mxm_fx_eq_n_dsp::Phase::Linear(resolution) => {
+                1 + mxm_fx_eq_n_dsp::Resolution::ALL
+                    .iter()
+                    .position(|other| *other == resolution)
+                    .unwrap_or(1) as u32
+            }
+        };
+        self.phase.store(code, Ordering::Relaxed);
+    }
+
+    /// The phase in force: what the audio runs, whatever a parameter asks for until the restart.
+    pub fn phase(&self) -> mxm_fx_eq_n_dsp::Phase {
+        match self.phase.load(Ordering::Relaxed) {
+            0 => mxm_fx_eq_n_dsp::Phase::ZeroLatency,
+            code => mxm_fx_eq_n_dsp::Phase::Linear(
+                mxm_fx_eq_n_dsp::Resolution::ALL
+                    .get(code as usize - 1)
+                    .copied()
+                    .unwrap_or_default(),
+            ),
+        }
     }
 
     pub fn publish_side_chain_port(&self, present: bool) {

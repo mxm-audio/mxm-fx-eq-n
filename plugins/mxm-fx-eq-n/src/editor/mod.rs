@@ -48,7 +48,7 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_532, 938);
+pub const REFERENCE: (u32, u32) = (1_532, 1_010);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
@@ -783,6 +783,23 @@ impl EqApp {
     /// Whether the layout hears a slot's placement: in mono only Stereo is (plan §7.3).
     pub(crate) fn placement_heard(&self, slot: usize) -> bool {
         !self.telemetry.mono() || self.placement_now(slot) == mxm_fx_eq_n_dsp::Placement::Stereo
+    }
+
+    /// The phase the parameters ask for, as this editor last set them (plan §7.7).
+    pub(crate) fn phase_asked(&self) -> mxm_fx_eq_n_dsp::Phase {
+        let plain =
+            |index: usize, param: &IntParam| param.preview_plain(self.normalised_now(index));
+        crate::params::phase_of(
+            plain(crate::params::PHASE_INDEX, &self.params.phase),
+            plain(crate::params::RESOLUTION_INDEX, &self.params.resolution),
+        )
+    }
+
+    /// The phase mode (0 Zero latency, 1 Linear phase) or Linear phase's resolution, as one undo
+    /// step: asked for, and heard once the host restarts the plugin (plan §7.7).
+    pub(crate) fn set_phase_value(&mut self, index: usize, value: i32) {
+        self.close_open();
+        self.instant(&[(index, self.normalised(index, value as f32))]);
     }
 
     pub(crate) fn set_placement(&mut self, slot: usize, placement: mxm_fx_eq_n_dsp::Placement) {

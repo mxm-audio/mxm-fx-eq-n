@@ -149,7 +149,7 @@ locally (*Verification*).
 
 | Crate | MSRV | Why |
 |---|---|---|
-| `crates/mxm-fx-eq-n-dsp` | **1.87** | Zero runtime dependencies: the matched SVF bands, transitions, solo and the series cascade. Measurement tools are dev-only. **Verified on 1.87**, library, tests and examples |
+| `crates/mxm-fx-eq-n-dsp` | **1.87** | One runtime dependency, mxm-kit's `mxm-fft` (MSRV 1.87, for Linear phase; decision 6): the matched SVF bands, transitions, solo, the series cascade and F6's linear-phase convolver. Measurement tools are dev-only. **Verified on 1.87**, library, tests and examples |
 | `plugins/mxm-fx-eq-n` | **1.95** | Its editor pulls in egui; depends on `mxm-fx-eq-n-dsp`, which stays at 1.87, and mxm-kit's `mxm-fft` (1.87) for the analyser |
 
 ## Licensing
@@ -189,4 +189,4 @@ later, together (the owner, 2026-10-06). CI runs the same on Windows, macOS and 
 |---|---|
 | [`crates/mxm-fx-eq-n-dsp/AGENTS.md`](crates/mxm-fx-eq-n-dsp/AGENTS.md) | The matched SVF bands, the cramping choice, transitions and parking, solo, precision and the measured cost |
 | [`plugins/AGENTS.md`](plugins/AGENTS.md) | Shared plugin conventions: nice-plug, the init patch, presets, `process()` rules, the editor contract, and installing a bundle in a DAW |
-| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 290 permanent parameters and their reserved stepped domains, F1's dynamic bands and their side chain, F2's stereo placement, the empty-EQ Init, solo, the analyser and meter, F3's freeze and grab, F4's resonance finder, F5's EQ match, the graph-and-columns editor, the graph as a surface, plain undo, the factory set, the host tests |
+| [`plugins/mxm-fx-eq-n/AGENTS.md`](plugins/mxm-fx-eq-n/AGENTS.md) | Identity, the 292 permanent parameters and their reserved stepped domains, F1's dynamic bands and their side chain, F2's stereo placement, the empty-EQ Init, solo, the analyser and meter, F3's freeze and grab, F4's resonance finder, F5's EQ match, F6's phase modes and latency, the graph-and-columns editor, the graph as a surface, plain undo, the factory set, the host tests |

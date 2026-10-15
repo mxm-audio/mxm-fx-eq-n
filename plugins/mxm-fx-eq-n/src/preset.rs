@@ -11,8 +11,8 @@ use mxm_fx_eq_n_dsp::SLOTS;
 pub use mxm_preset::{Category, Preset, PresetIdentity};
 
 use crate::params::{
-    DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, band_ids, dynamics_ids, is_dynamics_id,
-    is_key_id, is_place_id, key_ids, place_ids,
+    DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, PHASE_IDS, band_ids, dynamics_ids,
+    is_dynamics_id, is_key_id, is_phase_id, is_place_id, key_ids, place_ids,
 };
 
 impl mxm_preset::Instrument for EqParams {
@@ -41,15 +41,17 @@ impl mxm_preset::Instrument for EqParams {
         for (id, place) in place_ids().iter().zip(&self.places) {
             out.push((*id, &place.placement as &dyn mxm_params::ErasedParam));
         }
+        out.push((PHASE_IDS[0], &self.phase));
+        out.push((PHASE_IDS[1], &self.resolution));
         out
     }
 
     /// **F1's dynamics are older presets' defaults** (plan §7.1): a preset written before them
     /// leaves every band static, not keeping a Range the instance had.
     /// The side-chain switches and placements too (plan §7.2, §7.3): an older preset leaves every
-    /// band on its own input, in Stereo.
+    /// band on its own input, in Stereo; and the phase (plan §7.7): Zero latency, Medium.
     fn default_missing_legacy_parameter(&self, id: &str) -> bool {
-        is_dynamics_id(id) || is_key_id(id) || is_place_id(id)
+        is_dynamics_id(id) || is_key_id(id) || is_place_id(id) || is_phase_id(id)
     }
 
     fn identity(&self) -> &RwLock<PresetIdentity> {
@@ -61,8 +63,8 @@ impl mxm_preset::Instrument for EqParams {
     }
 }
 
-/// **A host state from before F1, §7.2 or §7.3 restores every band static, on its own input, in
-/// Stereo**, for `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each
+/// **A host state from before F1, §7.2, §7.3 or F6 restores every band static, on its own input, in
+/// Stereo, the EQ in Zero latency** (Medium resolution), for `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each
 /// missing dynamics, side-chain or placement id is written at its default, and a loaded preset's
 /// baseline that lacks it gains its normalised default, so the preset keeps its clean or Modified
 /// meaning (`mxm_preset::add_switches_off`'s rule, at each field's own default).
@@ -95,6 +97,13 @@ pub fn add_missing_at_defaults(state: &mut nice_plug::prelude::PluginState) {
                     .map(|id| (*id, ParamValue::Bool(false), 0.0)),
             );
             all.extend(place_ids().iter().map(|id| (*id, ParamValue::I32(0), 0.0)));
+            // F6's phase Zero latency, its resolution Medium (plan §7.7).
+            all.push((PHASE_IDS[0], ParamValue::I32(0), 0.0));
+            all.push((
+                PHASE_IDS[1],
+                ParamValue::I32(1),
+                1.0 / crate::params::RESOLUTION_MAX as f32,
+            ));
             all
         });
     for (id, plain, _) in DEFAULTS.iter() {
@@ -716,9 +725,9 @@ mod dynamics_migration {
     fn an_older_preset_leaves_every_band_static() {
         let params = EqParams::default();
         let mut older = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        older
-            .params
-            .retain(|id, _| !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id));
+        older.params.retain(|id, _| {
+            !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id) && !is_phase_id(id)
+        });
         assert_eq!(older.params.len(), 146);
         let (writes, problems) = older.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -736,7 +745,8 @@ mod dynamics_migration {
         );
         // And one from F1, before the side chain: every band on its own input.
         let mut f1 = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        f1.params.retain(|id, _| !is_key_id(id) && !is_place_id(id));
+        f1.params
+            .retain(|id, _| !is_key_id(id) && !is_place_id(id) && !is_phase_id(id));
         assert_eq!(f1.params.len(), 242);
         let (writes, problems) = f1.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -748,7 +758,9 @@ mod dynamics_migration {
         assert_eq!(keys, vec![0.0; SLOTS]);
         // And one from the side chain, before the placements: every band Stereo.
         let mut keyed = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        keyed.params.retain(|id, _| !is_place_id(id));
+        keyed
+            .params
+            .retain(|id, _| !is_place_id(id) && !is_phase_id(id));
         assert_eq!(keyed.params.len(), 266);
         let (writes, problems) = keyed.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -771,7 +783,9 @@ mod dynamics_migration {
             .parameters()
             .into_iter()
             .map(|(id, _)| id)
-            .filter(|id| !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id))
+            .filter(|id| {
+                !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id) && !is_phase_id(id)
+            })
             .collect();
         let identity = PresetIdentity {
             loaded: Some(LoadedPreset {

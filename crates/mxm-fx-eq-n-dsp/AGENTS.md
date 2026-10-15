@@ -4,10 +4,11 @@ Parent: [`../../AGENTS.md`](../../AGENTS.md). The detail behind the rules: [NOTE
 
 # Purpose
 
-Framework-free, zero-runtime-dependency DSP for the original `mxm-fx-eq-n` effect: up to 24
-parametric bands in series, each a trapezoidal SVF whose design is matched to its analogue
-prototype, with click-free transitions, parking, band solo, dynamic bands (F1), the gain scale and
-the output gain.
+Framework-free DSP for the original `mxm-fx-eq-n` effect, its one runtime dependency mxm-kit's
+`mxm-fft` (decision 6): up to 24 parametric bands in series, each a trapezoidal SVF whose design
+is matched to its analogue prototype, with click-free transitions, parking, band solo, dynamic
+bands (F1), the gain scale and the output gain; and F6's Linear phase, the same EQ as a
+zero-phase FIR kernel.
 
 The product contract is [`../../plans/plan-mxm-fx-eq-n.md`](../../plans/plan-mxm-fx-eq-n.md) §2–§3
 and §7.1 (F1) and [`../../docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md) A1–A6 and §C; the evidence base is
@@ -20,9 +21,13 @@ and §7.1 (F1) and [`../../docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx
 - `src/filter.rs`: the running sections, their per-sample parameter ramp and their state.
 - `src/dynamics.rs`: a dynamic band's law, its knee, its ballistics and its settings' ranges.
 - `src/engine.rs`: the bands, glides, transitions, parking, solo, dynamics, gain scale, output gain
-  and activity.
+  and activity; in Linear phase, the kernel's requests and the render through it.
+- `src/linear.rs`: Linear phase (plan §7.7): the sizes, the kernel's design, the banks and their
+  design thread, the partitioned convolver and the delay line; `heard_lines`, what the editor
+  draws.
 - `tests/design.rs`: meanings and analogue match; `tests/engine.rs`: plan §8's audio properties;
-  `tests/dynamics.rs`: plan §7.1's; `tests/realtime.rs`: the allocation guard.
+  `tests/dynamics.rs`: plan §7.1's; `tests/linear.rs`: plan §7.7's; `tests/realtime.rs`: the
+  allocation guard, in Linear phase too.
 - `examples/`: `eq_n_cramping`, `eq_n_precision`, `eq_n_modulation`, `eq_n_tail`, `eq_n_cost`,
   `eq_n_dynamics`, the
   measurements in [NOTES.md § Measured and chosen facts](NOTES.md#measured-and-chosen-facts).
@@ -123,6 +128,24 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
   channel of the input or the key, a Stereo band the linked peak (decision 20); solo plays the
   band's channel where it sits in the image.
 - `Cascade::response` is the complex response the editor combines into each channel's line.
+
+## Linear phase (F6) — plan §7.7, [NOTES.md § Linear phase](NOTES.md#linear-phase-measured-f6-2026-10-15)
+
+- `Engine::with_phase(rate, Phase::Linear(resolution), channels)` builds it **off the audio
+  thread**: every buffer and three kernel banks allocated, the design thread started (joined on
+  drop); `Engine::prime` designs the first kernel before the first sample; `Engine::latency` is
+  `N/2 + B` (`linear::Sizes`), 0 in Zero latency. `Engine::new` stays Zero latency, bit for bit.
+- **The kernel**: per bin the bands' static magnitude at their targets (the gain held to ±30 dB,
+  under the gain scale's target; a dynamic band at its drawn gain; in mono only Stereo bands), one
+  kernel, one per channel, or the stages' real 2×2 matrix; inverse-transformed, centred on N/2,
+  the periodic Hann window, its tap pairs mirrored — symmetric to the bit.
+- **Changes**: a moved setting makes a request at the next control interval, asked for at the next
+  update boundary (every 4 partitions); the design thread designs it into a free bank; the audio
+  thread takes the newest finished one at a boundary and crossfades over one interval, both banks
+  on the one frequency-domain delay line. **It never waits in realtime**; offline
+  (`Engine::set_offline`) it waits at the boundary after asking, so bounces repeat.
+- An empty EQ is the delay line, bit-exact; solo plays on the input delayed by the latency; the
+  tail is exact silence from `Sizes::tail()` after the input's last nonzero sample.
 
 ## Numeric and realtime contracts — [NOTES.md § Reasons](NOTES.md#the-numeric-contracts-reasons)
 

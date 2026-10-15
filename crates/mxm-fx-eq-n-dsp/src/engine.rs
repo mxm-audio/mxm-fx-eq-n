@@ -22,12 +22,19 @@
 //! ballistics move the signed moving part, the heard gain is the drawn gain plus it, held inside
 //! ±30 dB, and Range glides as the gain does. A band that listens never parks; it parks again, as a
 //! static band does, only when nothing it does can be heard (Range 0, or the gain scale at 0 %).
+//!
+//! **Linear phase** (plan §7.7; `crate::linear`) is the other way through: the bands' settings at
+//! their targets make a zero-phase kernel, designed off the audio thread and faded in on its update
+//! boundaries; values glide and structures fade through those crossfades, dynamic bands are held at
+//! their drawn gain, solo plays on the input delayed by the latency, and the output gain ramps as
+//! here.
 
 use crate::design::{
-    Cascade, Design, Shape, Slope, design_running, design_solo, max_frequency, solo_hears_q,
+    Cascade, Design, Shape, Slope, design, design_running, design_solo, max_frequency, solo_hears_q,
 };
 use crate::dynamics::{Ballistics, Dynamics, law};
 use crate::filter::Filter;
+use crate::linear::{Heard, Linear, Phase};
 use crate::{
     FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX, Q_MIN, SLOTS,
     usable_sample_rate,
@@ -741,6 +748,13 @@ pub struct Engine {
     /// The layout the block calls run, mono or stereo: an engine is built for one, so this is
     /// known from the first call. In mono a band placed off Stereo is not in the sound (§7.3).
     mono: bool,
+    /// Linear phase, when the engine was built for it (plan §7.7): the convolver and its design
+    /// thread; what the kernel should hear, made when a setting it hears moves and asked for at
+    /// the next update boundary; and the requests' sequence.
+    linear: Option<Box<Linear>>,
+    linear_dirty: bool,
+    linear_wanted: Option<Heard>,
+    linear_seq: u64,
 }
 
 impl Engine {
@@ -771,7 +785,105 @@ impl Engine {
             dry: true,
             heard_input: false,
             mono: false,
+            linear: None,
+            linear_dirty: false,
+            linear_wanted: None,
+            linear_seq: 0,
         }
+    }
+
+    /// An engine for `sample_rate` in `phase` (plan §7.7), for `channels` (1 or 2): Zero latency is
+    /// [`Engine::new`]; Linear phase allocates its convolver and starts its design thread here, so
+    /// build it off the audio thread. If the thread cannot start, the engine is Zero latency, and
+    /// [`Engine::latency`] says so.
+    pub fn with_phase(sample_rate: f64, phase: Phase, channels: usize) -> Engine {
+        let mut engine = Engine::new(sample_rate);
+        engine.mono = channels == 1;
+        if let Phase::Linear(resolution) = phase {
+            engine.linear = Linear::new(engine.sample_rate, resolution, channels).map(Box::new);
+            engine.linear_dirty = true;
+        }
+        engine
+    }
+
+    /// The phase the engine runs.
+    pub fn phase(&self) -> Phase {
+        self.linear.as_ref().map_or(Phase::ZeroLatency, |linear| {
+            Phase::Linear(linear.resolution())
+        })
+    }
+
+    /// The latency in samples: 0 in Zero latency, the kernel's centre and a partition in Linear
+    /// phase.
+    pub fn latency(&self) -> u32 {
+        self.linear
+            .as_ref()
+            .map_or(0, |linear| linear.latency() as u32)
+    }
+
+    /// Offline rendering (plan §7.7): in Linear phase a kernel asked for is waited for at the
+    /// boundary after, so a bounce is the same every time.
+    pub fn set_offline(&mut self, offline: bool) {
+        if let Some(linear) = &mut self.linear {
+            linear.set_offline(offline);
+        }
+    }
+
+    /// In Linear phase, the kernel for the settings as they stand designed now and heard from the
+    /// next sample: for activation, after the settings are set, off the audio thread.
+    pub fn prime(&mut self) {
+        if self.linear.is_none() {
+            return;
+        }
+        self.retarget_all();
+        let heard = self.linear_heard();
+        self.linear_dirty = false;
+        self.linear_wanted = None;
+        if let Some(linear) = &mut self.linear {
+            linear.prime(&heard);
+        }
+    }
+
+    /// Every band's targets read now, as an interval's start reads them.
+    fn retarget_all(&mut self) {
+        let sample_rate = self.sample_rate;
+        for band in &mut self.bands {
+            if band.changed {
+                band.retarget(sample_rate);
+                band.changed = false;
+            }
+        }
+    }
+
+    /// What Linear phase's kernel hears (plan §7.7): every band the settings put in the sound, at
+    /// its targets — the gain held inside ±30 dB, then under the gain scale's target — a dynamic
+    /// band at its drawn gain, and in mono only Stereo bands; with the next sequence number.
+    fn linear_heard(&mut self) -> Heard {
+        self.linear_seq += 1;
+        let scale = self.gain_scale.target;
+        let mut heard = Heard::EMPTY;
+        heard.seq = self.linear_seq;
+        for (slot, band) in self.bands.iter().enumerate() {
+            let Some(structure) = band.wanted() else {
+                continue;
+            };
+            if self.mono && structure.placement != Placement::Stereo {
+                continue;
+            }
+            let inputs = Design {
+                shape: structure.shape,
+                slope: structure.slope,
+                freq: band.log_freq.target.exp(),
+                gain_db: if structure.shape.has_gain() {
+                    band.gain_db.target.clamp(-GAIN_RANGE, GAIN_RANGE) * scale
+                } else {
+                    0.0
+                },
+                q: band.log_q.target.exp(),
+            };
+            heard.bands[slot] = Some((design(inputs, self.sample_rate), structure.placement));
+        }
+        heard
     }
 
     pub fn sample_rate(&self) -> f64 {
@@ -804,6 +916,7 @@ impl Engine {
             if !same {
                 engine.target = band;
                 engine.changed = true;
+                self.linear_dirty = true;
             }
         }
     }
@@ -845,7 +958,10 @@ impl Engine {
     /// faded as one; the detector and solo move to the new channel when that transition starts.
     pub fn set_placement(&mut self, slot: usize, placement: Placement) {
         if let Some(band) = self.bands.get_mut(slot) {
-            band.placement = placement;
+            if band.placement != placement {
+                band.placement = placement;
+                self.linear_dirty = true;
+            }
         }
     }
 
@@ -905,6 +1021,9 @@ impl Engine {
         } else {
             1.0
         };
+        if scale != self.gain_scale.target {
+            self.linear_dirty = true;
+        }
         self.gain_scale.retarget(scale);
     }
 
@@ -971,11 +1090,18 @@ impl Engine {
         self.output_left = 0;
         self.countdown = 0;
         self.heard_input = false;
+        if let Some(linear) = &mut self.linear {
+            linear.clear();
+        }
     }
 
     /// Nothing to do: every band parked or dry with no fade, no audition, the output at exactly
     /// 0 dB. The buffer is then left untouched.
     pub fn is_dry(&self) -> bool {
+        // Linear phase always delays, even an empty EQ.
+        if self.linear.is_some() {
+            return false;
+        }
         // In mono a band with no Stereo arm is not in the sound, so it renders nothing (§7.3).
         self.bands
             .iter()
@@ -992,6 +1118,10 @@ impl Engine {
             .iter()
             .any(|band| band.largest_state() > 0.0 || band.moving_db != 0.0)
             || self.solo.filter.largest_state() > 0.0
+            || self
+                .linear
+                .as_ref()
+                .is_some_and(|linear| linear.is_ringing())
     }
 
     /// Nothing audible is moving or waiting to: no setting unread, no structural change pending
@@ -1038,7 +1168,11 @@ impl Engine {
         });
         let solo = &self.solo;
         let solo_mix_target = if solo.heard { 1.0 } else { 0.0 };
-        self.bands.iter().all(band_settled)
+        let linear_settled = self.linear.as_ref().is_none_or(|linear| {
+            !self.linear_dirty && self.linear_wanted.is_none() && linear.is_settled()
+        });
+        linear_settled
+            && self.bands.iter().all(band_settled)
             && !(scale_heard && self.gain_scale.is_moving())
             && solo.slot == self.solo_wanted()
             && solo.mix == solo_mix_target
@@ -1099,7 +1233,9 @@ impl Engine {
                 self.dry = self.is_dry();
             }
             let end = (start + self.countdown).min(frames);
-            if !self.dry {
+            if self.linear.is_some() {
+                self.render_linear::<C>(&mut channels, start, end);
+            } else if !self.dry {
                 self.render::<C>(&mut channels, key, start, end);
             } else if self.mono {
                 // A placed band in mono is not heard, but its fades still run their length, or a
@@ -1125,6 +1261,8 @@ impl Engine {
     fn control(&mut self) {
         let frames = self.interval;
         let keep = self.keep;
+        // Linear phase holds a dynamic band at its drawn gain (decision 37).
+        let linear = self.linear.is_some();
         let scale_moved = self.gain_scale.step(keep, 1.0e-7);
         let scale = self.gain_scale.value();
         let (sample_rate, fade) = (self.sample_rate, self.fade);
@@ -1155,7 +1293,7 @@ impl Engine {
 
             // Dynamics (plan §7.1): Range glides, the interval's level meets the law, and the
             // ballistics move the moving part toward what it asks.
-            let dynamic_shape = structure.shape.is_dynamic();
+            let dynamic_shape = structure.shape.is_dynamic() && !linear;
             band.range_db.retarget(if dynamic_shape {
                 f64::from(band.dynamics.range_db)
             } else {
@@ -1256,16 +1394,27 @@ impl Engine {
         }
 
         self.control_solo(scale, frames);
+        // What the kernel should hear, once a setting it hears has moved; asked for at the next
+        // update boundary.
+        if linear && self.linear_dirty {
+            self.linear_dirty = false;
+            let heard = self.linear_heard();
+            self.linear_wanted = Some(heard);
+        }
     }
 
     fn control_solo(&mut self, scale: f64, frames: usize) {
         let valid = self.solo_wanted();
+        // Linear phase holds dynamics, so no audition plays the key there.
+        let linear = self.linear.is_some();
         let bands = &self.bands;
         let solo = &mut self.solo;
         // Only a dynamic shape listens to the key; any other plays its region of the input, the
         // switch it may have kept from an earlier shape aside (plan §7.2).
         let keyed = |band: &BandEngine, structure: Option<Structure>| {
-            band.side_chain && structure.is_some_and(|structure| structure.shape.is_dynamic())
+            !linear
+                && band.side_chain
+                && structure.is_some_and(|structure| structure.shape.is_dynamic())
         };
         let matches = |slot: usize, solo: &Solo| {
             bands[slot].destination == solo.structure
@@ -1430,6 +1579,87 @@ impl Engine {
                 // A state that overflowed never recovers on its own: every filter starts again
                 // from silence, at this sample.
                 self.clear_states();
+            }
+        }
+        self.heard_input |= heard_input;
+    }
+
+    /// Frames `start..end` in Linear phase (plan §7.7): through the kernel, solo on the input
+    /// delayed by the latency, the output gain after; a kernel asked for at each update boundary
+    /// when the settings it hears have moved.
+    fn render_linear<const C: usize>(
+        &mut self,
+        channels: &mut [&mut [f32]; C],
+        start: usize,
+        end: usize,
+    ) {
+        let solo_target = if self.solo.heard { 1.0 } else { 0.0 };
+        let solo_step = 1.0 / f64::from(self.fade);
+        let mut heard_input = false;
+        let finite = |sample: f32| {
+            if sample.is_finite() {
+                f64::from(sample)
+            } else {
+                0.0
+            }
+        };
+        for index in start..end {
+            let mut dry = [0.0f64; C];
+            for (value, channel) in dry.iter_mut().zip(channels.iter()) {
+                *value = finite(channel[index]);
+                heard_input |= *value != 0.0;
+            }
+            let Some(linear) = self.linear.as_mut() else {
+                return;
+            };
+            let (mut wet, delayed) = linear.tick(dry);
+            if linear.take_boundary() {
+                if let Some(heard) = self.linear_wanted.take() {
+                    linear.ask(&heard);
+                }
+            }
+
+            let solo = &mut self.solo;
+            if solo.mix != solo_target {
+                solo.mix = if solo.mix < solo_target {
+                    (solo.mix + solo_step).min(solo_target)
+                } else {
+                    (solo.mix - solo_step).max(solo_target)
+                };
+            }
+            if solo.mix > 0.0 && solo.slot.is_some() {
+                let audition = audition(&mut solo.filter, solo.placement, delayed);
+                for (out, audition) in wet.iter_mut().zip(audition) {
+                    *out += (audition - *out) * solo.mix;
+                }
+            }
+
+            if self.output_left > 0 {
+                self.output += self.output_step;
+                self.output_left -= 1;
+                if self.output_left == 0 {
+                    self.output = self.output_target;
+                }
+            }
+            let mut blown = false;
+            for (out, channel) in wet.iter().zip(channels.iter_mut()) {
+                let mut sample = out * self.output;
+                if !sample.is_finite() {
+                    sample = 0.0;
+                    blown = true;
+                }
+                let sample = sample.clamp(-OUTPUT_BOUND, OUTPUT_BOUND) as f32;
+                channel[index] = if sample.abs() < f32::MIN_POSITIVE {
+                    0.0
+                } else {
+                    sample
+                };
+            }
+            if blown {
+                self.clear_states();
+                if let Some(linear) = &mut self.linear {
+                    linear.clear();
+                }
             }
         }
         self.heard_input |= heard_input;

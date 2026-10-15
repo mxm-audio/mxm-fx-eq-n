@@ -537,6 +537,8 @@ fn the_cursor_reaches_and_operates_every_control() {
             "delete",
             "output",
             "gainscale",
+            "phase",
+            "resolution",
             "analyser",
             "show",
             "resolution",
@@ -1758,10 +1760,11 @@ fn every_card_passes_the_tree_checks_in_every_state_and_fits_the_column() {
     }
     let (build, mut paint) = pair(None);
     type Tree = fn(&EqApp) -> mxm_ui::tree::Node<column::Leaf>;
-    let cards: [(&str, Tree); 3] = [
+    let cards: [(&str, Tree); 4] = [
         (column::OUTPUT_TITLE, column::output_tree),
         (column::ANALYSER_TITLE, |_| column::analyser_tree(true)),
         (column::RESONANCES_TITLE, |_| column::resonances_tree()),
+        (column::MATCH_TITLE, |_| column::match_tree()),
     ];
     for (title, tree) in cards {
         let floor = settled(|ui| mxm_ui::tree::card_floor(ui, title, &tree(&build)));
@@ -3664,4 +3667,85 @@ fn the_match_card_sits_under_resonances() {
         (matching.left() - find.left()).abs() < 1.0,
         "in the same column"
     );
+}
+
+// ---- Phase modes (plan §7.7) -------------------------------------------------------------------
+
+/// **A phase is asked for in one step, and the curve follows the phase in force** (plan §7.7):
+/// while a change waits for the host's restart the drawn curve is the one heard; in Linear phase
+/// it is the kernel's own, a narrow low bell smoothed by the resolution; a dynamic band shows no
+/// reach there.
+#[test]
+fn the_curve_follows_the_phase_in_force() {
+    use mxm_fx_eq_n_dsp::linear::{Heard, Sizes, heard_lines};
+    use mxm_fx_eq_n_dsp::{Phase, Resolution};
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(60.0);
+    rig.press(Vec::new());
+    let slot = rig.app.selected.expect("a band");
+    let index = |field| band_index(slot, field);
+    let writes = [
+        (
+            index(Field::Gain),
+            rig.app.normalised(index(Field::Gain), 9.0),
+        ),
+        (index(Field::Q), rig.app.normalised(index(Field::Q), 8.0)),
+    ];
+    rig.app.instant(&writes);
+    rig.press(Vec::new());
+    let curve_at = |rig: &Rig| {
+        let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+        graph::Curves::compute(&rig.app, &axes).composite_at(60.0)
+    };
+    let zero = curve_at(&rig);
+    assert!((zero - 9.0).abs() < 0.1, "{zero}");
+
+    let depth = rig.depth();
+    rig.app.set_phase_value(crate::params::PHASE_INDEX, 1);
+    rig.app.set_phase_value(crate::params::RESOLUTION_INDEX, 0);
+    rig.press(Vec::new());
+    assert_eq!(rig.depth(), depth + 2, "each one undo step");
+    assert_eq!(rig.app.phase_asked(), Phase::Linear(Resolution::Low));
+    assert_eq!(
+        curve_at(&rig),
+        zero,
+        "the phase in force is drawn while the change waits"
+    );
+
+    rig.telemetry.publish_phase(Phase::Linear(Resolution::Low));
+    rig.press(Vec::new());
+    let linear = curve_at(&rig);
+    assert!(linear < zero - 1.0, "smoothed by Low: {linear}");
+    let band = rig.band(slot);
+    let mut heard = Heard::EMPTY;
+    heard.bands[slot] = Some((
+        mxm_fx_eq_n_dsp::design(
+            mxm_fx_eq_n_dsp::Design {
+                shape: Shape::Bell,
+                slope: band.slope,
+                freq: f64::from(band.freq),
+                gain_db: f64::from(band.gain_db),
+                q: f64::from(band.q),
+            },
+            48_000.0,
+        ),
+        mxm_fx_eq_n_dsp::Placement::Stereo,
+    ));
+    let [kernel, ..] = heard_lines(
+        &heard,
+        60.0,
+        48_000.0,
+        Sizes::new(48_000.0, Resolution::Low),
+    );
+    assert!((linear - (20.0 * kernel.log10()) as f32).abs() < 1.0e-3);
+
+    let writes = [(
+        dynamics_index(slot, DynamicsField::Range),
+        rig.app
+            .normalised(dynamics_index(slot, DynamicsField::Range), -12.0),
+    )];
+    rig.app.instant(&writes);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.range_reach_db(slot), None, "held in Linear phase");
 }

@@ -3,13 +3,15 @@ name = "mxm-fx-eq-n-dsp"
 description = "Framework-free DSP for mxm-fx-eq-n: matched SVF bands, transitions, solo and the series cascade"
 version.workspace = true
 edition.workspace = true
-# Zero runtime dependencies and no GUI: genuinely portable below the workspace floor.
+# One runtime dependency, the collection's FFT (decision 6, for Linear phase), and no GUI:
+# genuinely portable below the workspace floor.
 rust-version = "1.87"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+mxm-fft.workspace = true
 
 [dev-dependencies]
 # Measurement rulers for the tests and the measurement examples only.

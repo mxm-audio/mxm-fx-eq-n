@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use analyser::{BLOCK_FRAMES, Block, Tap};
 use audition::Audition;
-use mxm_fx_eq_n_dsp::{Engine, MIN_SAMPLE_RATE};
+use mxm_fx_eq_n_dsp::{Engine, MIN_SAMPLE_RATE, Phase};
 use nice_plug::prelude::*;
 use params::EqParams;
 use telemetry::Telemetry;
@@ -43,6 +43,9 @@ pub struct MxmFxEqN {
     analyser: Option<rtrb::Consumer<Block>>,
     channels: usize,
     offline: bool,
+    /// The phase the parameters last asked for while active, reported to the host as its latency
+    /// (plan §7.7); the engine's own is the one in force.
+    asked_phase: Phase,
 }
 
 impl Default for MxmFxEqN {
@@ -58,6 +61,17 @@ impl Default for MxmFxEqN {
             analyser: Some(consumer),
             channels: 2,
             offline: false,
+            asked_phase: Phase::ZeroLatency,
+        }
+    }
+}
+
+/// The latency `phase` runs at, at `sample_rate` (plan §7.7).
+fn latency_of(phase: Phase, sample_rate: f32) -> u32 {
+    match phase {
+        Phase::ZeroLatency => 0,
+        Phase::Linear(resolution) => {
+            mxm_fx_eq_n_dsp::linear::Sizes::new(f64::from(sample_rate), resolution).latency() as u32
         }
     }
 }
@@ -104,9 +118,27 @@ impl MxmFxEqN {
         self.telemetry.publish_sample_rate(sample_rate);
         self.telemetry.publish_channels(self.channels);
         self.tap.discontinuity(sample_rate);
-        *self.engine = Engine::new(f64::from(sample_rate));
-        self.seed();
+        // The phase the parameters hold, built here, off the audio thread (plan §7.7): Linear
+        // phase's convolver and design thread, its first kernel designed before the first sample.
+        let phase = self.params.phase_mode();
+        *self.engine = Engine::with_phase(f64::from(sample_rate), phase, self.channels);
+        self.engine.set_offline(offline);
+        self.sync();
+        self.engine.prime();
+        self.engine.reset();
+        self.asked_phase = self.engine.phase();
+        self.telemetry.publish_phase(self.engine.phase());
         true
+    }
+
+    /// A phase asked for that is not the last one reported: its latency, for the host (plan §7.7).
+    /// The engine keeps the phase in force until the host restarts the plugin.
+    fn phase_change(&mut self) -> Option<u32> {
+        let asked = self.params.phase_mode();
+        (asked != self.asked_phase).then(|| {
+            self.asked_phase = asked;
+            latency_of(asked, self.telemetry.sample_rate())
+        })
     }
 
     /// A block with no side chain, as the shell's tests drive one.
@@ -292,22 +324,29 @@ impl Plugin for MxmFxEqN {
         })
     }
 
+    /// Builds the engine in the phase the parameters hold and **reports its latency** (plan §7.7):
+    /// 0 in Zero latency, the kernel's centre and a partition in Linear phase. One latency per
+    /// activation, as the kit's conventions have it.
     fn activate(
         &mut self,
         layout: &AudioIOLayout,
         config: &BufferConfig,
-        _context: &mut impl ActivateContext<Self>,
+        context: &mut impl ActivateContext<Self>,
     ) -> bool {
         // Whether the layout has the side-chain port: all the plugin observes of a route (§7.4).
         self.telemetry
             .publish_side_chain_port(!layout.aux_input_ports.is_empty());
-        self.prepare(
+        let prepared = self.prepare(
             config.sample_rate,
             layout
                 .main_input_channels
                 .map_or(2, |channels| channels.get() as usize),
             config.process_mode == ProcessMode::Offline,
-        )
+        );
+        if prepared {
+            context.set_latency_samples(self.engine.latency());
+        }
+        prepared
     }
 
     /// Runs after an activation and after a restored state too (the wrapper's state transaction
@@ -321,14 +360,21 @@ impl Plugin for MxmFxEqN {
     fn deactivate(&mut self) {
         self.audition.end();
         self.tap.discontinuity(self.telemetry.sample_rate());
+        // Linear phase's design thread ends with its engine; the next activation builds another.
+        *self.engine = Engine::new(f64::from(self.telemetry.sample_rate()));
     }
 
+    /// A block. A phase asked for that is not the one in force is reported as its latency, which
+    /// nice-plug turns into the host's restart; until then the phase in force plays on (plan §7.7).
     fn process(
         &mut self,
         buffer: &mut Buffer,
         aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        if let Some(latency) = self.phase_change() {
+            context.set_latency_samples(latency);
+        }
         let key = aux.inputs.first_mut().map(|key| &*key.as_slice());
         self.process_keyed(buffer.as_slice(), key)
     }
