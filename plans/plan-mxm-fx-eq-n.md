@@ -2,7 +2,10 @@
 
 **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
 §7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
-two rounds, all accepted). **Waiting for the owner's approval.** **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
+two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
+20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
+after that, approved by the agent-loop in round 6 (3 findings over rounds 4–5, all accepted). F2.1–F2.3
+in progress. **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
 (2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), their code review approved in round 2 (one finding,
@@ -40,7 +43,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
-| 25 | **F2 designed** (2026-10-14), §7.3, for the owner's approval: Pro-Q's five placements, no Split yet (decision 18); placed bands disabled in mono (decision 19); a placed dynamic band detects its own channel (decision 20); two Side presets (decision 21); 24 placements appended; curves grouped by channel, each labelled |
+| 25 | **F2 designed** (2026-10-14), §7.3: Pro-Q's five placements and, by the owner's choice, its Split on a Stereo band (L/R, or M/S with Alt) (decision 18); placed bands disabled in mono (decision 19); a placed dynamic band detects its own channel (decision 20); no new presets (decision 21); channel bands before mid/side bands (decision 22); 24 placements appended; curves each a channel's self-response, labelled. Approved by the owner 2026-10-15 |
 | 24 | **The external side chain designed** (2026-10-14), §7.2, for the owner's approval: next, before F2, the EQ only and heard at home (decision 15); per band, the key band-limited as the input is (decision 16); solo plays what the band listens to (decision 17); one port, keyed layouts first; 24 switches appended |
 | 23 | **F1 designed** (2026-10-14), §7.1, for the owner's approval: Pro-Q's range-only controls, each band's own region as its detector, no external side chain yet (decisions 12–14); four parameters appended per slot; Wise's form (audio in series, detectors in parallel, a fixed detector filter); a dynamic band never parks; delivery F1.0–F1.5. |
 | 22 | **E5, first findings** (the owner in MXM Player, 2026-10-14): solo is a toggle, not held; the gain scale fades while no band in the sound has a gain; the empty Band card's hover says how to get a band. A freeze found on the way is the baseview fork's (its frame clock starved input on a 59 Hz screen), fixed there. Then: Solo is the kit's toggle; a silence empties the spectrum, the long window's lows included. Code review approved in three rounds, with the baseview fix (2026-10-14). |
@@ -81,11 +84,11 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 14 | **No external side chain in F1**: its own later step, once newDAWn routes a side chain (§7.1) | **Settled** (owner, 2026-10-14) | — |
 | 15 | **The external side chain next**, before F2: the EQ only, proved by tests here and heard in Bitwig at home; the alternatives were a key source in MXM Player, or newDAWn's routing first (§7.2) | **Settled** (owner, 2026-10-14) | — |
 | 16 | **Per band**: each dynamic band listens to its own input or the side chain, the key band-limited as the input is (Pro-Q 4's way); the alternative is one switch for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
-| 18 | **F2's placements are Pro-Q's five**: Stereo, Left, Right, Mid, Side; **no Split button yet** (duplicate and set the placement; a one-press split is F8's); the alternative adds Split now (§7.3) | **Proposed** | F2.1 |
-| 19 | **In mono, a placed band is disabled** and keeps its placement (Pro-Q's way); the alternative plays it as Stereo (§7.3) | **Proposed** | F2.1 |
-| 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; a Left/Right pair then moves independently, Wise's phase intermodulation; the alternative links every band to the stereo peak, so a Left band also reacts to the right (§7.3) | **Proposed** | F2.1 |
-| 21 | **Two Side presets**, *Mono bass* and *Wider air*; the alternative ships none (§7.3) | **Proposed** | F2.2 |
-| 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Proposed** | F2.1 |
+| 18 | **F2's placements are Pro-Q's five**: Stereo, Left, Right, Mid, Side, **and Pro-Q's Split button now**; the proposal had left Split to F8 (§7.3) | **Settled** (owner, 2026-10-15: the alternative) | F2.3 |
+| 19 | **In mono, a placed band is disabled** and keeps its placement (Pro-Q's way); the alternative plays it as Stereo (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
+| 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; a Left/Right pair then moves independently, Wise's phase intermodulation; the alternative links every band to the stereo peak, so a Left band also reacts to the right (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
+| 21 | **No new presets for F2**; the proposal was two Side presets, *Mono bass* and *Wider air* (§7.3) | **Settled** (owner, 2026-10-15: the alternative) | — |
+| 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
 Implementation choices with stated criteria — not owner decisions — are the cramping method (§3.3),
@@ -753,7 +756,7 @@ path through a real host is the owner's check at home.
 ### 7.3 F2 — per-band stereo placement (revision 25, for the owner's approval)
 
 The next phase in the owner's order (decision 9), after the side chain. **Pro-Q's five placements**
-(decision 18; research §6 — standard per band in Pro-Q, Kirchhoff-EQ, F6, Frequency 2 and DMG):
+(research §6 — standard per band in Pro-Q, Kirchhoff-EQ, F6, Frequency 2 and DMG):
 **Stereo**, the default and every band today, **Left**, **Right**, **Mid** and **Side**.
 
 **What a placed band does.** With `M = (L + R)/2` and `S = (L − R)/2` (research §6): a Left band
@@ -789,7 +792,7 @@ and in either direction (two bands swapping families put both old arms and both 
 their own stage). Each band keeps the two filter states it has today, and the cost is the two
 filters a crossfade already runs.
 
-**Dynamic bands** (decision 20, the F2 row's open question, for the owner): **proposed, a placed band
+**Dynamic bands** (decision 20, the F2 row's open question, settled by the owner): **a placed band
 detects the channel it works on** — a Left band its left, a Mid band `M` — so a band placed on one
 channel answers that channel. A Stereo band keeps F1's linked peak; detectors stay in parallel on the
 input; a keyed band reads the same channel of the key (§7.2), so a Side band on a mono key hears
@@ -828,11 +831,24 @@ Stereo, a copy keeps its original's placement (`slot_writes`, twelve fields).
   both, what moves between channels is not drawn. **Identity never rests on hue** (§5): each curve
   is labelled with its channel's letter at its end, and a placed band's point carries the same
   letter beside its number.
-- No Split button now (decision 18): duplicating a band and setting its placement does the same,
-  and Pro-Q's one-press split is F8's workflow.
+- **Split** (decision 18, Pro-Q's button): in the Band card's action row beside Solo and Delete
+  band, in a stereo layout only, and **on a Stereo band only** — the one placement whose filter on
+  both channels is the same filter on `M` and on `S`, so either pair keeps its sound; on a placed
+  band it is shown disabled, its hover saying the band is already on one channel. A click turns the
+  band into a Left/Right pair, an Alt-click into a Mid/Side pair (the hover says so): the band
+  becomes Left (or Mid) and its copy Right (or Side). The copy takes
+  the lowest Off slot and every other field of the original — shape, frequency, gain, Q, slope,
+  bypass, dynamics and side-chain switch (`slot_writes`) — and the pair is one undo step, the
+  original still selected. With every slot in use Split does nothing and its hover says why. The
+  original's change is a placement change (click-free, above), the copy fades in as a new band does.
+  **A static band splits into the sound it made**; a dynamic one splits into two bands that each
+  listen to their own channel (decision 20) — that is what splitting a dynamic band is for. A
+  Left/Right pair moves as one on equal channels and apart on unequal ones; a Mid/Side pair's Mid
+  copy follows the mid and its Side copy the side, so on equal channels (no side) only the Mid copy
+  moves.
+  It is a button, not a new job in the keyboard language: the cursor reaches it as a column control.
 
-**Presets** (decision 21): two, both on Side, the usual mastering moves — *Mono bass* (a 12 dB/oct
-low cut at 100 Hz, gentle so the image moves little) and *Wider air* (a +3 dB high shelf at 10 kHz).
+**No new factory presets** (decision 21): the thirteen and F1's two stay Stereo.
 
 **Tests** (written at the end): every band on Stereo is bit-exact today's output, NaN and silence
 included; each placement filters only its channels (a Left band leaves the right bit-exact; a Mid
@@ -841,7 +857,12 @@ a family and one across it step nothing, two bands crossing in opposite directio
 not a Right one); a Side band keyed from a mono key hears silence; solo of each placement; mono
 disables placed bands and keeps their values, and its Stereo choice restores one; the family order
 (a Left band and a Mid band give the same output whichever slot holds which); the 290 ids, the
-reserved places, the migrations, the slot lifecycle; the selector's tree, keyboard and hover; each
+reserved places, the migrations, the slot lifecycle; the selector's tree, keyboard and hover; Split — a static Stereo band split into a Left/Right pair renders
+what it did, bit for bit, once both have settled, and into a Mid/Side pair within rounding (the
+reference is the Stereo band before the split); Split disabled on a placed band; a dynamic Left/Right
+pair on equal channels as one, on a louder left with the left band moving further; a dynamic
+Mid/Side pair on equal channels with only the Mid copy moving; every other field
+copied, one undo step, nothing done with every slot in use, absent in mono; each
 curve against its channel's rendered self-response, one family and both; no allocation with every placement changing; the cost with 24 Mid bells. Through
 MXM Player: every host test, and a placed band restored through the state heard on its channel.
 
@@ -849,10 +870,10 @@ MXM Player: every host test, and a placed band restored through the state heard 
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **F2.0** | Decisions 18–22, signed | Owner |
+| **F2.0** | Decisions 18–22, signed. **Done** (2026-10-15) | Owner |
 | **F2.1** | DSP: placement in the band's structure, each channel's path, detection, solo, mono | DSP tests at the end |
-| **F2.2** | Shell: 24 placements, both migrations, the two presets, host tests | Unit and host tests at the end; `clap-validator` |
-| **F2.3** | Editor: the selector, the grouped curves and their letters, the point's letter | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
+| **F2.2** | Shell: 24 placements, both migrations, host tests | Unit and host tests at the end; `clap-validator` |
+| **F2.3** | Editor: the selector, Split, the grouped curves and their letters, the point's letter | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
 | **F2.4** | Listening, and the image checked by ear on speakers and headphones | Owner sign-off |
 
 ## 8. What must not break
