@@ -15,6 +15,7 @@
 //!   and restore, and the editor ends it on close.
 
 pub mod column;
+pub mod grab;
 pub mod graph;
 pub mod history;
 pub mod panel;

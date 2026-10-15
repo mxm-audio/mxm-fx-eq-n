@@ -3,7 +3,7 @@
 **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
 all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
-proposed); F3.0 done, F3.1–F3.3 in progress. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
+proposed); F3.0 and F3.1 done; F3.2–F3.3 in progress. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
 §7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
@@ -921,7 +921,10 @@ live spectrum.
 - **at least a sixth of an octave from a stronger one**, the stronger kept;
 - **at most eight**, ranked by prominence, each labelled with its frequency in the graph's own
   reading (`1.20 kHz`), a label that would overlap a stronger one's not drawn.
-The numbers are this plan's: Sir Audio StandardEQ is the one product that exposes them (a maximum
+**What the rule sees**: a peak must fall 6 dB within a third of an octave each side, so the labels
+go to resonances narrower than about 0.4 octave at their 3 dB points (Q above about 3.7: a
+resonance falls 6 dB at a detune of √3);
+a broad bump is shaped with a band by hand. The numbers are this plan's: Sir Audio StandardEQ is the one product that exposes them (a maximum
 count, a minimum spacing, a range), and F4's resonance finder will share this list (research §11:
 "the grab gesture and the resonance detector can share one candidate list").
 
@@ -961,7 +964,7 @@ inside its 2 ms budget (§4); the opening size with the new toggles.
 | Step | Delivers | Gate |
 |---|---|---|
 | **F3.0** | Decisions 23–26, signed. **Done** (2026-10-15) | Owner |
-| **F3.1** | The hold, the peak picker and Q from width, in the analyser's editor half | Unit tests at the end |
+| **F3.1** | The hold, the peak picker and Q from width, in the analyser's editor half. **Built** (2026-10-15): `editor/grab.rs`, 7 tests | Unit tests at the end |
 | **F3.2** | Grab, mouse and keyboard; Freeze and Side chain in the Analyser card | Editor tests at the end |
 | **F3.3** | The side-chain line: the audio thread's copy and its analysis | Realtime and cost tests at the end; one agent-loop review of F3.1–F3.3 |
 | **F3.4** | The owner by eye and ear | Owner sign-off |
