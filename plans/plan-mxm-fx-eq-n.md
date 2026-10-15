@@ -1,6 +1,11 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
+**Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
+§7.6, decisions 31–34). **Its design approved by the agent-loop in round 3** (2026-10-15): rounds
+1–2 filed five blockers — the level taken out after the Amount, the EQ counted through the source's
+covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
+incremental fit — and nine further findings, all accepted and applied here. Decisions 31–34 wait for
+the owner. **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
 decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-10-15): rounds 1–2
 filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Approved
 by the owner** (2026-10-15, *"Approve all and build"*, decisions 27–30 as proposed); F4.0 done.
@@ -52,6 +57,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 28 | **F5 designed** (2026-10-15), §7.6, for the owner's approval: the side-chain input is the reference (decision 31); the fit writes only into free slots, the EQ as heard counted (decision 32); one Amount, 40 % by default, and no detail control, the fit stopping at what is just audible (decision 33); a Match card under the Band card (decision 34); power-mean long-term spectra of both inputs before the EQ, smoothed by the wider of a third of an octave and an ERB, level kept by K-weighted power, Ramos & López's greedy fit refined by Levenberg–Marquardt on the actual responses |
 | 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
 | 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
 | 25 | **F2 designed** (2026-10-14), §7.3: Pro-Q's five placements and, by the owner's choice, its Split on a Stereo band (L/R, or M/S with Alt) (decision 18); placed bands disabled in mono (decision 19); a placed dynamic band detects its own channel (decision 20); no new presets (decision 21); channel bands before mid/side bands (decision 22); 24 placements appended; curves each a channel's self-response, labelled. Approved by the owner 2026-10-15 |
@@ -106,6 +112,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 27 | **F4 proposes static cut bells and the player applies them**: the EQ's own bands, never continuous per-bin suppression; the alternative proposes dynamic bands (§7.1) directly (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 28 | **The finder listens for peaks that stay put**: a long, high-resolution listen to the input that keeps a peak only if it holds its frequency through most of what was heard; the alternative takes F3's frozen peaks as the candidates (§7.5) | **Settled** (owner, 2026-10-15) | F4.1 |
 | 29 | **One Amount, 20 % by default**: each cut takes that share of its peak's prominence, at most 12 dB; the alternative starts at 50 % (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
+| 31 | **The reference is the side-chain input**, the track the host routes there, the one F3 draws (decision 26); the alternative adds **Capture**, a second source: pressed, the EQ's own input before the EQ becomes the reference until pressed again (the reference played through the EQ, or the part of the song to match to), and Match then takes the input heard after the capture as the source; the capture kept while the editor is open, never saved (§7.6) | **Open**, for the owner | F5.1 |
+| 32 | **The fit writes only into free slots, the EQ as heard counted**, so the player's bands never change; the alternative replaces the EQ, every band refitted (§7.6) | **Open**, for the owner | F5.1 |
+| 33 | **One Amount, 40 % by default, and no detail control**: the fit adds bands until what is left is just audible or the slots run out; the alternative adds Pro-Q's detail control, a band count (§7.6) | **Open**, for the owner | F5.2 |
+| 34 | **The Match card goes under the Band card** in the first column, the window opening about 100 px taller; the alternative puts it under Resonances, about 190 px taller (§7.6) | **Open**, for the owner | F5.2 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
@@ -567,7 +577,7 @@ the band pool and the analysis layer, not beside them.
 | F2 | **Per-band stereo placement**: stereo, L, R, mid, side | Research §6: a minimum-phase band on one channel moves the image | How dynamic bands link across channels |
 | F3 | **Spectrum grab and analyser extras**: freeze, peak labels, drag a peak to create a bell; a reference overlay | Research §11: the gesture is documented, the peak picker is not | Which spectrum is grabbed; how peaks are chosen |
 | F4 | **Resonance finder**, writing ordinary cut bands. Designed in §7.5 | Research §8–§9: prominence, persistence and decay tests; professionals removed about a fifth of the excess; a cut does not shorten a ring | Decisions 27–30. Continuous spectral suppression must first clear oeksound's active patent, US 10,587,238 (research §9.6): a legal and product decision, outside F4 |
-| F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | The reference's source; whether the fit uses free slots |
+| F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands. Designed in §7.6 | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | Decisions 31–34 |
 | F6 | **Phase modes**: linear, perhaps analogue-matched | Research §5: 100–400 ms pre-ring on narrow low cuts | The collection's first latency report (§6) |
 | F7 | **Candidates**: character/saturation, auto-gain, band modulation, cross-instance collision | Research §13–§15, §12 | Each one is the owner's call |
 | F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
@@ -1162,6 +1172,175 @@ reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192
 | **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`). **Built** (2026-10-15): the finder's tests, the measurements above found by them | Unit tests at the end |
 | **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column (opening 1,532 × 692); the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md`. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `finder_cost`'s, recorded in the plugin's `NOTES.md` (*Find*) | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
+
+### 7.6 F5 — EQ match to a reference (revision 28, for the owner's approval)
+
+The next phase in the owner's order (decision 9). Matching is solved in outline, the same in every
+source (research §10.1): the long-term spectra of a reference and of the source, their difference
+in dB as the wanted response, smoothed, scaled by an amount, and fitted to bands. What is not
+settled is where the reference comes from, what the fit may touch, how much it takes, and the
+pitfalls every maker warns of (§10.7): matching notes instead of tone, narrow features from too
+little smoothing, the extremes over-corrected, short analyses, an analysis taken through the EQ
+itself, and the level.
+
+**The reference** (decision 31) is **the side-chain input** (§7.2), the reference track routed to
+the EQ's side chain by the host while the song plays: the reference F3 already draws (decision 26)
+is the one matched. Match is offered only on a layout with the side-chain port, and, like Find,
+only with the analyser on. While Match listens the key's spectrum is drawn as the Side chain view
+draws it, whatever that view's setting, and the audio thread copies the key (`Telemetry`'s switch
+is the view's or Match's), so the audio path does not change.
+
+**What it writes** (decision 32): **bands in the free slots only, the EQ counted.** The player's
+bands are never changed; what the EQ as heard already does is part of the match, so the fit adds
+what is left: a band already there is not proposed again, and after an Apply Match shows nothing
+left to add. Applied, the bands are ordinary static bands, editable and deletable, as F4's.
+
+**Match**, a toggle on its own card, **listens to both inputs before the EQ**: the side chain, and
+the input before the EQ, so the analysis is never taken through the EQ (§10.7).
+- **The long-term spectra.** Each input's width frames on F4's rungs (§7.5: 8,192 points, Hann,
+  half a frame's hop, each rung its own frequencies), over the input's own heard frames (at least
+  −60 dBFS, §7.5), as **power means**, per bin and in linear units: the reference's channels' power
+  averaged (mono: the one); the source's **covariance**, `S_LL = E|X_L|²`, `S_RR = E|X_R|²` and the
+  complex `S_LR = E[X_L·conj(X_R)]`, so the EQ can be counted as heard (below). Only then summed into
+  F4's 1/48-octave cells and taken to dB. Each input is gated alone, so a
+  silent stretch in either changes nothing. Proposals appear once each input has been heard for
+  **10 s**, and are fitted again about twice a second while it listens and whenever the EQ or Amount
+  moves; the card reads how long each has been heard, and Match's hover advises 30 s or more
+  (FabFilter's advice, §10.1).
+- **Smoothed** in dB by a Hann window in log-frequency **as wide as the wider of a third of an
+  octave and one ERB** (`24.7 + 0.108 f` Hz, as octaves `log2((f + ERB/2)/(f − ERB/2))`): a third of an octave above about 200 Hz removes the
+  comb of a key's notes (§10.2: twelve peaks an octave; a third of an octave is four of their
+  periods, where a Hann window's response is zero), and the ERB below, half an octave at 100 Hz,
+  averages across bass notes in different keys. A key's coarser pattern, one or two cycles an
+  octave, is tone balance at that resolution and stays, as in every product. Linear in dB,
+  smoothing each spectrum then subtracting is smoothing their difference (§10.2).
+- **The difference** `D(f) = L_ref(f) − L_src(f)`, `L_src` the source's channels' power averaged.
+- **What the EQ as heard does**, `E(f)`, exactly for its static curve: the source's smoothed level
+  through the EQ less its own. Per bin the EQ is the 2×2 transfer `H` of the graph's two stages
+  (§7.3: the channels' `diag(dl, dr)`, then mid/side's `diag(dm, ds)`), each band's complex response
+  from the numbers the audio runs (`Cascade::response`), gain scale, bypass and placement included;
+  the output power is `trace(H·S·Hᴴ)` on the linear covariance `S`, summed into cells and only then
+  taken to dB and smoothed as the spectra are. So a Mid or Side band, whose
+  power on a stereo source depends on how alike its channels are, counts as heard. A dynamic band
+  counts at its drawn gain, its curve at rest; what it does while it moves is not modelled. Mono:
+  the cascade's own response. A proposal is a Stereo band, the same response on both channels,
+  which commutes with both stages, so the source through the EQ and the proposals stands exactly at
+  `L_src + E +` the proposals' response.
+- **The target** is `T(f) = w(f) × (Amount × D(f) − E(f) − c)`, the level taken out after the
+  Amount (§10.1: an offset left in spends the first band on the mean level). **The range** is
+  **30 Hz – 16 kHz**: the weight `w` is 1 there, falling to 0 by a raised cosine over the half
+  octave beyond each end, so no corner is fitted and the extremes, where every maker found
+  over-correction (§10.3, §10.7), are asked for nothing, the EQ's own bands there left alone. The
+  constant `c` keeps the loudness: it is solved, by bisection with `w` included (over ±60 dB,
+  sixty halvings), so that the
+  source's K-weighted power (BS.1770's full K-weighting, its shelf and its high-pass) through the EQ
+  and the target, `L_src + E + T` on every cell, equals it through the EQ alone, `L_src + E`. So
+  applying the proposals moves the tone and not the level, at any Amount, and a reference at
+  another loudness, only a constant in `D`, matches the same.
+
+**The fit**, Ramos & López's order with Abel & Berners' refinement (§10.4), on points a
+twenty-fourth of an octave apart from 21.2 Hz to 22.6 kHz (the range and its ease), none above the
+DSP's `max_frequency` at the rate:
+1. What is left, `R = T −` the proposals' response (none at first), splits into **regions**:
+   maximal runs of consecutive points where `R` has one strict sign (a point where it is exactly 0
+   belongs to none). A region's **extreme** is its point of largest `|R|`, the lowest on a tie; its
+   **half-height crossings** are where, walking out from the extreme on each side, `|R|` first falls
+   to half the extreme's, interpolated linearly in log-frequency between that point and the one
+   before it; a side whose crossing lies beyond 30 Hz or 16 kHz, in the ease, or which has none,
+   **reaches that end**. Its width `BW` is in octaves
+   between the crossings, and its Q the cookbook bell's for that half-height width,
+   `√(2^BW) / (2^BW − 1)` (§9.2), held in 0.3–4. A region **counts** when its extreme exceeds the
+   deviation just audible for that Q, F4's `1.5·Q^0.3` dB (§8.8, Toole & Olive), a shelf's at Q 0.71.
+   Of those, the one with the largest area, `|R|` summed over its points times a twenty-fourth of an
+   octave, is taken; on a tie, the lower.
+2. It **seeds one band**: a region that reaches the low end a **low shelf**, the high end a **high
+   shelf**, both ends the one on the side its extreme is nearer in octaves — the EQ's second-order
+   shelf at Q 0.71, its gain the extreme, its corner the region's inner crossing (with both ends
+   reached, the extreme); any other a **bell** at the extreme, its gain the extreme, its Q as above.
+   A seed's gain is held to ±12 dB at once.
+3. **Every proposal is refined together**: Levenberg–Marquardt on the points' dB error, each band's
+   log-frequency, gain and log-Q (a shelf's corner and gain), on the bands' actual responses
+   (`Cascade::response_db`) at the rate the EQ runs; bounded, gain **±12 dB** (Ramos & López's cap,
+   §7.5's; Nercessian's ±10), a bell's Q **0.3–4** (narrower is detail the smoothing removed;
+   Nercessian 0.1–3) and every centre inside 30 Hz – 16 kHz. The scheme is F4's `fit_bell`'s:
+   forward differences at fixed steps, Marquardt's damping from 10⁻³ (×10 on a rejected step, ÷3 on
+   an accepted one, at most six tries an iteration), the damped normal equations solved by Gaussian
+   elimination with partial pivoting, each step clamped to the bounds; sixteen iterations, no early
+   exit.
+4. Again from 1, until **no region counts, the free slots run out**, or 24 bands.
+
+Every step is fixed and the fit runs in `f64` on one thread, so the same input gives the same
+bands on the same build. Bands come in order of importance, so stopping early
+always keeps the best ones (§10.4, *Reconciled*). 15–20 such bands were nearly indistinguishable
+from a 2,048-tap FIR (Ramos & López, §10.4), and after a third of an octave's smoothing Bank's rule
+asks about 15 over the range, so the free slots are rarely what stops it.
+
+**The fit runs on F4's worker thread** (§7.5), one job at a time, **the latest winning**: a request
+made while a fit runs waits, a newer one replacing it, and runs when the worker is free. Each fit
+carries a copy of the spectra, the listen it was made for and **its basis**: what was heard so far,
+the EQ as heard, the free slots and Amount. A result is drawn only while Match is on that listen;
+one made on an older basis is drawn until the newer fit arrives, but **Apply writes only proposals
+fitted on the current basis**, and is disabled while they are not.
+
+**How much** (decision 33). One **Amount**, 0–100 %, **40 % by default** (Ozone: keep it under
+50 %; Melda suggests 30–40 %; §10.3): `D` scaled in dB, as Pro-Q's gain scale and Logic's Apply
+scale theirs, not a dry/wet (§10.3, *Derived*). **No detail control**: the fit stops by itself at
+what is just audible, so how many bands there are follows from the difference and the Amount.
+Amount is view state, in whole percent, saved with the analyser's settings (§4): a project from
+before loads 40 %, a change marks the project dirty. Match, what it heard and its proposals are
+the editor's moment, never saved.
+
+**On the graph**, while Match has proposals: **the curve they would make**, dashed over the EQ's,
+as F4's, and each proposed band a **hollow diamond** at its centre and gain, labelled with its
+frequency and gain (`2.4 kHz +1.8 dB`), told apart from F4's triangles by shape, never hue; labels
+overlap by F3's rule. The proposals are one fit, so they are applied together: **Apply**, on the
+card, writes every proposal into the lowest free slots as one undo step, each slot's every field
+(`slot_writes`), a static, unkeyed Stereo bell or shelf. With every slot in use nothing is
+proposed and Match's hover says why.
+
+**One proposal set at a time**: turning on any of Find, Match and Freeze turns the other two off;
+the analyser off, or a layout without the side-chain port, ends Match. A reset or a new rate
+starts the listen again, as Find's (§7.5), and what an earlier listen found is never drawn in a
+later one; Match never outlives the editor.
+
+**The Match card** (decision 34) holds **Match**, **Amount**, the heard reading and **Apply**,
+hover only, no help text. It goes **under the Band card in the first column**, which stands at
+about 520 px to the second column's 610: the window opens about 100 px taller, hugged to the
+taller column, inside the 1,080 px budget. §5.1's rules hold.
+
+**Not in F5**: a reference from a file, a capture of the EQ's own input (decision 31's
+alternative), or another instance; matching left, right, mid or side separately; a dynamic band's
+motion; separate boost and cut ceilings, frequency handles or a detail control; applying one
+proposal of a fit alone; linear-phase matching (F6); matching dynamics.
+
+**Tests** (written at the end): the reference a noise through a known EQ (a +4 dB low shelf at
+120 Hz, a −3 dB bell at 800 Hz Q 1.4, a +3 dB bell at 3 kHz Q 1, a −2 dB high shelf at 9 kHz) and
+the source the same noise: at 100 % and at 40 % no region of what is left counts (the stopping
+rule, checked on the final fit), and at 100 % each of the four has a band of its sign within a
+sixth of an octave, the shelves seeded as shelves, at most eight bands in all; the reference 10 dB
+louder proposing the same within 0.5 dB; at 40 % and 100 % the source's K-weighted power through
+the EQ and the proposals within 0.5 dB of it through the EQ alone; a Mid band and a Left band in
+the EQ on a correlated stereo source counted as heard (the source's level through EQ and target
+against the rendered output's long-term spectrum, within 0.5 dB); a difference that is a comb of
+lines a semitone apart (each 12 dB over a flat floor, at any offset) smoothed flat within 0.25 dB
+from 30 Hz up, so proposing nothing; the EQ already carrying the difference proposing nothing,
+and after an Apply nothing left; with three free slots exactly the unbounded fit's state after its
+third band; silence in either input changing nothing, and nothing proposed before 10 s of each;
+the fit deterministic, the region rules' edges (a zero point, a region at each end and at both,
+the tie); a newer request superseding a waiting one, an older listen's result dropped, Apply
+refused on a stale basis; the toggles' rules, Match not offered without the port, the key copied
+only while it is wanted; Apply one undo step, every field written over a stale Off slot; Amount
+saved, an old project at 40 %, Match never saved; the opening size with the Match card, hugged,
+and the keyboard reaching it; the listening inside the analyser's 2 ms budget (§4) at 192 kHz.
+
+**Delivery** (tests at the end, one review over F5.1–F5.2):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F5.0** | Decisions 31–34, signed; their statuses and the plan's status line updated | Owner |
+| **F5.1** | The match's analysis and fit: the two long-term spectra and the source's cross-spectrum, smoothing, the difference, the EQ as heard, the target and its level, the greedy fit and its refinement (`editor/matcher.rs`), run on the worker | Unit tests at the end |
+| **F5.2** | The editor: the Match card, Amount, Apply, the graph's curve and diamonds, the toggles' rules, the key's switch, the worker's latest-wins jobs; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, the scope descriptions in the existing Child DOX Index rows of `plugins/AGENTS.md` and the root `AGENTS.md`, and this plan's status line and F5's delivery rows | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin and its host tests, `cargo test -p mxm-fx-eq-n`, the release cost measurement; one agent-loop review of F5.1–F5.2 |
+| **F5.3** | The owner by ear, in Bitwig with a reference on the side chain | Owner sign-off |
 
 ## 8. What must not break
 
