@@ -146,14 +146,22 @@ pub struct ViewSettings {
     /// prominence a proposed cut takes. Not part of what the display shows, so a change ends no
     /// freeze ([`ViewSettings::display`]).
     pub amount: u8,
+    /// The EQ match's Amount (plan §7.6), in whole percent: the share of the difference from the
+    /// reference the match takes.
+    pub match_amount: u8,
+    /// The EQ match's Detail (plan §7.6): at most how many bands it proposes, 1 to 24.
+    pub match_detail: u8,
 }
 
 impl ViewSettings {
-    /// The settings that decide what the display shows: every one but Amount. A freeze is held on
-    /// these (plan §7.4).
+    /// The settings that decide what the display shows: every one but the Amounts and Detail. A
+    /// freeze is held on these (plan §7.4).
     pub fn display(self) -> ViewSettings {
+        let defaults = ViewSettings::default();
         ViewSettings {
-            amount: crate::editor::finder::DEFAULT_AMOUNT,
+            amount: defaults.amount,
+            match_amount: defaults.match_amount,
+            match_detail: defaults.match_detail,
             ..self
         }
     }
@@ -161,6 +169,17 @@ impl ViewSettings {
     /// Amount as a share, 0 to 1.
     pub fn amount_share(self) -> f32 {
         f32::from(self.amount.min(100)) / 100.0
+    }
+
+    /// The match's Amount as a share, 0 to 1.
+    pub fn match_amount_share(self) -> f32 {
+        f32::from(self.match_amount.min(100)) / 100.0
+    }
+
+    /// The match's Detail, held inside 1 to 24.
+    pub fn match_detail(self) -> u8 {
+        self.match_detail
+            .clamp(1, crate::editor::matcher::MAX_DETAIL)
     }
 }
 
@@ -174,6 +193,8 @@ impl Default for ViewSettings {
             tilt: Tilt::default(),
             side_chain: false,
             amount: crate::editor::finder::DEFAULT_AMOUNT,
+            match_amount: crate::editor::matcher::DEFAULT_AMOUNT,
+            match_detail: crate::editor::matcher::DEFAULT_DETAIL,
         }
     }
 }
@@ -256,6 +277,19 @@ mod tests {
             serde_json::from_str(r#"{"analyser":true,"show":"Both","side_chain":true}"#).unwrap();
         assert_eq!(before_f4.amount, 20);
         assert!(before_f4.side_chain);
+        // F5's Amount and Detail (plan §7.6): a project from before them loads 40 % and 8.
+        assert_eq!((before_f4.match_amount, before_f4.match_detail), (40, 8));
+        let changed = ViewSettings {
+            match_amount: 70,
+            match_detail: 3,
+            amount: 50,
+            ..ViewSettings::default()
+        };
+        assert_eq!(
+            changed.display(),
+            ViewSettings::default().display(),
+            "no Amount or Detail is part of what the display shows"
+        );
         let round: ViewSettings =
             serde_json::from_str(&serde_json::to_string(&ViewSettings::default()).unwrap())
                 .unwrap();

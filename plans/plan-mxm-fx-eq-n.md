@@ -6,7 +6,7 @@
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
 incremental fit — and nine further findings, all accepted and applied here. **Signed by the owner**
 (2026-10-15): decisions 31 and 32 as proposed; 33 and 34 their alternatives — a Detail control, and
-the Match card under Resonances, approved by the agent-loop in round 4; F5.0 done. F5.1–F5.2 next. **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
+the Match card under Resonances, approved by the agent-loop in round 4; F5.0 done. F5.1–F5.2 built (2026-10-15); their code review is next. **Revision 27 — F4, the resonance finder, designed for the owner's approval** (2026-10-15; §7.5,
 decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-10-15): rounds 1–2
 filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Approved
 by the owner** (2026-10-15, *"Approve all and build"*, decisions 27–30 as proposed); F4.0 done.
@@ -1199,12 +1199,16 @@ left to add. Applied, the bands are ordinary static bands, editable and deletabl
 **Match**, a toggle on its own card, **listens to both inputs before the EQ**: the side chain, and
 the input before the EQ, so the analysis is never taken through the EQ (§10.7).
 - **The long-term spectra.** Each input's width frames on F4's rungs (§7.5: 8,192 points, Hann,
-  half a frame's hop, each rung its own frequencies), over the input's own heard frames (at least
-  −60 dBFS, §7.5), as **power means**, per bin and in linear units: the reference's channels' power
-  averaged (mono: the one); the source's **covariance**, `S_LL = E|X_L|²`, `S_RR = E|X_R|²` and the
-  complex `S_LR = E[X_L·conj(X_R)]`, so the EQ can be counted as heard (below). Only then summed into
-  F4's 1/48-octave cells and taken to dB. Each input is gated alone, so a
-  silent stretch in either changes nothing. Proposals appear once each input has been heard for
+  half a frame's hop, each rung its own frequencies), as **power means** over every frame, per bin
+  and in linear units: the reference's channels' power averaged (mono: the one); the source's
+  **covariance**, `S_LL = E|X_L|²`, `S_RR = E|X_R|²` and the complex `S_LR = E[X_L·conj(X_R)]`, so
+  the EQ can be counted as heard (below). Only then summed into F4's 1/48-octave cells and taken to
+  dB. **Every frame counts**, a quiet one with its little power and its time, so each rung's mean is
+  a time average alike and a silent stretch in either input scales every rung the same, a constant
+  the level takes out: it changes nothing but by what frames straddling it mix in, which a longer
+  listen dilutes. (Gating the frames, as F4 does, weighed a quiet passage differently on rungs of
+  different frame lengths, a step at their edges — found building F5.1.) Only a heard frame (at
+  least −60 dBFS, §7.5) counts towards the seconds heard. Proposals appear once each input has been heard for
   **10 s**, and are fitted again about twice a second while it listens and whenever the EQ or Amount
   moves; the card reads how long each has been heard, and Match's hover advises 30 s or more
   (FabFilter's advice, §10.1).
@@ -1227,27 +1231,30 @@ the input before the EQ, so the analysis is never taken through the EQ (§10.7).
   the cascade's own response. A proposal is a Stereo band, the same response on both channels,
   which commutes with both stages, so the source through the EQ and the proposals stands exactly at
   `L_src + E +` the proposals' response.
-- **The target** is `T(f) = w(f) × (Amount × D(f) − E(f) − c)`, the level taken out after the
-  Amount (§10.1: an offset left in spends the first band on the mean level). **The range** is
-  **30 Hz – 16 kHz**: the weight `w` is 1 there, falling to 0 by a raised cosine over the half
-  octave beyond each end, so no corner is fitted and the extremes, where every maker found
-  over-correction (§10.3, §10.7), are asked for nothing, the EQ's own bands there left alone. The
-  constant `c` keeps the loudness: it is solved, by bisection with `w` included (over ±60 dB,
-  sixty halvings), so that the
-  source's K-weighted power (BS.1770's full K-weighting, its shelf and its high-pass) through the EQ
-  and the target, `L_src + E + T` on every cell, equals it through the EQ alone, `L_src + E`. So
+- **The target** is `T(f) = Amount × D(f) − E(f) − c`, the level taken out after the Amount
+  (§10.1: an offset left in spends the first band on the mean level). **The range** is
+  **30 Hz – 16 kHz**: the fit's error is weighted by `w`, 1 there, falling to 0 by a raised cosine
+  over the half octave beyond each end, so no corner is fitted and the extremes, where every maker
+  found over-correction (§10.3, §10.7), ask for nothing — neither the difference measured there nor
+  its absence — the EQ's own bands there left alone and a shelf free to run on past an end.
+  (Easing the target itself to 0 dB had the fit spend a band undoing a shelf's tail below 30 Hz —
+  found building F5.1.) The constant `c` keeps the loudness: it is solved, by bisection (over
+  ±60 dB, sixty halvings), so that the source's K-weighted power (BS.1770's full K-weighting, its
+  shelf and its high-pass) through the EQ and the eased target, `L_src + E + w·T` on every cell,
+  equals it through the EQ alone, `L_src + E`. So
   applying the proposals moves the tone and not the level, at any Amount, and a reference at
   another loudness, only a constant in `D`, matches the same.
 
 **The fit**, Ramos & López's order with Abel & Berners' refinement (§10.4), on points a
 twenty-fourth of an octave apart from 21.2 Hz to 22.6 kHz (the range and its ease), none above the
 DSP's `max_frequency` at the rate:
-1. What is left, `R = T −` the proposals' response (none at first), splits into **regions**:
+1. What is left, weighted, `R = w × (T −` the proposals' response`)` (none at first), splits into
+   **regions**:
    maximal runs of consecutive points where `R` has one strict sign (a point where it is exactly 0
    belongs to none). A region's **extreme** is its point of largest `|R|`, the lowest on a tie; its
-   **half-height crossings** are where, walking out from the extreme on each side, `|R|` first falls
-   to half the extreme's, interpolated linearly in log-frequency between that point and the one
-   before it; a side whose crossing lies beyond 30 Hz or 16 kHz, in the ease, or which has none,
+   **half-height crossings** are where, walking out from the extreme on each side, `R` read on the
+   region's sign first falls to half the extreme's, so the walk may pass the region's own end,
+   interpolated linearly in log-frequency between that point and the one before it; a side whose crossing lies beyond 30 Hz or 16 kHz, in the ease, or which has none,
    **reaches that end**. Its width `BW` is in octaves
    between the crossings, and its Q the cookbook bell's for that half-height width,
    `√(2^BW) / (2^BW − 1)` (§9.2), held in 0.3–4. A region **counts** when its extreme exceeds the
@@ -1259,7 +1266,7 @@ DSP's `max_frequency` at the rate:
    shelf at Q 0.71, its gain the extreme, its corner the region's inner crossing (with both ends
    reached, the extreme); any other a **bell** at the extreme, its gain the extreme, its Q as above.
    A seed's gain is held to ±12 dB at once.
-3. **Every proposal is refined together**: Levenberg–Marquardt on the points' dB error, each band's
+3. **Every proposal is refined together**: Levenberg–Marquardt on the points' weighted dB error, each band's
    log-frequency, gain and log-Q (a shelf's corner and gain), on the bands' actual responses
    (`Cascade::response_db`) at the rate the EQ runs; bounded, gain **±12 dB** (Ramos & López's cap,
    §7.5's; Nercessian's ±10), a bell's Q **0.3–4** (narrower is detail the smoothing removed;
@@ -1281,7 +1288,9 @@ made while a fit runs waits, a newer one replacing it, and runs when the worker 
 carries a copy of the spectra, the listen it was made for and **its basis**: what was heard so far,
 the EQ as heard, the free slots, Amount and Detail. A result is drawn only while Match is on that listen;
 one made on an older basis is drawn until the newer fit arrives, but **Apply writes only proposals
-fitted on the current basis**, and is disabled while they are not.
+fitted on the current basis** — the EQ, the free slots, Amount and Detail as they stand; what was
+heard moves on with every frame, and a fit half a second old is still the match — and is
+disabled while they are not.
 
 **How much** (decision 33). One **Amount**, 0–100 %, **40 % by default** (Ozone: keep it under
 50 %; Melda suggests 30–40 %; §10.3): `D` scaled in dB, as Pro-Q's gain scale and Logic's Apply
@@ -1328,7 +1337,8 @@ against the rendered output's long-term spectrum, within 0.5 dB); a difference t
 lines a semitone apart (each 12 dB over a flat floor, at any offset) smoothed flat within 0.25 dB
 from 30 Hz up, so proposing nothing; the EQ already carrying the difference proposing nothing,
 and after an Apply nothing left; with three free slots, and at Detail 3, exactly the unbounded
-fit's state after its third band; silence in either input changing nothing, and nothing proposed before 10 s of each;
+fit's state after its third band; a silent stretch in the side chain changing the match by under
+0.5 dB anywhere over the range, and nothing proposed before 10 s of each;
 the fit deterministic, the region rules' edges (a zero point, a region at each end and at both,
 the tie); a newer request superseding a waiting one, an older listen's result dropped, Apply
 refused on a stale basis; the toggles' rules, Match not offered without the port, the key copied
@@ -1341,8 +1351,8 @@ and the keyboard reaching it; the listening inside the analyser's 2 ms budget (�
 | Step | Delivers | Gate |
 |---|---|---|
 | **F5.0** | Decisions 31–34, signed; their statuses and the plan's status line updated. **Done** (2026-10-15) | Owner |
-| **F5.1** | The match's analysis and fit: the two long-term spectra and the source's cross-spectrum, smoothing, the difference, the EQ as heard, the target and its level, the greedy fit and its refinement (`editor/matcher.rs`), run on the worker | Unit tests at the end |
-| **F5.2** | The editor: the Match card, Amount, Apply, the graph's curve and diamonds, the toggles' rules, the key's switch, the worker's latest-wins jobs; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, the scope descriptions in the existing Child DOX Index rows of `plugins/AGENTS.md` and the root `AGENTS.md`, and this plan's status line and F5's delivery rows | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin and its host tests, `cargo test -p mxm-fx-eq-n`, the release cost measurement; one agent-loop review of F5.1–F5.2 |
+| **F5.1** | The match's analysis and fit: the two long-term spectra and the source's cross-spectrum, smoothing, the difference, the EQ as heard, the target and its level, the greedy fit and its refinement (`editor/matcher.rs`), run on the worker. **Built** (2026-10-15), with the match's tests: the ease made the fit's weight and every frame counted, found by them | Unit tests at the end |
+| **F5.2** | The editor: the Match card, Amount, Apply, the graph's curve and diamonds, the toggles' rules, the key's switch, the worker's latest-wins jobs; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, the scope descriptions in the existing Child DOX Index rows of `plugins/AGENTS.md` and the root `AGENTS.md`, and this plan's status line and F5's delivery rows. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `match_cost`'s, recorded in the plugin's `NOTES.md` (*Match*) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin and its host tests, `cargo test -p mxm-fx-eq-n`, the release cost measurement; one agent-loop review of F5.1–F5.2 |
 | **F5.3** | The owner by ear, in Bitwig with a reference on the side chain | Owner sign-off |
 
 ## 8. What must not break

@@ -545,6 +545,10 @@ fn the_cursor_reaches_and_operates_every_control() {
             "find",
             "apply all",
             "amount",
+            "match",
+            "match apply",
+            "match amount",
+            "detail",
         ];
         ids.extend(extra);
         mxm_plugin_test::keyboard_checks::the_cursor_reaches_and_operates_from(
@@ -3430,5 +3434,234 @@ fn a_low_rate_builds_the_analysers_once() {
     assert_eq!(
         rig.app.proposals_version, version,
         "not forgotten again each frame"
+    );
+}
+
+// ---- Match (plan §7.6) -----------------------------------------------------------------------
+
+use super::matcher::{Fitted, MatchBand};
+use crate::analyser::{BLOCK_FRAMES, Block};
+
+/// A rig on a layout with the side-chain port, Match on.
+fn match_rig() -> Rig {
+    let mut rig = Rig::new();
+    rig.telemetry.publish_side_chain_port(true);
+    rig.press(Vec::new());
+    rig.app.set_match(true);
+    rig.press(Vec::new());
+    rig
+}
+
+/// `seconds` of noise on the input and another on the side chain, straight into the matcher.
+fn match_heard(rig: &mut Rig, seconds: f32) {
+    let rate = 48_000.0f32;
+    let mut state = 0x2545_f491u32;
+    let mut noise = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        0.3 * ((state as f32 / u32::MAX as f32) * 2.0 - 1.0)
+    };
+    for seq in 0..(rate * seconds) as u64 / BLOCK_FRAMES as u64 {
+        let mut block = Block {
+            seq,
+            generation: 0,
+            sample_rate: rate,
+            channels: 2,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for index in 0..BLOCK_FRAMES {
+            let (x, y) = (noise(), noise());
+            block.pre[0][index] = x;
+            block.pre[1][index] = x;
+            // The reference brighter: its own noise with a lift above 3 kHz.
+            block.key[0][index] = y;
+            block.key[1][index] = y;
+        }
+        rig.app.matcher.ingest(&block);
+    }
+}
+
+/// **Match needs the side chain and the analyser, and is one proposal set of three** (plan §7.6):
+/// not offered without the port, ended by the analyser off or the port gone; Find, Match and
+/// Freeze each end the others; the key is copied while Match listens; Match is never saved.
+#[test]
+fn match_needs_the_side_chain_and_excludes_find_and_freeze() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let settings = rig.app.params.view.get();
+    assert!(!rig.app.match_offered(&settings), "no port, no Match");
+    rig.telemetry.publish_side_chain_port(true);
+    rig.press(Vec::new());
+    assert!(rig.app.match_offered(&settings));
+
+    rig.app.set_find(true);
+    rig.app.set_match(true);
+    assert!(rig.app.matching && !rig.app.find, "Match ends Find");
+    rig.app.set_find(true);
+    assert!(rig.app.find && !rig.app.matching, "Find ends Match");
+    rig.app.set_match(true);
+    rig.app.ask_freeze();
+    assert!(!rig.app.matching && rig.app.freezing(), "Freeze ends Match");
+    rig.app.set_match(true);
+    assert!(rig.app.matching && !rig.app.freezing(), "Match ends Freeze");
+
+    rig.press(Vec::new());
+    assert!(
+        rig.telemetry.side_chain_wanted(),
+        "the key is copied while Match listens, the view off"
+    );
+    rig.app.set_match(false);
+    rig.press(Vec::new());
+    assert!(!rig.telemetry.side_chain_wanted());
+
+    rig.app.set_match(true);
+    let mut quiet = rig.app.params.view.get();
+    quiet.analyser = false;
+    rig.app.set_view(quiet);
+    rig.press(Vec::new());
+    assert!(!rig.app.matching, "the analyser off ends it");
+    let mut on = quiet;
+    on.analyser = true;
+    rig.app.set_view(on);
+    rig.press(Vec::new());
+    rig.app.set_match(true);
+    rig.telemetry.publish_side_chain_port(false);
+    rig.press(Vec::new());
+    assert!(!rig.app.matching, "a layout without the port ends it");
+    assert_eq!(rig.app.params.view.get(), on, "Match is never saved");
+}
+
+/// **Apply writes the match on its current basis only, every field, as one undo step** (plan
+/// §7.6): a fit from an older listen is dropped; a moved Amount refuses it; applied, a static,
+/// unkeyed Stereo shelf and bell over a stale Off slot, and the match empties until the next fit.
+#[test]
+fn match_applies_on_its_current_basis_every_field_in_one_step() {
+    let mut rig = match_rig();
+    let stale = rig.app.slot_writes(
+        0,
+        mxm_fx_eq_n_dsp::Band {
+            shape: Some(Shape::LowCut),
+            bypass: true,
+            freq: 300.0,
+            gain_db: 5.0,
+            q: 3.0,
+            slope: Slope::Db48,
+        },
+        mxm_fx_eq_n_dsp::Dynamics {
+            range_db: -9.0,
+            ..mxm_fx_eq_n_dsp::Dynamics::STATIC
+        },
+        true,
+        mxm_fx_eq_n_dsp::Placement::Left,
+    );
+    rig.app.instant(&stale);
+    rig.app.delete(0);
+    rig.press(Vec::new());
+    let settings = rig.app.params.view.get();
+    let bands = vec![
+        MatchBand {
+            shape: Shape::LowShelf,
+            freq: 120.0,
+            gain_db: 3.0,
+            q: matcher::SHELF_Q,
+        },
+        MatchBand {
+            shape: Shape::Bell,
+            freq: 2_000.0,
+            gain_db: -2.0,
+            q: 1.5,
+        },
+    ];
+    rig.app.accept_fit(Fitted {
+        bands: bands.clone(),
+        listen: rig.app.matcher.listen(),
+        basis: rig.app.match_basis(&settings),
+    });
+    rig.app.accept_fit(Fitted {
+        bands: Vec::new(),
+        listen: rig.app.matcher.listen().wrapping_sub(1),
+        basis: rig.app.match_basis(&settings),
+    });
+    assert_eq!(
+        rig.app.match_bands, bands,
+        "an older listen's fit is dropped"
+    );
+    assert!(rig.app.match_current(&settings));
+    let mut moved = settings;
+    moved.match_amount = 70;
+    assert!(
+        rig.app.apply_match(&moved).is_empty(),
+        "not on a basis that has moved"
+    );
+    let depth = rig.depth();
+    assert_eq!(rig.app.apply_match(&settings), [0, 1]);
+    assert!(rig.app.match_bands.is_empty());
+    rig.press(Vec::new());
+    let shelf = rig.band(0);
+    assert_eq!(shelf.shape, Some(Shape::LowShelf));
+    assert!(!shelf.bypass);
+    assert!((shelf.freq - 120.0).abs() < 0.5 && (shelf.gain_db - 3.0).abs() < 0.05);
+    assert_eq!(shelf.slope, crate::params::DEFAULT_SLOPE);
+    assert_eq!(rig.app.dynamics_now(0).range_db, 0.0, "static");
+    assert!(!rig.app.key_now(0));
+    assert_eq!(rig.app.placement_now(0), mxm_fx_eq_n_dsp::Placement::Stereo);
+    let bell = rig.band(1);
+    assert_eq!(bell.shape, Some(Shape::Bell));
+    assert!((bell.q - 1.5).abs() < 1.0e-3 && (bell.gain_db + 2.0).abs() < 0.05);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **A fit runs on the worker, asked on what is current when it is free** (plan §7.6): while one
+/// runs nothing more is asked; once it is back, the next is asked on the Amount moved meanwhile,
+/// and what it proposes is current.
+#[test]
+fn a_fit_runs_on_the_worker_and_the_latest_basis_wins() {
+    let mut rig = match_rig();
+    rig.app.inline_search = false;
+    match_heard(&mut rig, 11.0);
+    assert!(rig.app.matcher.spectra().listened());
+    rig.press(Vec::new());
+    let mut moved = rig.app.params.view.get();
+    moved.match_amount = 60;
+    rig.app.set_view(moved);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        rig.press(Vec::new());
+        if rig.app.match_current(&moved) || std::time::Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        rig.app.match_fitted_on,
+        rig.app.match_basis(&moved),
+        "the fit shown was asked on the Amount moved while one ran"
+    );
+}
+
+/// **The window opens holding the Match card** (plan §7.6, decision 34): under Resonances, the
+/// second column taller, the opening hugged to it inside the budget.
+#[test]
+fn the_match_card_sits_under_resonances() {
+    let mut rig = Rig::new();
+    // The cursor's registry is the frame before's.
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    let spots = mxm_ui::navigation::spots(&rig.ctx);
+    let at = |key: &str| {
+        spots
+            .iter()
+            .find(|spot| spot.key == key)
+            .map(|spot| spot.rect)
+            .unwrap_or_else(|| panic!("{key} is drawn"))
+    };
+    let (find, matching) = (at("find"), at("match"));
+    assert!(matching.top() > find.bottom(), "under Resonances");
+    assert!(
+        (matching.left() - find.left()).abs() < 1.0,
+        "in the same column"
     );
 }

@@ -15,12 +15,17 @@
 //!   and restore, and the editor ends it on close.
 //! - **Find** (plan §7.5) listens to the input for resonances while it is on, and its proposals are
 //!   applied as ordinary bands, each one undo step ([`EqApp::apply_proposals`]).
+//! - **Match** (plan §7.6) listens to the side chain and the input and proposes the bands that
+//!   bring the input's tone to the reference's, applied together as one undo step
+//!   ([`EqApp::apply_match`]). One proposal set at a time: Find, Match and Freeze each end the
+//!   others.
 
 pub mod column;
 pub mod finder;
 pub mod grab;
 pub mod graph;
 pub mod history;
+pub mod matcher;
 pub mod panel;
 pub mod spectrum;
 
@@ -43,7 +48,7 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_532, 692);
+pub const REFERENCE: (u32, u32) = (1_532, 938);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
@@ -64,12 +69,14 @@ pub const BAND_CARD: u64 = 2;
 pub const OUTPUT_CARD: u64 = 3;
 pub const ANALYSER_CARD: u64 = 4;
 pub const RESONANCES_CARD: u64 = 5;
-pub const CARDS: [u64; 5] = [
+pub const MATCH_CARD: u64 = 6;
+pub const CARDS: [u64; 6] = [
     GRAPH_CARD,
     BAND_CARD,
     OUTPUT_CARD,
     ANALYSER_CARD,
     RESONANCES_CARD,
+    MATCH_CARD,
 ];
 /// The graph's key in the cursor's registry.
 pub const GRAPH_KEY: &str = "graph";
@@ -109,11 +116,33 @@ pub fn band_index(slot: usize, field: Field) -> usize {
     slot * BAND_FIELDS.len() + field as usize
 }
 
-/// Why Find proposes nothing (plan §7.5), each with its hover.
+/// Why Find or Match proposes nothing (plan §7.5, §7.6), each with its hover.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FindRefusal {
     Full,
     NoGain,
+}
+
+/// What the editor hands its worker (plan §7.5, §7.6): Find's search or Match's fit, one at a time.
+pub enum Task {
+    Search(finder::Search),
+    Fit(matcher::Fit),
+}
+
+/// What the worker gives back.
+pub enum Done {
+    Found(finder::Found),
+    Fitted(matcher::Fitted),
+}
+
+impl finder::Job for Task {
+    type Done = Done;
+    fn run(self) -> Done {
+        match self {
+            Task::Search(search) => Done::Found(search.run()),
+            Task::Fit(fit) => Done::Fitted(fit.run()),
+        }
+    }
 }
 
 /// Why Split cannot act (plan §7.3), each with its hover.
@@ -256,9 +285,9 @@ pub struct EqApp {
     proposed_at: f64,
     /// An apply happened: the next frame proposes again at once.
     proposals_stale: bool,
-    /// The thread searches run on, while Find is on; and whether they run here instead, as a test
-    /// has them, so what they find is there the same frame.
-    worker: Option<finder::Worker>,
+    /// The thread searches and fits run on, while Find or Match is on; and whether they run here
+    /// instead, as a test has them, so what they find is there the same frame.
+    worker: Option<finder::Worker<Task>>,
     pub(crate) inline_search: bool,
     /// The finder's listen the shown candidates and proposals belong to.
     listen_seen: u64,
@@ -273,6 +302,20 @@ pub struct EqApp {
     /// The dashed curve the proposals would make: the proposals' version and the frequencies it
     /// was computed at, and its lines.
     pub(crate) proposal_curve: Option<(u64, Vec<f32>, Vec<Vec<f32>>)>,
+    /// Match (plan §7.6): on or off, the editor's moment, never saved; what it has heard; the
+    /// bands proposed and the basis they were fitted on; the basis and the matcher's revision the
+    /// last fit was asked on, and when.
+    pub(crate) matching: bool,
+    pub(crate) matcher: matcher::Matcher,
+    pub(crate) match_bands: Vec<matcher::MatchBand>,
+    pub(crate) match_fitted_on: Vec<u32>,
+    match_asked_on: Vec<u32>,
+    match_asked_at: Option<f64>,
+    match_revision: u64,
+    match_listen_seen: u64,
+    /// Counts each new set of match bands, so the graph's dashed curve is computed again only then.
+    pub(crate) match_version: u64,
+    pub(crate) match_curve: Option<(u64, Vec<f32>, Vec<Vec<f32>>)>,
     /// Where the primary button last went down on the graph: a click is judged there, not where it
     /// was let go (egui forgets the press's origin in the release's pass).
     pub(crate) press_at: Option<egui::Pos2>,
@@ -312,6 +355,7 @@ impl EqApp {
         let pointers = handles.params.pointers();
         let spectrum = spectrum::Spectrum::new(handles.telemetry.sample_rate());
         let finder = finder::Finder::new(handles.telemetry.sample_rate());
+        let matcher = matcher::Matcher::new(handles.telemetry.sample_rate());
         let analysed_rate = handles.telemetry.sample_rate();
         Self {
             params: handles.params,
@@ -355,6 +399,16 @@ impl EqApp {
             focus_proposal: None,
             proposal_labels: Vec::new(),
             proposal_curve: None,
+            matching: false,
+            matcher,
+            match_bands: Vec::new(),
+            match_fitted_on: Vec::new(),
+            match_asked_on: Vec::new(),
+            match_asked_at: None,
+            match_revision: u64::MAX,
+            match_listen_seen: 0,
+            match_version: 0,
+            match_curve: None,
             press_at: None,
             pointer_solo: None,
             latched: None,
@@ -411,9 +465,10 @@ impl EqApp {
         self.end_solo();
         self.drag = None;
         // A freeze is the editor's moment, and so is a listen: closing ends them (plan §7.4,
-        // §7.5).
+        // §7.5, §7.6).
         self.unfreeze();
         self.end_find();
+        self.end_match();
         self.telemetry.connect(false);
         self.gui = None;
         self.host = None;
@@ -858,9 +913,10 @@ impl EqApp {
     }
 
     /// Freeze turned on (plan §7.4): made where the spectrum is drawn next. It ends a listen, as
-    /// Find ends a freeze (plan §7.5).
+    /// Find and Match end a freeze (plan §7.5, §7.6).
     pub(crate) fn ask_freeze(&mut self) {
         self.end_find();
+        self.end_match();
         self.freeze_asked = true;
     }
 
@@ -872,6 +928,7 @@ impl EqApp {
         if on {
             if !self.find {
                 self.unfreeze();
+                self.end_match();
                 self.finder.restart();
                 self.listen_seen = self.finder.listen();
                 self.find = true;
@@ -966,9 +1023,6 @@ impl EqApp {
         if self.finder.listen() != self.listen_seen {
             self.forget_listen();
         }
-        if let Some(found) = self.worker.as_mut().and_then(finder::Worker::take) {
-            self.accept(found);
-        }
         if self.worker.as_ref().is_some_and(finder::Worker::busy) {
             return;
         }
@@ -1017,7 +1071,7 @@ impl EqApp {
             // gone), the search waits, and the next frame tries again with a new thread.
             self.worker
                 .as_mut()
-                .is_some_and(|worker| worker.start(search).is_ok())
+                .is_some_and(|worker| worker.start(Task::Search(search)).is_ok())
         };
         if started {
             if refind {
@@ -1031,6 +1085,16 @@ impl EqApp {
             self.worker = None;
             self.refind_pending |= refind;
             self.proposals_stale = true;
+        }
+    }
+
+    /// What the worker gave back, if it has: a search's, shown while Find is on, a fit's while
+    /// Match is.
+    pub(crate) fn take_done(&mut self) {
+        match self.worker.as_mut().and_then(finder::Worker::take) {
+            Some(Done::Found(found)) if self.find => self.accept(found),
+            Some(Done::Fitted(fitted)) if self.matching => self.accept_fit(fitted),
+            _ => {}
         }
     }
 
@@ -1131,6 +1195,184 @@ impl EqApp {
         self.proposals_version += 1;
         self.focus_proposal = None;
         self.proposals_stale = true;
+        slots
+    }
+
+    // ---- Match (plan §7.6) ----------------------------------------------------------------
+
+    /// Whether Match is offered: the analyser on, and a layout with the side-chain port.
+    pub(crate) fn match_offered(&self, settings: &ViewSettings) -> bool {
+        settings.analyser && self.telemetry.side_chain_port()
+    }
+
+    /// Turns Match on, ending Find and a freeze (one proposal set at a time), with a listen from
+    /// nothing; or off.
+    pub(crate) fn set_match(&mut self, on: bool) {
+        if on {
+            if !self.matching {
+                self.unfreeze();
+                self.end_find();
+                self.matcher.restart();
+                self.match_listen_seen = self.matcher.listen();
+                self.matching = true;
+            }
+        } else {
+            self.end_match();
+        }
+    }
+
+    /// Ends Match: what it heard and proposed goes with it.
+    pub(crate) fn end_match(&mut self) {
+        if !self.matching && self.match_bands.is_empty() {
+            return;
+        }
+        self.matching = false;
+        self.matcher.restart();
+        self.forget_match();
+    }
+
+    /// The listen started again — Match off, a reset, a new rate — so what was proposed goes, and a
+    /// fit still running for the old one with it.
+    pub(crate) fn forget_match(&mut self) {
+        self.worker = None;
+        self.match_bands.clear();
+        self.match_version += 1;
+        self.match_fitted_on.clear();
+        self.match_asked_on.clear();
+        self.match_asked_at = None;
+        self.match_revision = u64::MAX;
+        self.match_listen_seen = self.matcher.listen();
+    }
+
+    /// What a fit depends on besides what was heard: every parameter as this editor last set it
+    /// (the EQ as heard and the free slots), Amount, Detail and the layout.
+    pub(crate) fn match_basis(&self, settings: &ViewSettings) -> Vec<u32> {
+        let mut basis: Vec<u32> = (0..self.pointers.len())
+            .map(|index| self.normalised_now(index).to_bits())
+            .collect();
+        basis.push(u32::from(settings.match_amount));
+        basis.push(u32::from(settings.match_detail()));
+        basis.push(u32::from(self.telemetry.mono()));
+        basis
+    }
+
+    /// Fits again every [`finder::UPDATE_SECONDS`] while Match hears something new, and whenever the
+    /// EQ, Amount or Detail moves; on the worker, the latest winning: while one runs nothing is
+    /// asked, and the next is asked on what is current then.
+    pub(crate) fn update_match(&mut self, now: f64, settings: &ViewSettings) {
+        if !self.matching {
+            return;
+        }
+        if self.matcher.listen() != self.match_listen_seen {
+            self.forget_match();
+        }
+        if self.worker.as_ref().is_some_and(finder::Worker::busy) {
+            return;
+        }
+        let due = self
+            .match_asked_at
+            .is_none_or(|at| now - at >= finder::UPDATE_SECONDS || now < at);
+        let heard_new = due && self.matcher.revision() != self.match_revision;
+        let basis = self.match_basis(settings);
+        if !(heard_new || basis != self.match_asked_on) || !self.matcher.spectra().listened() {
+            return;
+        }
+        if self.find_refusal().is_some() {
+            self.match_asked_on = basis;
+            if !self.match_bands.is_empty() {
+                self.match_bands.clear();
+                self.match_version += 1;
+            }
+            return;
+        }
+        let revision = self.matcher.revision();
+        let fit = matcher::Fit {
+            spectra: self.matcher.spectra().clone(),
+            heard: self.heard_eq(),
+            amount: settings.match_amount_share(),
+            max_bands: usize::from(settings.match_detail()).min(self.free_slots().count()),
+            listen: self.matcher.listen(),
+            basis: basis.clone(),
+        };
+        let started = if self.inline_search {
+            self.accept_fit(fit.run());
+            true
+        } else {
+            if self.worker.is_none() {
+                self.worker = finder::Worker::new();
+            }
+            // Never in the frame: without a thread, the fit waits for the next frame's.
+            self.worker
+                .as_mut()
+                .is_some_and(|worker| worker.start(Task::Fit(fit)).is_ok())
+        };
+        if started {
+            self.match_revision = revision;
+            self.match_asked_on = basis;
+            if heard_new {
+                self.match_asked_at = Some(now);
+            }
+        } else {
+            self.worker = None;
+        }
+    }
+
+    /// What a fit proposes, shown, unless an earlier listen made it.
+    pub(crate) fn accept_fit(&mut self, fitted: matcher::Fitted) {
+        if fitted.listen != self.matcher.listen() {
+            return;
+        }
+        self.match_bands = fitted.bands;
+        self.match_fitted_on = fitted.basis;
+        self.match_version += 1;
+    }
+
+    /// Whether the bands shown were fitted on the EQ, the free slots, Amount and Detail as they
+    /// stand: only then does Apply write them (plan §7.6). What was heard moves on, and a fit half a
+    /// second old is still the match.
+    pub(crate) fn match_current(&self, settings: &ViewSettings) -> bool {
+        !self.match_bands.is_empty() && self.match_fitted_on == self.match_basis(settings)
+    }
+
+    /// Applies the match (plan §7.6): every band a static, unkeyed Stereo bell or shelf in the
+    /// lowest Off slots, every field written, its gain the gain heard under the gain scale. One
+    /// undo step. Returns the slots, empty when the bands are not current or do not fit.
+    pub(crate) fn apply_match(&mut self, settings: &ViewSettings) -> Vec<usize> {
+        let scale = self.gain_scale_now();
+        let bands = self.match_bands.clone();
+        let slots: Vec<usize> = self.free_slots().take(bands.len()).collect();
+        if !self.match_current(settings) || slots.len() < bands.len() || scale <= f32::EPSILON {
+            return Vec::new();
+        }
+        let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+        let mut writes: Vec<(usize, f32)> = Vec::new();
+        for (&slot, band) in slots.iter().zip(&bands) {
+            writes.extend(self.slot_writes(
+                slot,
+                mxm_fx_eq_n_dsp::Band {
+                    shape: Some(band.shape),
+                    bypass: false,
+                    freq: self.clamp_freq(band.freq),
+                    gain_db: (band.gain_db / scale).clamp(-range, range),
+                    q: band.q,
+                    slope: DEFAULT_SLOPE,
+                },
+                mxm_fx_eq_n_dsp::Dynamics::STATIC,
+                false,
+                mxm_fx_eq_n_dsp::Placement::Stereo,
+            ));
+        }
+        self.close_open();
+        self.instant(&writes);
+        self.selected = slots.first().copied();
+        self.edge = None;
+        if let Some(band) = bands.first() {
+            self.focus_freq = self.clamp_freq(band.freq);
+        }
+        // What was applied leaves the proposals at once; the next fit shows what is left.
+        self.match_bands.clear();
+        self.match_fitted_on.clear();
+        self.match_version += 1;
         slots
     }
 

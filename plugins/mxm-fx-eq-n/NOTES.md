@@ -246,6 +246,28 @@ and `audition.rs`'s tests hold the lifecycle.
     hard-edged notes smear lines tens of hertz wide, and a tempered scale shares harmonics between
     half its notes, which no persistence test can tell from a resonance (research §8.2). Under the
     melody a broadband bed at −10 dB; at −30 dB the bump is mostly seen through lines.
+- **Match, the EQ match to a reference** (plan §7.6, `editor/matcher.rs`):
+  - *Listening.* The side chain (the reference) and the pre-EQ input (the source) on F4's rungs
+    (`finder::rung_specs`), width frames only. **Every frame enters the long-term power means**; only
+    a heard one (−60 dBFS) counts towards the seconds heard. Gating the frames as F4 does weighed a
+    quiet passage differently on rungs of different frame lengths: a 3 s gap in the reference put a
+    step at 400 Hz and moved the low shelf by 1.2 dB. Counted, a quiet stretch is a constant the
+    level takes out; what frames straddling it mix in still moves a 16 s match by under 0.5 dB.
+  - *The EQ as heard* is exact for its static curve: the source's covariance per bin (`|L|²`,
+    `|R|²`, `L·conj(R)`) through the 2×2 transfer of the channel stage then the mid/side stage
+    (`through_power`). With the known EQ counted, the measured reference and the computed
+    through-the-EQ level agree within 0.003 dB on every cell.
+  - *The ease* weighs the fit's error, not the target: easing the target to 0 dB had the fit
+    answer a +4 dB low shelf with a −4.5 dB one at 30 Hz, undoing its own tail.
+  - *The fit* names F4's `fit_bell` scheme; its regions are read on the weighted residual, and the
+    half-height walk reads the region's sign, so it passes the region's own end.
+  - *Cost.* At 192 kHz in release (`match_cost`, 2026-10-15): 0.34 ms a frame on average and
+    0.85 ms at worst on the GUI thread, the copy included; a fit of the plan's four-band difference
+    4.8 ms on the worker. With the analyser's 0.27 ms, inside its 2 ms; Find and Match never run
+    together.
+  - *Test fixtures.* The resonances and the known EQ are the EQ's own matched bands
+    (`Filter::fresh`), so their shapes hold to Nyquist; the source the same noise as the reference,
+    so `D` is the EQ's response alone.
 
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.

@@ -157,6 +157,34 @@ pub fn proposal_text(proposal: &super::finder::Proposal) -> String {
     }
 }
 
+/// A match band's diamond (plan §7.6): where it is drawn, at its centre and gain, held inside the
+/// graph.
+pub fn match_marker(axes: &Axes, band: &super::matcher::MatchBand) -> Pos2 {
+    let margin = DIAMOND_RADIUS + 2.0;
+    pos2(
+        axes.x(band.freq),
+        axes.y(band.gain_db)
+            .clamp(axes.rect.top() + margin, axes.rect.bottom() - margin),
+    )
+}
+
+/// A match band's hollow diamond around `at`.
+pub fn match_diamond(at: Pos2) -> [Pos2; 4] {
+    [
+        at + vec2(0.0, -DIAMOND_RADIUS),
+        at + vec2(DIAMOND_RADIUS, 0.0),
+        at + vec2(0.0, DIAMOND_RADIUS),
+        at + vec2(-DIAMOND_RADIUS, 0.0),
+    ]
+}
+
+const DIAMOND_RADIUS: f32 = 6.0;
+
+/// A match band's label: its frequency and the gain Apply gives it.
+pub fn match_text(band: &super::matcher::MatchBand) -> String {
+    format!("{} {:+.1} dB", format_freq(band.freq), band.gain_db)
+}
+
 /// The hover over a proposal (plan §7.5).
 const PROPOSAL_DESCRIPTION: &str =
     "Click to make this cut as a band, or drag up or down to set its depth as you make it.";
@@ -604,15 +632,35 @@ impl EqApp {
     /// The lines the proposals would make (plan §7.5), over `curves`' frequencies: the one curve,
     /// or with placed bands among the EQ and the proposals each channel's.
     fn proposal_lines(&self, curves: &Curves) -> Vec<Vec<f32>> {
+        let rate = self.sample_rate();
+        let extra: Vec<(Cascade, Placement)> = self
+            .proposals
+            .iter()
+            .flat_map(|proposal| &proposal.bands)
+            .map(|band| (band.cascade(rate), band.domain.placement()))
+            .collect();
+        self.lines_with(curves, extra)
+    }
+
+    /// The lines the match would make (plan §7.6), as [`proposal_lines`](Self::proposal_lines)'.
+    fn match_lines(&self, curves: &Curves) -> Vec<Vec<f32>> {
+        let rate = self.sample_rate();
+        let extra: Vec<(Cascade, Placement)> = self
+            .match_bands
+            .iter()
+            .map(|band| (band.cascade(rate), Placement::Stereo))
+            .collect();
+        self.lines_with(curves, extra)
+    }
+
+    /// The lines of the EQ as heard with `extra` bands, over `curves`' frequencies: the one curve,
+    /// or with placed bands among them each channel's.
+    fn lines_with(&self, curves: &Curves, extra: Vec<(Cascade, Placement)>) -> Vec<Vec<f32>> {
         use super::finder::{Domain, domain_db, stages};
         let heard = self.heard_eq();
         let rate = heard.sample_rate;
         let mut bands: Vec<(Cascade, Placement)> = heard.bands;
-        for proposal in &self.proposals {
-            for band in &proposal.bands {
-                bands.push((band.cascade(rate), band.domain.placement()));
-            }
-        }
+        bands.extend(extra);
         let channels = bands
             .iter()
             .any(|(_, placement)| matches!(placement, Placement::Left | Placement::Right));
@@ -1059,8 +1107,10 @@ impl EqApp {
             }
         }
 
-        // The spectra, behind everything: post as a fill, pre as an outline.
-        let settings = self.params.view.get();
+        // The spectra, behind everything: post as a fill, pre as an outline. While Match listens,
+        // the side chain it matches to is drawn as the Side chain view draws it (plan §7.6).
+        let mut settings = self.params.view.get();
+        settings.side_chain |= self.matching;
         if !settings.analyser && (self.freezing() || self.hold_basis.is_some()) {
             self.unfreeze();
         }
@@ -1415,6 +1465,68 @@ impl EqApp {
             }
         } else {
             self.proposal_labels.clear();
+        }
+
+        // Match's proposals (plan §7.6): the curve they would make, dashed over the EQ's, and a
+        // hollow diamond at each band's centre and gain with its frequency and gain, told apart
+        // from Find's triangles by shape, never hue; a label that would overlap a stronger one's
+        // is not drawn.
+        if self.matching && !self.match_bands.is_empty() {
+            let current = self
+                .match_curve
+                .as_ref()
+                .is_some_and(|(version, freqs, _)| {
+                    *version == self.match_version && *freqs == curves.freqs
+                });
+            if !current {
+                let lines = self.match_lines(curves);
+                self.match_curve = Some((self.match_version, curves.freqs.clone(), lines));
+            }
+            if let Some((_, _, lines)) = &self.match_curve {
+                for dbs in lines {
+                    painter.extend(Painted::dashed_line(
+                        &line(dbs),
+                        Stroke::new(1.5, tokens.text_primary.gamma_multiply(0.8)),
+                        4.0,
+                        3.0,
+                    ));
+                }
+            }
+            let font = egui::FontId::proportional(11.0);
+            let marks: Vec<(Pos2, String, Rect)> = self
+                .match_bands
+                .iter()
+                .map(|band| {
+                    let at = match_marker(axes, band);
+                    let text = match_text(band);
+                    let size = painter
+                        .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
+                        .size();
+                    (
+                        at,
+                        text,
+                        peak_label(axes, at - vec2(0.0, DIAMOND_RADIUS), size),
+                    )
+                })
+                .collect();
+            let rects: Vec<Rect> = marks.iter().map(|(_, _, rect)| *rect).collect();
+            let drawn = grab::unobstructed(&rects, None);
+            for ((at, text, rect), drawn) in marks.into_iter().zip(drawn) {
+                painter.add(Painted::convex_polygon(
+                    match_diamond(at).to_vec(),
+                    tokens.surface_1,
+                    Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
+                ));
+                if drawn {
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        font.clone(),
+                        tokens.text_primary,
+                    );
+                }
+            }
         }
 
         // The edges, once MICRO + ← → took one for MOVE.

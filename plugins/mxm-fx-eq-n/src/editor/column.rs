@@ -1,5 +1,6 @@
 //! The columns to the graph's right (plan §5.1, decision 30): the Band card for the selected band
-//! alone in the first, then Output, Analyser and Resonances (plan §7.5) in the second. Each body is
+//! alone in the first, then Output, Analyser, Resonances (plan §7.5) and Match (plan §7.6, decision
+//! 34) in the second. Each body is
 //! a `mxm_ui::tree`, measured and drawn from one description, and every
 //! control is the collection's own, through the shared binding where it edits one host value.
 //! Every card is one of the cursor's (`navigation::bar_card`), and every control joins it.
@@ -20,15 +21,17 @@ use mxm_ui::tree::{self, Kind, Node, leaf, row_gap, stack};
 use nice_plug::prelude::Param;
 
 use super::{
-    ANALYSER_CARD, BAND_CARD, EqApp, Field, FindRefusal, OUTPUT_CARD, RESONANCES_CARD, SOLO_KEY,
+    ANALYSER_CARD, BAND_CARD, EqApp, Field, FindRefusal, MATCH_CARD, OUTPUT_CARD, RESONANCES_CARD,
+    SOLO_KEY,
 };
 use crate::params::{EqParams, SHAPES, band_ids, shape_name};
-use crate::view::{Resolution, Show, Speed, Tilt};
+use crate::view::{Resolution, Show, Speed, Tilt, ViewSettings};
 
 /// The second column's titles, top to bottom.
 pub const OUTPUT_TITLE: &str = "Output";
 pub const ANALYSER_TITLE: &str = "Analyser";
 pub const RESONANCES_TITLE: &str = "Resonances";
+pub const MATCH_TITLE: &str = "Match";
 
 /// A slider in the column.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -83,6 +86,16 @@ pub enum Leaf {
     Amount,
     /// Makes every proposed cut as a band.
     ApplyAll,
+    /// Listens to the side chain and the input and proposes a match (plan §7.6).
+    Match,
+    /// The share of the difference from the reference the match takes.
+    MatchAmount,
+    /// At most how many bands the match proposes.
+    Detail,
+    /// How long each input has been heard.
+    MatchHeard,
+    /// Makes the match's bands.
+    MatchApply,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -135,6 +148,133 @@ const AMOUNT_DESCRIPTION: &str = "How much of each resonance a proposed cut take
 const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in one step Undo takes back.";
 /// The Amount slider's key in the cursor's registry and its held value's.
 const AMOUNT_KEY: &str = "amount";
+const MATCH_DESCRIPTION: &str = "Listens to the sound coming in and to the side chain, and proposes      the bands that bring the sound's tone towards the side chain's. Route a reference track to      the side chain. Needs the analyser.";
+const MATCH_NO_PORT_DESCRIPTION: &str = "Needs a side chain, which this layout does not have. Use      the EQ with its side-chain input to match to a reference track.";
+const MATCH_FULL_DESCRIPTION: &str =
+    "Every band slot is in use, so no band can be proposed. Delete a band to make room.";
+const MATCH_NO_GAIN_DESCRIPTION: &str =
+    "The gain scale is at 0 %, where a bell or a shelf does nothing, so no band is proposed.";
+const MATCH_AMOUNT_DESCRIPTION: &str =
+    "How much of the difference from the reference the match takes.";
+const DETAIL_DESCRIPTION: &str =
+    "At most how many bands the match proposes. Fewer keeps the broadest differences.";
+const MATCH_HEARD_DESCRIPTION: &str = "How long the sound coming in and the side chain have been      heard. Thirty seconds or more of each makes a steadier match.";
+const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in one step Undo takes back.";
+const MATCH_AMOUNT_KEY: &str = "match amount";
+const DETAIL_KEY: &str = "detail";
+/// The heard reading's height.
+const HEARD_HEIGHT: f32 = 16.0;
+
+/// A slider on view state, not a parameter (plan §7.5, §7.6): Find's Amount, Match's Amount and
+/// Detail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ViewSlider {
+    FindAmount,
+    MatchAmount,
+    Detail,
+}
+
+/// Detail's steps: one band fine, four coarse.
+const DETAIL_SPAN: f64 = (super::matcher::MAX_DETAIL - 1) as f64;
+
+impl ViewSlider {
+    fn key(self) -> &'static str {
+        match self {
+            ViewSlider::FindAmount => AMOUNT_KEY,
+            ViewSlider::MatchAmount => MATCH_AMOUNT_KEY,
+            ViewSlider::Detail => DETAIL_KEY,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ViewSlider::Detail => "Detail",
+            _ => "Amount",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            ViewSlider::FindAmount => AMOUNT_DESCRIPTION,
+            ViewSlider::MatchAmount => MATCH_AMOUNT_DESCRIPTION,
+            ViewSlider::Detail => DETAIL_DESCRIPTION,
+        }
+    }
+
+    fn widest(self) -> &'static str {
+        match self {
+            ViewSlider::Detail => "24 bands",
+            _ => "100 %",
+        }
+    }
+
+    fn normalised(self, settings: &ViewSettings) -> f64 {
+        match self {
+            ViewSlider::FindAmount => f64::from(settings.amount.min(100)) / 100.0,
+            ViewSlider::MatchAmount => f64::from(settings.match_amount.min(100)) / 100.0,
+            ViewSlider::Detail => f64::from(settings.match_detail() - 1) / DETAIL_SPAN,
+        }
+    }
+
+    fn default(self) -> f64 {
+        self.normalised(&ViewSettings::default())
+    }
+
+    fn steps(self) -> mxm_ui::control::Steps {
+        match self {
+            ViewSlider::Detail => mxm_ui::control::Steps {
+                fine_up: 1.0 / DETAIL_SPAN,
+                fine_down: 1.0 / DETAIL_SPAN,
+                coarse_up: 4.0 / DETAIL_SPAN,
+                coarse_down: 4.0 / DETAIL_SPAN,
+            },
+            _ => mxm_ui::control::Steps::DEFAULT,
+        }
+    }
+
+    fn text(self, normalised: f64) -> String {
+        match self {
+            ViewSlider::Detail => match detail_of(normalised) {
+                1 => "1 band".to_owned(),
+                bands => format!("{bands} bands"),
+            },
+            _ => format!("{} %", (normalised * 100.0).round() as u32),
+        }
+    }
+
+    /// A typed value, as the normalised value; `None` for anything else.
+    fn parse(self, typed: &str) -> Option<f64> {
+        match self {
+            ViewSlider::Detail => {
+                let number: f64 = typed
+                    .trim()
+                    .trim_end_matches("bands")
+                    .trim_end_matches("band")
+                    .trim()
+                    .parse()
+                    .ok()?;
+                number
+                    .is_finite()
+                    .then(|| (number.round() - 1.0).clamp(0.0, DETAIL_SPAN) / DETAIL_SPAN)
+            }
+            _ => parse_percent(typed),
+        }
+    }
+
+    fn write(self, settings: &mut ViewSettings, normalised: f64) {
+        let percent = (normalised * 100.0).round().clamp(0.0, 100.0) as u8;
+        match self {
+            ViewSlider::FindAmount => settings.amount = percent,
+            ViewSlider::MatchAmount => settings.match_amount = percent,
+            ViewSlider::Detail => settings.match_detail = detail_of(normalised),
+        }
+    }
+}
+
+/// Detail at a normalised value: 1 to 24 bands.
+fn detail_of(normalised: f64) -> u8 {
+    (1.0 + (normalised.clamp(0.0, 1.0) * DETAIL_SPAN).round()) as u8
+}
 
 /// What the Band card offers of placement (plan §7.3): the choice and Split in a stereo layout;
 /// in mono nothing for a Stereo band, and the way back to Stereo for a placed one.
@@ -437,6 +577,42 @@ pub fn resonances_tree() -> Node<Leaf> {
     ])
 }
 
+/// The Match card (plan §7.6): Match and Apply on a row, Amount and Detail under them, then how long
+/// each input has been heard.
+pub fn match_tree() -> Node<Leaf> {
+    let slider = |key: Leaf, label: &str, widest: &str| {
+        leaf(
+            key,
+            Kind::Slider {
+                label: label.to_owned(),
+                quiet: false,
+                widest: widest.to_owned(),
+            },
+        )
+    };
+    stack(vec![
+        tree::row(vec![
+            leaf(
+                Leaf::Match,
+                Kind::Toggle {
+                    label: "Match".to_owned(),
+                },
+            ),
+            button_leaf(Leaf::MatchApply, "Apply"),
+        ]),
+        slider(Leaf::MatchAmount, "Amount", "100 %"),
+        slider(Leaf::Detail, "Detail", "24 bands"),
+        leaf(
+            Leaf::MatchHeard,
+            Kind::Custom {
+                min_width: 0.0,
+                height: tree::Height::Fixed(HEARD_HEIGHT),
+                fills: true,
+            },
+        ),
+    ])
+}
+
 /// A typed Amount, `35`, `35%` or `35 %`, as a share; `None` for anything else.
 fn parse_percent(typed: &str) -> Option<f64> {
     let number: f64 = typed.trim().trim_end_matches('%').trim().parse().ok()?;
@@ -501,7 +677,7 @@ impl EqApp {
         );
     }
 
-    /// The second column: Output, Analyser and Resonances, top to bottom, each one of the
+    /// The second column: Output, Analyser, Resonances and Match, top to bottom, each one of the
     /// cursor's.
     pub(crate) fn second_column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         self.card(
@@ -530,6 +706,16 @@ impl EqApp {
             RESONANCES_CARD,
             RESONANCES_TITLE,
             |_, _| resonances_tree(),
+            false,
+            None,
+        );
+        ui.add_space(SPACE_3);
+        self.card(
+            ui,
+            tokens,
+            MATCH_CARD,
+            MATCH_TITLE,
+            |_, _| match_tree(),
             false,
             None,
         );
@@ -930,7 +1116,81 @@ impl EqApp {
                     self.apply_proposals(&all, false);
                 }
             }
-            Leaf::Amount => self.paint_amount(ui, tokens, rect),
+            Leaf::Amount => self.paint_view_slider(ui, tokens, rect, ViewSlider::FindAmount),
+            Leaf::MatchAmount => self.paint_view_slider(ui, tokens, rect, ViewSlider::MatchAmount),
+            Leaf::Detail => self.paint_view_slider(ui, tokens, rect, ViewSlider::Detail),
+            Leaf::Match => {
+                let settings = self.params.view.get();
+                let offered = self.match_offered(&settings);
+                let mut on = self.matching;
+                let description = if !self.telemetry.side_chain_port() {
+                    MATCH_NO_PORT_DESCRIPTION
+                } else {
+                    match self.find_refusal() {
+                        Some(FindRefusal::Full) if self.matching => MATCH_FULL_DESCRIPTION,
+                        Some(FindRefusal::NoGain) if self.matching => MATCH_NO_GAIN_DESCRIPTION,
+                        _ => MATCH_DESCRIPTION,
+                    }
+                };
+                let changed = navigation::at(ui, "match", |ui| {
+                    ui.add_enabled_ui(offered, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Match",
+                            "Match a reference",
+                            &mut on,
+                            false,
+                            description,
+                            0.0,
+                        )
+                    })
+                    .inner
+                });
+                if changed {
+                    self.set_match(on);
+                }
+            }
+            Leaf::MatchApply => {
+                let settings = self.params.view.get();
+                let current = self.match_current(&settings);
+                let clicked = navigation::at(ui, "match apply", |ui| {
+                    let response = ui
+                        .add_enabled(
+                            current,
+                            egui::Button::new("Apply")
+                                .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
+                        )
+                        .on_hover_text(MATCH_APPLY_DESCRIPTION)
+                        .on_disabled_hover_text(MATCH_APPLY_DESCRIPTION);
+                    navigation::mark_unclaimed(ui, response.id, response.rect);
+                    response.clicked()
+                });
+                if clicked {
+                    self.apply_match(&settings);
+                }
+            }
+            Leaf::MatchHeard => {
+                let [input, reference] = self.matcher.spectra().heard_seconds();
+                let reading = if self.matching {
+                    format!("Heard: input {input:.0} s, side chain {reference:.0} s")
+                } else {
+                    "Heard: nothing yet".to_owned()
+                };
+                let response = ui.allocate_rect(rect, egui::Sense::hover());
+                ui.painter_at(rect).text(
+                    rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    &reading,
+                    egui::FontId::proportional(12.0),
+                    tokens.text_secondary,
+                );
+                response
+                    .on_hover_text(MATCH_HEARD_DESCRIPTION)
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &reading)
+                    });
+            }
             Leaf::SideChainView => {
                 let mut settings = self.params.view.get();
                 let changed = navigation::at(ui, "side chain view", |ui| {
@@ -961,29 +1221,31 @@ impl EqApp {
         }
     }
 
-    /// Amount (plan §7.5): view state, not a parameter, so the kit's slider with its value held
-    /// here while it is dragged, and the settings written — the project marked dirty — once, when
-    /// it is let go. A typed value, a step key or a double-click is a gesture that ends at once.
-    fn paint_amount(&mut self, ui: &mut Ui, tokens: &Tokens, rect: Rect) {
+    /// A view-state slider (plan §7.5, §7.6): not a parameter, so the kit's slider with its value
+    /// held here while it is dragged, and the settings written — the project marked dirty — once,
+    /// when it is let go. A typed value, a step key or a double-click is a gesture that ends at once.
+    fn paint_view_slider(&mut self, ui: &mut Ui, tokens: &Tokens, rect: Rect, which: ViewSlider) {
         let mut settings = self.params.view.get();
-        let id = egui::Id::new(("mxm-fx-eq-n", AMOUNT_KEY));
+        let key = which.key();
+        let id = egui::Id::new(("mxm-fx-eq-n", key));
         let mut normalised = ui
             .data(|data| data.get_temp::<f64>(id))
-            .unwrap_or(f64::from(settings.amount.min(100)) / 100.0);
-        let text = format!("{} %", (normalised * 100.0).round() as u32);
+            .unwrap_or(which.normalised(&settings));
+        let text = which.text(normalised);
         let view = mxm_ui::control::ParamView {
-            default: f64::from(super::finder::DEFAULT_AMOUNT) / 100.0,
-            widest: "100 %",
-            ..mxm_ui::control::ParamView::new("Amount", &text, AMOUNT_DESCRIPTION)
+            default: which.default(),
+            widest: which.widest(),
+            steps: which.steps(),
+            ..mxm_ui::control::ParamView::new(which.label(), &text, which.description())
         };
-        let entry = self.text.entry(AMOUNT_KEY).or_default();
+        let entry = self.text.entry(key).or_default();
         // `Escape` abandons an open entry, as on every bound control.
         if entry.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             *entry = None;
         }
-        let outcome = navigation::at(ui, AMOUNT_KEY, |ui| {
+        let outcome = navigation::at(ui, key, |ui| {
             mxm_ui::control::slider(
                 ui,
                 tokens,
@@ -996,7 +1258,7 @@ impl EqApp {
         });
         let submitted = if outcome.changed && entry.is_some() {
             // A committed text entry, parsed here because this editor wrote the reading.
-            let parsed = entry.as_deref().and_then(parse_percent);
+            let parsed = entry.as_deref().and_then(|typed| which.parse(typed));
             *entry = None;
             parsed
         } else {
@@ -1008,8 +1270,8 @@ impl EqApp {
         if outcome.gesture_ended || submitted.is_some() {
             ui.data_mut(|data| data.remove_temp::<f64>(id));
         }
-        if let Some(share) = submitted {
-            settings.amount = (share * 100.0).round().clamp(0.0, 100.0) as u8;
+        if let Some(normalised) = submitted {
+            which.write(&mut settings, normalised);
             self.set_view(settings);
         }
     }

@@ -11,8 +11,9 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
 and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's per-band stereo placement
-(plan §7.3), F3's freeze and grab (plan §7.4) and F4's resonance finder (plan §7.5). DAW and
-listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's and F4.3's. No control map (plan §6): no collection role fits on-demand bands.
+(plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan §7.5) and F5's EQ
+match (plan §7.6). DAW and listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's, F4.3's and
+F5.3's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -27,7 +28,8 @@ listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's and F4.3's. No control
 - `src/editor/`: the editor. `mod.rs` its state, writes and keyboard commands; `panel.rs` the frame;
   `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs` the
   analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
-  finder and its worker, its tests in `finder/tests.rs`; `tests.rs` the editor's tests.
+  finder, the rungs and the worker, its tests in `finder/tests.rs`; `matcher.rs` F5's EQ match,
+  its tests in `matcher/tests.rs`; `tests.rs` the editor's tests.
 - `src/tests.rs`: the shell's tests.
 - `host-tests/`: the slow tier, the release bundle through MXM Player.
 
@@ -143,7 +145,7 @@ transaction.
 
 - **Layout**, the named exception to paged cards: the graph takes every spare point, the Out meter
   beside it, then **two fixed-width columns** of cards to its right, never under it (decision 30):
-  the Band card alone, then Output, Analyser and Resonances, scrolling together; it opens at
+  the Band card alone, then Output, Analyser, Resonances and Match, scrolling together; it opens at
   `REFERENCE`, hugged to the taller column, narrows to `MINIMUM`, and every card is a tree passing
   the tree checks in every Band state, the Band card reserved to its tallest shape (the
   opening-size tests).
@@ -190,6 +192,14 @@ transaction.
   dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
   the GUI thread pays only for listening and a copy of the evidence, inside
   `spectrum::BUDGET_MS` (`finder_cost`).
+- **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, under
+  Resonances, offered only with the analyser on and the side-chain port; Find, Match and Freeze
+  each end the others; it is never saved. It listens to the side chain and the pre-EQ input
+  (`matcher.rs`, the key copied while it listens) and proposes bells and shelves for the free
+  slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on the graph; **Apply**
+  writes them all, every field, one undo step, only on the basis they were fitted on. **Amount**
+  (40 %) and **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job
+  at a time (`editor::Task`); listening stays inside `spectrum::BUDGET_MS` (`match_cost`).
 
 ## The host tests (`host-tests/`)
 

@@ -121,4 +121,4 @@ clap-validator validate "target/bundled/mxm-fx-eq-n.clap"
 
 | Doc | Scope |
 |---|---|
-| [`mxm-fx-eq-n/AGENTS.md`](mxm-fx-eq-n/AGENTS.md) | Identity, the 290 permanent parameters and their reserved stepped domains, F1's dynamic bands and their side chain, F2's stereo placement, the empty-EQ Init, solo, the analyser and meter, F3's freeze and grab, F4's resonance finder, the graph-and-columns editor, the graph as a surface, plain undo, the factory set, the host tests |
+| [`mxm-fx-eq-n/AGENTS.md`](mxm-fx-eq-n/AGENTS.md) | Identity, the 290 permanent parameters and their reserved stepped domains, F1's dynamic bands and their side chain, F2's stereo placement, the empty-EQ Init, solo, the analyser and meter, F3's freeze and grab, F4's resonance finder, F5's EQ match, the graph-and-columns editor, the graph as a surface, plain undo, the factory set, the host tests |

@@ -163,9 +163,9 @@ impl Domain {
 }
 
 /// One frame length on one rung: a ring of left and right, its plan and its buffers.
-struct Frames {
-    len: usize,
-    hop: usize,
+pub(super) struct Frames {
+    pub(super) len: usize,
+    pub(super) hop: usize,
     history: [Vec<f32>; 2],
     write: usize,
     contiguous: usize,
@@ -180,7 +180,7 @@ struct Frames {
 }
 
 impl Frames {
-    fn new(planner: &mut Planner<f32>, len: usize) -> Frames {
+    pub(super) fn new(planner: &mut Planner<f32>, len: usize) -> Frames {
         let fft = planner.real(len);
         let window: Vec<f32> = (0..len)
             .map(|n| 0.5 - 0.5 * (std::f32::consts::TAU * n as f32 / len as f32).cos())
@@ -205,17 +205,17 @@ impl Frames {
         }
     }
 
-    fn bins(&self) -> usize {
+    pub(super) fn bins(&self) -> usize {
         self.fft.spectrum_len()
     }
 
-    fn restart(&mut self) {
+    pub(super) fn restart(&mut self) {
         self.contiguous = 0;
         self.since = 0;
     }
 
     /// One sample of each channel; whether a frame is due.
-    fn push(&mut self, left: f32, right: f32) -> bool {
+    pub(super) fn push(&mut self, left: f32, right: f32) -> bool {
         self.history[0][self.write] = left;
         self.history[1][self.write] = right;
         self.write = (self.write + 1) % self.len;
@@ -231,7 +231,7 @@ impl Frames {
 
     /// Windows and transforms the frame, each channel the layout has, and returns its input's mean
     /// power, the channels averaged.
-    fn transform(&mut self, channels: usize) -> f32 {
+    pub(super) fn transform(&mut self, channels: usize) -> f32 {
         let mut power = 0.0f64;
         for channel in 0..channels {
             let history = &self.history[channel];
@@ -274,17 +274,57 @@ impl Frames {
                 };
         }
     }
+
+    /// Adds the frame's covariance per bin (plan §7.6), in linear units: `|L|²`, `|R|²` and the
+    /// complex `L·conj(R)`, a mono input's one channel standing for both.
+    pub(super) fn add_covariance(
+        &self,
+        channels: usize,
+        ll: &mut [f64],
+        rr: &mut [f64],
+        lr: &mut [(f64, f64)],
+    ) {
+        let [left, right] = &self.spectra;
+        let scale = f64::from(self.scale);
+        for bin in 0..ll.len().min(left.len()) {
+            let l = left[bin];
+            let r = if channels == 1 { l } else { right[bin] };
+            let (lr_re, lr_im) = (
+                f64::from(l.re) * f64::from(r.re) + f64::from(l.im) * f64::from(r.im),
+                f64::from(l.im) * f64::from(r.re) - f64::from(l.re) * f64::from(r.im),
+            );
+            ll[bin] += scale * f64::from(l.norm_sqr());
+            rr[bin] += scale * f64::from(r.norm_sqr());
+            lr[bin].0 += scale * lr_re;
+            lr[bin].1 += scale * lr_im;
+        }
+    }
+
+    /// Adds the frame's power per bin, the channels averaged, in linear units.
+    pub(super) fn add_power(&self, channels: usize, out: &mut [f64]) {
+        let [left, right] = &self.spectra;
+        let scale = f64::from(self.scale);
+        for (bin, out) in out.iter_mut().enumerate().take(left.len()) {
+            let l = left[bin];
+            let power = if channels == 1 {
+                l.norm_sqr()
+            } else {
+                0.5 * (l.norm_sqr() + right[bin].norm_sqr())
+            };
+            *out += scale * f64::from(power);
+        }
+    }
 }
 
 /// A decimator: the anti-alias low pass on each channel, then every `factor`-th sample.
-struct Decimator {
+pub(super) struct Decimator {
     factor: usize,
     phase: usize,
     filters: [[LowPass; 4]; 2],
 }
 
 impl Decimator {
-    fn new(factor: usize, rate_in: f32) -> Decimator {
+    pub(super) fn new(factor: usize, rate_in: f32) -> Decimator {
         let cutoff = LONG_CUTOFF * f64::from(rate_in) / factor as f64;
         let section = |q| LowPass::new(cutoff, f64::from(rate_in), q);
         Decimator {
@@ -294,7 +334,7 @@ impl Decimator {
         }
     }
 
-    fn restart(&mut self) {
+    pub(super) fn restart(&mut self) {
         self.phase = 0;
         for channel in &mut self.filters {
             for section in channel {
@@ -303,7 +343,7 @@ impl Decimator {
         }
     }
 
-    fn push(&mut self, frame: [f32; 2]) -> Option<[f32; 2]> {
+    pub(super) fn push(&mut self, frame: [f32; 2]) -> Option<[f32; 2]> {
         let mut out = [0.0f32; 2];
         for (channel, value) in frame.into_iter().enumerate() {
             let mut x = f64::from(value);
@@ -397,6 +437,68 @@ fn stands_out(
         .map(|other| levels[other])
         .fold(f32::NEG_INFINITY, f32::max);
     Some(top - median)
+}
+
+/// One rung's place (plan §7.5): its rate, what decimates it from the rung above, the highest it
+/// reads, and its own frequencies, half-open.
+pub(super) struct RungSpec {
+    pub(super) rate: f32,
+    pub(super) decimation: Option<usize>,
+    pub(super) top: f32,
+    pub(super) low: f32,
+    pub(super) high: f32,
+}
+
+/// The rate a listen takes: any the plugin runs at (from the DSP's `MIN_SAMPLE_RATE`); one not
+/// finite as 48 kHz.
+pub(super) fn usable_rate(sample_rate: f32) -> f32 {
+    if sample_rate.is_finite() {
+        sample_rate.max(mxm_fx_eq_n_dsp::MIN_SAMPLE_RATE as f32)
+    } else {
+        48_000.0
+    }
+}
+
+/// The rungs at `sample_rate` (a [`usable_rate`]), fastest first. Rung 0 is the input at most
+/// 64 kHz, then a quarter and a sixteenth of it; where the input is decimated for rung 0, a rung at
+/// the full rate goes above it, so no rate loses its top octaves. An undecimated rung reads to
+/// Nyquist, a decimated one to its anti-alias corner. The fastest owns up to as high as a band
+/// runs; a slower one to its edge, but never into the third of an octave below what it reads,
+/// which the faster one owns: every frequency a rung owns has a key point's reach above it read in
+/// that rung, and a peak's half above it too.
+pub(super) fn rung_specs(sample_rate: f32) -> Vec<RungSpec> {
+    let mut factor = 1usize;
+    while sample_rate / factor as f32 > FIRST_RATE_MAX {
+        factor *= 2;
+    }
+    let highest = mxm_fx_eq_n_dsp::max_frequency(f64::from(sample_rate)) as f32;
+    let reach = 2f32.powf(KEY_OCTAVES);
+    let first = sample_rate / factor as f32;
+    let mut specs: Vec<(f32, Option<usize>, f32, f32)> = Vec::new();
+    if factor > 1 {
+        specs.push((sample_rate, None, 0.5 * sample_rate, highest));
+        let top = TOP_SHARE * first;
+        specs.push((first, Some(factor), top, top / reach));
+    } else {
+        specs.push((first, None, 0.5 * first, highest));
+    }
+    for (step, edge) in [(1, RUNG_EDGES[1]), (2, RUNG_EDGES[0])] {
+        let rate = first / (RUNG_STEP as f32).powi(step);
+        let top = TOP_SHARE * rate;
+        specs.push((rate, Some(RUNG_STEP), top, edge.min(top / reach)));
+    }
+    let limits: Vec<f32> = specs.iter().map(|spec| spec.3).collect();
+    specs
+        .into_iter()
+        .zip(ownership(&limits))
+        .map(|((rate, decimation, top, _), (low, high))| RungSpec {
+            rate,
+            decimation,
+            top,
+            low,
+            high,
+        })
+        .collect()
 }
 
 /// Each rung's own frequencies, half-open and continuous from [`LOWEST_HZ`] up. Rungs come
@@ -535,47 +637,22 @@ impl Finder {
     /// A finder for audio at `sample_rate`: any rate the plugin runs at (from the DSP's
     /// `MIN_SAMPLE_RATE`); one not finite is taken as 48 kHz.
     pub fn new(sample_rate: f32) -> Finder {
-        let sample_rate = if sample_rate.is_finite() {
-            sample_rate.max(mxm_fx_eq_n_dsp::MIN_SAMPLE_RATE as f32)
-        } else {
-            48_000.0
-        };
-        let mut factor = 1usize;
-        while sample_rate / factor as f32 > FIRST_RATE_MAX {
-            factor *= 2;
-        }
+        let sample_rate = usable_rate(sample_rate);
         let mut planner = Planner::new();
-        // The rungs, fastest first: each one's rate, what decimates it from the rung above, the
-        // highest it reads, and the highest it may own. Rung 0 is the input at most 64 kHz, then a
-        // quarter and a sixteenth of it; where the input is decimated for rung 0, a rung at the
-        // full rate goes above it, so no rate loses its top octaves. An undecimated rung reads to
-        // Nyquist, a decimated one to its anti-alias corner. The fastest owns up to as high as a
-        // band runs; a slower one to its edge, but never into the third of an octave below what it
-        // reads, which the faster one owns: every frequency a rung owns has a key point's reach
-        // above it read in that rung, and a peak's half above it too.
-        let highest = mxm_fx_eq_n_dsp::max_frequency(f64::from(sample_rate)) as f32;
-        let reach = 2f32.powf(KEY_OCTAVES);
-        let first = sample_rate / factor as f32;
-        let mut specs: Vec<(f32, Option<usize>, f32, f32)> = Vec::new();
-        if factor > 1 {
-            specs.push((sample_rate, None, 0.5 * sample_rate, highest));
-            let top = TOP_SHARE * first;
-            specs.push((first, Some(factor), top, top / reach));
-        } else {
-            specs.push((first, None, 0.5 * first, highest));
-        }
-        for (step, edge) in [(1, RUNG_EDGES[1]), (2, RUNG_EDGES[0])] {
-            let rate = first / (RUNG_STEP as f32).powi(step);
-            let top = TOP_SHARE * rate;
-            specs.push((rate, Some(RUNG_STEP), top, edge.min(top / reach)));
-        }
-        let limits: Vec<f32> = specs.iter().map(|spec| spec.3).collect();
-        let ranges = ownership(&limits);
+        let specs = rung_specs(sample_rate);
         let lowest = specs.len() - 1;
         let mut rungs = Vec::new();
         let mut heard = Vec::new();
-        for (index, ((rate, decimation, top, _), (low, high))) in
-            specs.into_iter().zip(ranges).enumerate()
+        for (
+            index,
+            RungSpec {
+                rate,
+                decimation,
+                top,
+                low,
+                high,
+            },
+        ) in specs.into_iter().enumerate()
         {
             let decimator = decimation.map(|step| Decimator::new(step, rate * step as f32));
             let width = Frames::new(&mut planner, WIDTH_POINTS);
@@ -1371,7 +1448,7 @@ pub fn rank(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
     kept
 }
 
-fn heard(mean_power: f32) -> bool {
+pub(super) fn heard(mean_power: f32) -> bool {
     mean_power >= 10f32.powf(HEARD_DBFS / 10.0)
 }
 
@@ -1872,6 +1949,19 @@ pub struct Found {
     pub listen: u64,
 }
 
+/// Work for a [`Worker`]: run away from the editor's frame, and what it gives back.
+pub trait Job: Send + 'static {
+    type Done: Send + 'static;
+    fn run(self) -> Self::Done;
+}
+
+impl Job for Search {
+    type Done = Found;
+    fn run(self) -> Found {
+        Search::run(self)
+    }
+}
+
 impl Search {
     /// Runs it, where it is.
     pub fn run(self) -> Found {
@@ -1894,26 +1984,26 @@ impl Search {
     }
 }
 
-/// A thread the editor hands its searches to, so a search's fits never cost the editor a frame
-/// (the analyser's 2 ms budget, plan §4); one search at a time. Dropping it closes its queue and
-/// waits for the thread to finish the search it is on and end, so no plugin code is left running
-/// when the editor, or the plugin, goes.
-pub struct Worker {
-    jobs: Option<std::sync::mpsc::Sender<Search>>,
-    found: std::sync::mpsc::Receiver<Found>,
+/// A thread the editor hands its jobs to — Find's searches, Match's fits (plan §7.6) — so their
+/// fits never cost the editor a frame (the analyser's 2 ms budget, plan §4); one job at a time.
+/// Dropping it closes its queue and waits for the thread to finish the job it is on and end, so no
+/// plugin code is left running when the editor, or the plugin, goes.
+pub struct Worker<J: Job> {
+    jobs: Option<std::sync::mpsc::Sender<J>>,
+    found: std::sync::mpsc::Receiver<J::Done>,
     busy: bool,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-impl Worker {
-    pub fn new() -> Option<Worker> {
-        let (jobs, take) = std::sync::mpsc::channel::<Search>();
-        let (give, found) = std::sync::mpsc::channel::<Found>();
+impl<J: Job> Worker<J> {
+    pub fn new() -> Option<Worker<J>> {
+        let (jobs, take) = std::sync::mpsc::channel::<J>();
+        let (give, found) = std::sync::mpsc::channel::<J::Done>();
         let thread = std::thread::Builder::new()
-            .name("mxm-fx-eq-n finder".to_owned())
+            .name("mxm-fx-eq-n worker".to_owned())
             .spawn(move || {
-                for search in take {
-                    if give.send(search.run()).is_err() {
+                for job in take {
+                    if give.send(job.run()).is_err() {
                         break;
                     }
                 }
@@ -1927,36 +2017,36 @@ impl Worker {
         })
     }
 
-    /// Whether a search is running.
+    /// Whether a job is running.
     pub fn busy(&self) -> bool {
         self.busy
     }
 
-    /// Starts `search`; refused, and handed back, while another runs or if the thread has gone.
-    pub fn start(&mut self, search: Search) -> Result<(), Box<Search>> {
+    /// Starts `job`; refused, and handed back, while another runs or if the thread has gone.
+    pub fn start(&mut self, job: J) -> Result<(), Box<J>> {
         let Some(jobs) = self.jobs.as_ref().filter(|_| !self.busy) else {
-            return Err(Box::new(search));
+            return Err(Box::new(job));
         };
-        match jobs.send(search) {
+        match jobs.send(job) {
             Ok(()) => {
                 self.busy = true;
                 Ok(())
             }
-            Err(std::sync::mpsc::SendError(search)) => Err(Box::new(search)),
+            Err(std::sync::mpsc::SendError(job)) => Err(Box::new(job)),
         }
     }
 
-    /// What the running search found, once it has.
-    pub fn take(&mut self) -> Option<Found> {
+    /// What the running job gave back, once it has.
+    pub fn take(&mut self) -> Option<J::Done> {
         let found = self.found.try_recv().ok()?;
         self.busy = false;
         Some(found)
     }
 }
 
-impl Drop for Worker {
+impl<J: Job> Drop for Worker<J> {
     fn drop(&mut self) {
-        // The queue closed, the thread ends after the search it is on.
+        // The queue closed, the thread ends after the job it is on.
         self.jobs = None;
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();

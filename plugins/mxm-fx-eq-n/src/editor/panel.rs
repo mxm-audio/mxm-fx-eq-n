@@ -35,6 +35,8 @@ impl EqApp {
             // A new rate starts a listen again, as it does the display's windows (plan §7.5).
             self.finder = super::finder::Finder::new(rate);
             self.forget_listen();
+            self.matcher = super::matcher::Matcher::new(rate);
+            self.forget_match();
         }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
         if settings.analyser && !self.analyser_on {
@@ -49,6 +51,9 @@ impl EqApp {
                     self.spectrum.ingest(&block);
                     if self.find {
                         self.finder.ingest(&block);
+                    }
+                    if self.matching {
+                        self.matcher.ingest(&block);
                     }
                 }
             }
@@ -88,16 +93,23 @@ impl EqApp {
         }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
-        self.telemetry.set_side_chain_view(settings.side_chain);
         // Find needs the analyser: the analyser off ends a listen, and back on leaves it off
-        // (plan §7.5).
+        // (plan §7.5). Match needs it and the side chain too (plan §7.6).
         if !settings.analyser && self.find {
             self.end_find();
         }
+        if self.matching && !self.match_offered(&settings) {
+            self.end_match();
+        }
+        // The key is copied while it is drawn or Match listens to it.
+        self.telemetry
+            .set_side_chain_view(settings.side_chain || self.matching);
         let now = ctx.input(|input| input.time);
         self.drain_analyser(&settings, now);
         self.end_stale_freeze(&settings);
+        self.take_done();
         self.update_find(now, &settings);
+        self.update_match(now, &settings);
         self.pointer_solo = None;
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.
