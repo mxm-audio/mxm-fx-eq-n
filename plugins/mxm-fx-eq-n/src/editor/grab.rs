@@ -119,6 +119,22 @@ impl Frozen {
     }
 }
 
+/// Which labels are drawn (plan §7.4): `rects` strongest first, each kept unless it overlaps a
+/// stronger one that was kept.
+pub fn unobstructed(rects: &[egui::Rect]) -> Vec<bool> {
+    let mut kept: Vec<egui::Rect> = Vec::new();
+    rects
+        .iter()
+        .map(|rect| {
+            let free = kept.iter().all(|other| !other.intersects(*rect));
+            if free {
+                kept.push(*rect);
+            }
+            free
+        })
+        .collect()
+}
+
 /// One labelled peak of a frozen spectrum.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Peak {
@@ -396,5 +412,16 @@ mod tests {
         );
         hold.push(2.6, &[-1.0]);
         assert_eq!(hold.highest(), vec![-1.0], "another length starts again");
+    }
+
+    /// **A label that would overlap a stronger one's is not drawn** (plan §7.4); one clear of it is.
+    #[test]
+    fn a_label_overlapping_a_stronger_one_is_dropped() {
+        let at = |x: f32| egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(40.0, 12.0));
+        assert_eq!(
+            unobstructed(&[at(100.0), at(120.0), at(150.0), at(130.0)]),
+            [true, false, true, false],
+            "the second overlaps the first, the fourth the third"
+        );
     }
 }

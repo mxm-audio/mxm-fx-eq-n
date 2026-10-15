@@ -997,4 +997,25 @@ mod tests {
             "and the silent input reads none"
         );
     }
+
+    /// **A silent key is a line at the floor** (plan §7.4): nothing routed and a silent source are
+    /// the same silence.
+    #[test]
+    fn a_silent_key_reads_the_floor() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let mut seq = 0u64;
+        let mut tone = |n: usize| (std::f32::consts::TAU * 500.0 * n as f32 / 48_000.0).sin();
+        feed(&mut spectrum, &mut seq, 2.0, &mut tone);
+        let on = ViewSettings {
+            side_chain: true,
+            ..flat()
+        };
+        spectrum.analyse(&[100.0, 500.0, 5_000.0], 0.0, &on);
+        assert!(spectrum.pre_db[1] > -10.0, "the input plays");
+        assert!(
+            spectrum.key_db.iter().all(|&db| db == FLOOR_DB),
+            "{:?}",
+            spectrum.key_db
+        );
+    }
 }

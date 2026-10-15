@@ -671,3 +671,34 @@ fn the_side_chain_is_copied_only_while_its_view_wants_it() {
         "the analyser off wants none"
     );
 }
+
+/// **The key's copy allocates nothing** (plan §7.4): with the Side chain view wanted, keyed
+/// processing with an editor open never allocates.
+#[test]
+fn copying_the_side_chain_never_allocates() {
+    let mut plugin = prepared(2);
+    plugin.telemetry.connect(true);
+    plugin.telemetry.publish_side_chain_port(true);
+    plugin.telemetry.set_side_chain_view(true);
+    assert!(plugin.telemetry.side_chain_wanted());
+    let mut consumer = plugin.analyser.take().expect("the ring's editor half");
+    let mut seed = 5;
+    let mut channels = [vec![0.0f32; 2_048], vec![0.0f32; 2_048]];
+    let mut key = [vec![0.0f32; 2_048], vec![0.0f32; 2_048]];
+    let mut blocks = 0;
+    for _ in 0..40 {
+        for buffer in channels.iter_mut().chain(key.iter_mut()) {
+            for sample in buffer.iter_mut() {
+                *sample = noise(&mut seed) * 0.25;
+            }
+        }
+        let mut views: Vec<&mut [f32]> = channels.iter_mut().map(|c| c.as_mut_slice()).collect();
+        let keys: Vec<&mut [f32]> = key.iter_mut().map(|c| c.as_mut_slice()).collect();
+        nice_assert_no_alloc::assert_no_alloc(|| plugin.process_keyed(&mut views, Some(&keys)));
+        while let Ok(block) = consumer.pop() {
+            assert!(block.key[0].iter().any(|&s| s != 0.0), "the key rides");
+            blocks += 1;
+        }
+    }
+    assert!(blocks > 0);
+}

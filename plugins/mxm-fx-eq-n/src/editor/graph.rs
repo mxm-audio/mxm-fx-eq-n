@@ -927,9 +927,26 @@ impl EqApp {
             // that would overlap a stronger one's not drawn; the keyboard's peak ringed.
             if let Some(frozen) = &self.frozen {
                 let font = egui::FontId::proportional(11.0);
-                let mut taken: Vec<Rect> = Vec::new();
-                for (index, peak) in frozen.peaks.iter().enumerate() {
-                    let at = pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+                let labels: Vec<(Pos2, String, Rect)> = frozen
+                    .peaks
+                    .iter()
+                    .map(|peak| {
+                        let at = pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+                        let text = format_freq(peak.freq);
+                        let size = painter
+                            .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
+                            .size();
+                        let rect = Rect::from_center_size(
+                            at - vec2(0.0, 8.0 + size.y / 2.0),
+                            size + vec2(4.0, 2.0),
+                        );
+                        (at, text, rect)
+                    })
+                    .collect();
+                let rects: Vec<Rect> = labels.iter().map(|(_, _, rect)| *rect).collect();
+                let drawn = grab::unobstructed(&rects);
+                for (index, ((at, text, rect), drawn)) in labels.into_iter().zip(drawn).enumerate()
+                {
                     painter.circle_stroke(
                         at,
                         4.0,
@@ -938,14 +955,7 @@ impl EqApp {
                     if self.focus_peak == Some(index) && self.selected.is_none() {
                         painter.circle_stroke(at, 8.0, Stroke::new(EMPHASIS_STROKE, tokens.focus));
                     }
-                    let text = format_freq(peak.freq);
-                    let galley =
-                        painter.layout_no_wrap(text.clone(), font.clone(), tokens.text_primary);
-                    let rect = Rect::from_center_size(
-                        at - vec2(0.0, 8.0 + galley.size().y / 2.0),
-                        galley.size() + vec2(4.0, 2.0),
-                    );
-                    if taken.iter().all(|other| !other.intersects(rect)) {
+                    if drawn {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -953,7 +963,6 @@ impl EqApp {
                             font.clone(),
                             tokens.text_primary,
                         );
-                        taken.push(rect);
                     }
                 }
             }

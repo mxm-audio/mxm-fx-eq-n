@@ -1598,18 +1598,25 @@ fn band_identity_is_painted_without_hue() {
 fn the_opening_size_is_inside_the_budget_and_holds_the_column_without_scrolling() {
     let budget = mxm_plugin_test::opening_size::BUDGET;
     assert!(REFERENCE.0 as f32 <= budget.x && REFERENCE.1 as f32 <= budget.y);
-    let mut rig = Rig::new();
-    rig.press(Vec::new());
-    rig.app.insert_at(1_000.0);
-    for _ in 0..3 {
+    // With the side-chain port the Analyser card's row holds three toggles (plan §7.4).
+    for port in [false, true] {
+        let mut rig = Rig::new();
+        rig.app.telemetry.publish_side_chain_port(port);
         rig.press(Vec::new());
+        rig.app.insert_at(1_000.0);
+        for _ in 0..3 {
+            rig.press(Vec::new());
+        }
+        let (drawn, room) = rig.app.column_extent;
+        assert!(
+            drawn <= room,
+            "the column needs {drawn} of {room} (port {port})"
+        );
+        assert!(
+            room - drawn < 24.0,
+            "and the opening is hugged to it: {room} for {drawn} (port {port})"
+        );
     }
-    let (drawn, room) = rig.app.column_extent;
-    assert!(drawn <= room, "the column needs {drawn} of {room}");
-    assert!(
-        room - drawn < 24.0,
-        "and the opening is hugged to it: {room} for {drawn}"
-    );
 }
 
 #[test]
@@ -2537,8 +2544,10 @@ fn freeze_holds_marks_its_peaks_and_ends_on_any_change_under_it() {
     assert!(!rig.app.freezing(), "the analyser off ends it");
 
     let mut rig = frozen_rig(1_000.0);
+    let saved = rig.app.params.view.get();
     rig.app.detach();
     assert!(rig.app.frozen.is_none(), "closing the editor ends it");
+    assert_eq!(rig.app.params.view.get(), saved, "nothing of it saved");
 
     let mut rig = frozen_rig(1_000.0);
     nice_plug::params::persist::PersistentField::set(
@@ -2608,4 +2617,56 @@ fn a_full_set_grabs_nothing() {
     let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
     assert!(!rig.app.free_slot_exists());
     assert_eq!(rig.app.insert_peak(peak, false), None);
+}
+
+/// **A grab takes the lowest Off slot, BACK during its drag leaves nothing, and a click on a peak
+/// makes nothing** (plan §7.4).
+#[test]
+fn a_grab_takes_the_lowest_off_slot_and_back_or_a_click_leaves_nothing() {
+    let mut rig = frozen_rig(1_000.0);
+    for freq in [60.0, 120.0, 240.0] {
+        rig.app.insert_at(freq);
+    }
+    rig.app.set_shape(1, Shape::Bell);
+    let kind = band_index(1, Field::Type);
+    rig.app.instant(&[(kind, 0.0)]);
+    rig.press(Vec::new());
+    assert_eq!(rig.band(1).shape, None, "slot 1 is Off");
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let from = egui::pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+    let to = from + egui::vec2(0.0, 50.0);
+
+    // A click: no drag, no band.
+    rig.press(pointer(from, Some(true)));
+    rig.press(pointer(from, Some(false)));
+    rig.press(Vec::new());
+    assert_eq!(rig.band(1).shape, None, "a click makes nothing");
+    rig.app.selected = None;
+
+    let depth = rig.depth();
+    let drag = |rig: &mut Rig, back: bool| {
+        rig.press(pointer(from, Some(true)));
+        for step in 1..=8 {
+            rig.press(pointer(from + (to - from) * (step as f32 / 8.0), None));
+        }
+        if back {
+            rig.press(vec![
+                key(job_key(BACK), true, NONE),
+                key(job_key(BACK), false, NONE),
+            ]);
+        }
+        rig.press(pointer(to, Some(false)));
+        rig.press(Vec::new());
+    };
+    drag(&mut rig, true);
+    assert_eq!(rig.band(1).shape, None, "BACK took it away");
+    assert_eq!(rig.depth(), depth, "and left nothing to undo");
+    assert!(rig.gestures_balanced());
+
+    drag(&mut rig, false);
+    let band = rig.band(1);
+    assert_eq!(band.shape, Some(Shape::Bell), "the lowest Off slot");
+    assert!((band.freq / peak.freq - 1.0).abs() < 1.0e-3);
+    assert_eq!(rig.band(3).shape, None);
 }
