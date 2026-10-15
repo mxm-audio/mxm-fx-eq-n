@@ -2493,6 +2493,11 @@ fn the_side_chain_view_is_offered_only_with_the_port() {
 /// A rig whose analyser holds a resonance at `centre` over a floor, frozen: the hold is fed that
 /// spectrum, then Freeze is asked for and a frame makes it.
 fn frozen_rig(centre: f32) -> Rig {
+    frozen_rig_at(centre, 1.0e-3)
+}
+
+/// [`frozen_rig`] with the resonance's top at `top` in power (1e-3 is −30 dB) over a −60 dB floor.
+fn frozen_rig_at(centre: f32, top: f32) -> Rig {
     let mut rig = Rig::new();
     rig.press(Vec::new());
     rig.press(Vec::new());
@@ -2502,7 +2507,7 @@ fn frozen_rig(centre: f32) -> Rig {
         .iter()
         .map(|&f| {
             let detune = 8.0 * (f / centre - centre / f);
-            10.0 * (1.0e-6 + 1.0e-3 / (1.0 + detune * detune)).log10()
+            10.0 * (1.0e-6 + top / (1.0 + detune * detune)).log10()
         })
         .collect();
     let now = rig.ctx.input(|input| input.time);
@@ -2752,4 +2757,59 @@ fn the_side_chain_line_holds_while_frozen() {
     });
     rig.press(Vec::new());
     assert!(rig.app.frozen.is_none(), "the view toggled ends it");
+}
+
+/// **A click on a peak makes nothing, even on the curve** (plan §7.4): a peak at −48 dB puts its
+/// marker on the flat 0 dB curve, and a click there makes no band.
+#[test]
+fn a_click_on_a_peak_lying_on_the_curve_makes_nothing() {
+    let mut rig = frozen_rig_at(1_000.0, 10f32.powf(-4.8));
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let at = egui::pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    assert!(
+        curves.distance(&axes, at) <= 8.0,
+        "the marker lies on the curve"
+    );
+    rig.press(pointer(at, Some(true)));
+    rig.press(pointer(at, Some(false)));
+    rig.press(Vec::new());
+    assert!(
+        (0..SLOTS).all(|slot| rig.band(slot).shape.is_none()),
+        "no band"
+    );
+}
+
+/// **A freeze made stale by the frame's audio grabs nothing** (plan §7.4): the first block after a
+/// reset arrives in the frame ADD is pressed, and ADD makes a plain bell, not the old peak's.
+#[test]
+fn add_in_the_frame_a_reset_s_audio_arrives_grabs_nothing() {
+    let mut rig = frozen_rig(2_000.0);
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    rig.app.focus_freq = 100.0;
+    rig.app.on_surface(mxm_keys::Output::Navigate {
+        direction: mxm_keys::Direction::Right,
+        coarse: false,
+    });
+    assert_eq!(rig.app.focus_peak, Some(0));
+    let block = crate::analyser::Block {
+        seq: 0,
+        generation: 7,
+        sample_rate: rig.app.spectrum.sample_rate(),
+        channels: 2,
+        pre: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+        post: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+        key: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+    };
+    rig.app.spectrum.ingest(&block);
+    rig.type_keys(&[job_key(ADD)]);
+    assert!(rig.app.frozen.is_none(), "the reset's audio ended it");
+    let band = rig.band(0);
+    assert_eq!(band.shape, Some(Shape::Bell));
+    assert!(
+        (band.q - 1.0).abs() < 1.0e-3,
+        "a plain bell, not the peak's Q {}",
+        peak.q
+    );
 }

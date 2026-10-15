@@ -364,7 +364,7 @@ impl Curves {
     }
 
     /// The shortest distance from `point` to a drawn line.
-    fn distance(&self, axes: &Axes, point: Pos2) -> f32 {
+    pub(crate) fn distance(&self, axes: &Axes, point: Pos2) -> f32 {
         let mut best = f32::INFINITY;
         for db in self.drawn() {
             for index in 1..self.xs.len() {
@@ -591,9 +591,10 @@ impl EqApp {
         if response.clicked()
             && let Some(at) = pointer
         {
+            // A click on a peak makes nothing (plan §7.4), even where its marker lies on the curve.
             if let Some(slot) = hit(at) {
                 self.select(slot);
-            } else if curves.distance(axes, at) <= LINE_HIT {
+            } else if curves.distance(axes, at) <= LINE_HIT && self.peak_at(axes, at).is_none() {
                 self.insert_at(axes.freq(at.x));
             } else {
                 self.selected = None;

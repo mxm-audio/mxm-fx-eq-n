@@ -81,6 +81,7 @@ impl EqApp {
         self.telemetry.set_analyser_on(settings.analyser);
         self.telemetry.set_side_chain_view(settings.side_chain);
         self.drain_analyser(&settings, ctx.input(|input| input.time));
+        self.end_stale_freeze(&settings);
         self.pointer_solo = None;
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.

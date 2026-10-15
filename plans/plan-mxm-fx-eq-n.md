@@ -933,7 +933,8 @@ count, a minimum spacing, a range), and F4's resonance finder will share this li
 **What a grab makes** (decision 25): dragging a labelled peak makes **a static bell** — Pro-Q's
 rule; it can be made dynamic afterwards (§7.1) — at the peak's frequency, with **Q from the peak's
 width**: `Q = f0 / (f_high − f_low)` between the first points 3 dB below it on each side of the
-frozen spectrum (they exist by the peak rule), held inside 0.5–12, and its gain following the vertical drag from 0 dB (down cuts, up lifts). It is one
+frozen spectrum (they exist by the peak rule), held inside 0.5–12, and its gain following the vertical drag from 0 dB (down cuts, up lifts) as any band's does,
+through the gain scale (at 0 %, where every bell is drawn and heard flat, the drag sets none). It is one
 gesture and one undo step, BACK takes it away, and it takes the lowest Off slot like any new band;
 with every slot in use no peak is grabbable and the hover says why. A click on a label without a
 drag makes nothing. **The keyboard** reaches it in the graph's own language: while frozen, with no

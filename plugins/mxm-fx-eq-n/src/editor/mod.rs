@@ -740,6 +740,24 @@ impl EqApp {
         self.hold_basis = None;
     }
 
+    /// Ends a freeze whose basis has gone (plan §7.4): the analyser off, a setting changed, or the
+    /// first audio after a reset or at a new rate. Called before the keyboard and the pointer, so
+    /// no input grabs a peak the frame's audio has already made stale; painting checks again.
+    pub(crate) fn end_stale_freeze(&mut self, settings: &crate::view::ViewSettings) {
+        let basis = grab::Basis {
+            view: *settings,
+            generation: self.spectrum.generation(),
+        };
+        let stale = !settings.analyser
+            || self
+                .frozen
+                .as_ref()
+                .is_some_and(|frozen| frozen.basis != basis);
+        if stale && (self.freezing() || self.hold_basis.is_some()) {
+            self.unfreeze();
+        }
+    }
+
     /// The pre, post and side-chain lines as drawn: a freeze's while frozen, else the live ones.
     pub(crate) fn shown_spectra(&self) -> [&[f32]; 3] {
         match &self.frozen {
