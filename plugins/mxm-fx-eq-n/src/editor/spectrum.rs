@@ -307,6 +307,8 @@ pub struct Spectrum {
     pub post_db: Vec<f32>,
     /// The side chain's spectrum, while the Side chain view is on (plan §7.4).
     pub key_db: Vec<f32>,
+    /// The next analysis starts the lines from their readings ([`Spectrum::snap`]).
+    snap: bool,
     last_time: Option<f64>,
     /// Audio came since the last analysis, when audio last came, and whether the windows hold
     /// only the sound from before a silence ([`STALE_SECONDS`]).
@@ -341,6 +343,7 @@ impl Spectrum {
             pre_db: Vec::new(),
             post_db: Vec::new(),
             key_db: Vec::new(),
+            snap: false,
             last_time: None,
             fresh: false,
             last_audio: None,
@@ -360,6 +363,13 @@ impl Spectrum {
     /// How many times the windows restarted on a gap.
     pub fn gaps(&self) -> u64 {
         self.gaps
+    }
+
+    /// Starts the displayed lines from the next readings rather than falling from the old ones:
+    /// after a change of settings or audio (plan §7.4) the lines hold nothing of before. A stream
+    /// with no reading yet starts at the floor.
+    pub fn snap(&mut self) {
+        self.snap = true;
     }
 
     /// Forgets the history, as after the editor reopens or the analyser comes back on.
@@ -483,6 +493,7 @@ impl Spectrum {
         let short = &self.short;
         let half = 2f32.powf(BAND_OCTAVES / 2.0);
         let tilt = settings.tilt.db_per_octave();
+        let snap = std::mem::take(&mut self.snap);
         for (index, &freq) in self.freqs.iter().enumerate() {
             for (out, shown) in [
                 (0, &mut self.pre_db),
@@ -500,6 +511,8 @@ impl Spectrum {
                     (db + tilt * (freq / 1_000.0).log2()).max(FLOOR_DB)
                 });
                 *current = match reading {
+                    Some(db) if snap => db,
+                    None if snap => FLOOR_DB,
                     Some(db) if db >= *current => db,
                     Some(db) => (*current - fall).max(db),
                     None => (*current - fall).max(FLOOR_DB),

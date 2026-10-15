@@ -221,6 +221,9 @@ pub struct EqApp {
     pub(crate) freeze_asked: bool,
     /// The keyboard's peak while frozen with no band selected: its place in `frozen.peaks`.
     pub(crate) focus_peak: Option<usize>,
+    /// The peak labels drawn last frame, by their place in `frozen.peaks`: a label is part of its
+    /// peak for the pointer (plan §7.4).
+    pub(crate) peak_labels: Vec<(usize, egui::Rect)>,
     /// The band the Solo button latched, until it is pressed again, another band is selected,
     /// the band leaves the sound or the patch is replaced.
     pub(crate) latched: Option<usize>,
@@ -278,6 +281,7 @@ impl EqApp {
             frozen: None,
             freeze_asked: false,
             focus_peak: None,
+            peak_labels: Vec::new(),
             pointer_solo: None,
             latched: None,
             solo_endings: 0,
@@ -736,6 +740,7 @@ impl EqApp {
         self.frozen = None;
         self.freeze_asked = false;
         self.focus_peak = None;
+        self.peak_labels.clear();
         self.hold.clear();
         self.hold_basis = None;
     }

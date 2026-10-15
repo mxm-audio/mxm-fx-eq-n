@@ -450,9 +450,17 @@ impl EqApp {
         Some((band.gain_db + range).clamp(-limit, limit) * self.gain_scale_now())
     }
 
-    /// The frozen peak whose marker is at `at`, the nearest within the hit radius.
+    /// The frozen peak at `at`: its drawn label, or the nearest marker within the hit radius.
     pub(crate) fn peak_at(&self, axes: &Axes, at: Pos2) -> Option<grab::Peak> {
         let frozen = self.frozen.as_ref()?;
+        let labelled = self
+            .peak_labels
+            .iter()
+            .find(|(_, rect)| rect.contains(at))
+            .and_then(|&(index, _)| frozen.peaks.get(index).copied());
+        if labelled.is_some() {
+            return labelled;
+        }
         frozen
             .peaks
             .iter()
@@ -729,19 +737,36 @@ impl EqApp {
         };
         let current = self.band_now(slot).shape;
         ui.label(egui::RichText::new(format!("Band {}", slot + 1)).strong());
+        let mut rows = Vec::new();
+        let mut current_row = None;
+        let mut chosen = false;
         for shape in Shape::ALL {
-            if ui
-                .radio(current == Some(shape), shape_name(shape))
-                .clicked()
-            {
+            let row = ui.radio(current == Some(shape), shape_name(shape));
+            if row.clicked() {
                 self.set_shape(slot, shape);
                 ui.close();
+                chosen = true;
             }
+            if current == Some(shape) {
+                current_row = Some(row.clone());
+            }
+            rows.push(row);
         }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        let delete = ui.button("Delete");
+        if delete.clicked() {
             self.delete(slot);
             ui.close();
+            chosen = true;
+        }
+        rows.push(delete);
+        // The keys walk the menu (the owner, 2026-10-15): an open menu has the keyboard (the
+        // shared navigation is inert), and egui moves focus with ↑ ↓ and clicks with Enter or Space
+        // only from a focused row. While none of its rows has it, the current shape's takes it.
+        if !chosen && !rows.iter().any(egui::Response::has_focus) {
+            current_row
+                .unwrap_or_else(|| rows[0].clone())
+                .request_focus();
         }
     }
 
@@ -809,9 +834,9 @@ impl EqApp {
         }
         if settings.analyser {
             let now = ui.input(|input| input.time);
-            self.spectrum.analyse(&curves.freqs, now, &settings);
             // A freeze holds one source and one representation (plan §7.4): a setting, the size or
-            // a reset under it ends it, and the hold restarts on the same changes.
+            // a reset under it ends it. On the same changes the hold restarts and the display
+            // starts from its new readings, so neither keeps levels of before.
             let basis = grab::Basis {
                 view: settings,
                 generation: self.spectrum.generation(),
@@ -823,12 +848,14 @@ impl EqApp {
             {
                 self.unfreeze();
             }
+            if self.frozen.is_none() && self.hold_basis != Some(basis) {
+                self.hold.clear();
+                self.hold_basis = Some(basis);
+                self.spectrum.snap();
+            }
+            self.spectrum.analyse(&curves.freqs, now, &settings);
             let post_shown = matches!(settings.show, Show::Post | Show::Both);
             if self.frozen.is_none() {
-                if self.hold_basis != Some(basis) {
-                    self.hold.clear();
-                    self.hold_basis = Some(basis);
-                }
                 let source = if post_shown {
                     &self.spectrum.post_db
                 } else {
@@ -952,6 +979,13 @@ impl EqApp {
                     .collect();
                 let rects: Vec<Rect> = labels.iter().map(|(_, _, rect)| *rect).collect();
                 let drawn = grab::unobstructed(&rects);
+                self.peak_labels = drawn
+                    .iter()
+                    .zip(&rects)
+                    .enumerate()
+                    .filter(|(_, (drawn, _))| **drawn)
+                    .map(|(index, (_, rect))| (index, *rect))
+                    .collect();
                 for (index, ((at, text, rect), drawn)) in labels.into_iter().zip(drawn).enumerate()
                 {
                     painter.circle_stroke(

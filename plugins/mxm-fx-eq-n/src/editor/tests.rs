@@ -2813,3 +2813,94 @@ fn add_in_the_frame_a_reset_s_audio_arrives_grabs_nothing() {
         peak.q
     );
 }
+
+/// **A peak's label is part of the peak** (plan §7.4): the pointer finds the peak on its drawn
+/// label, away from the marker, so a click there makes nothing and a drag grabs it.
+#[test]
+fn a_peak_s_label_is_part_of_the_peak() {
+    let mut rig = frozen_rig(1_000.0);
+    rig.press(Vec::new());
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let &(_, label) = rig.app.peak_labels.first().expect("its label is drawn");
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let marker = egui::pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+    let corner = label.right_top() + egui::vec2(-1.0, 1.0);
+    assert!(corner.distance(marker) > 12.0, "away from the marker");
+    let found = rig
+        .app
+        .peak_at(&axes, corner)
+        .expect("the label finds the peak");
+    assert_eq!(found.freq, peak.freq);
+}
+
+/// **The band's menu answers the arrows** (the owner, 2026-10-15: "I cannot select any of these
+/// with the arrows"): MENU opens it with the current shape's row holding the keyboard, ↓ walks
+/// to the next shape and Enter picks it; ↓ to Delete and Enter deletes.
+#[test]
+fn the_band_menu_walks_with_the_arrows_and_enter_picks() {
+    let tap = |key_: Key| vec![key(key_, true, NONE), key(key_, false, NONE)];
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(ADD)]);
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, Some(Shape::Bell));
+    rig.type_keys(&[job_key(MENU)]);
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.press(tap(Key::ArrowDown));
+    rig.press(tap(Key::Enter));
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, Some(Shape::LowShelf), "↓ then Enter");
+    assert!(!egui::Popup::is_any_open(&rig.ctx), "and the menu closed");
+
+    rig.type_keys(&[job_key(MENU)]);
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    for _ in 0..Shape::ALL.len() {
+        rig.press(tap(Key::ArrowDown));
+    }
+    rig.press(tap(Key::Enter));
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, None, "Delete, reached by the arrows");
+}
+
+/// **The display keeps nothing of before a change** (plan §7.4): a loud line drawn under one Tilt,
+/// or before a reset, is gone from a freeze made the frame after the change, not falling out of it.
+#[test]
+fn a_freeze_after_a_change_holds_no_old_display_level() {
+    for change in ["tilt", "reset"] {
+        let mut rig = Rig::new();
+        rig.press(Vec::new());
+        rig.press(Vec::new());
+        let len = rig.app.spectrum.post_db.len();
+        assert!(len > 0);
+        rig.app.spectrum.post_db = vec![-10.0; len];
+        rig.app.hold_basis = Some(grab::Basis {
+            view: rig.app.params.view.get(),
+            generation: rig.app.spectrum.generation(),
+        });
+        if change == "tilt" {
+            let mut settings = rig.app.params.view.get();
+            settings.tilt = crate::view::Tilt::Three;
+            rig.app.set_view(settings);
+        } else {
+            rig.app.spectrum.ingest(&crate::analyser::Block {
+                seq: 0,
+                generation: 9,
+                sample_rate: rig.app.spectrum.sample_rate(),
+                channels: 2,
+                pre: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+                post: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+                key: [[0.0; crate::analyser::BLOCK_FRAMES]; 2],
+            });
+        }
+        rig.app.freeze_asked = true;
+        rig.press(Vec::new());
+        let frozen = rig.app.frozen.as_ref().expect("frozen");
+        assert!(
+            frozen.post.iter().all(|&db| db < -50.0),
+            "{change}: no old level held"
+        );
+    }
+}

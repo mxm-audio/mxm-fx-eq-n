@@ -78,7 +78,8 @@ and `audition.rs`'s tests hold the lifecycle.
   gain** (Pro-Q's convention, the composite drawn separately); a gainless shape sits on 0 dB.
   Dragging sets frequency and gain as one gesture, Shift at a tenth of the speed. The wheel turns Q
   only over the selected point with the graph focused, or over any point with Alt, one gesture per
-  turn, ended by a pause or a press. A right-click opens the shapes and Delete. Identity never rests on hue: every point carries
+  turn, ended by a pause or a press. A right-click, or MENU on the selected band, opens the shapes and Delete; the current shape's row
+  takes the keyboard, so ↑ ↓ walk the rows and Enter or Space picks one. Identity never rests on hue: every point carries
   its number, the selected one a ring, a bypassed one is hollow; pre is an outline and post a fill.
   Every point has an accessible name and text value.
 - **The keyboard is the collection's keyboard language** (mxm-kit's design system §11, engine
@@ -182,7 +183,9 @@ and `audition.rs`'s tests hold the lifecycle.
   generation): a change of any view setting, a reset (seen with the first block after it) or a
   new rate restarts the hold and ends a freeze, as do the analyser off, a size change, a restore
   or preset load, and closing the editor (`Frozen::holds`, `unfreeze`); it is never saved. A peak
-  near the display's edge counts once it has fallen 6 dB before the edge. A drag from a peak makes a static bell at its frequency with its Q, only the gain
+  near the display's edge counts once it has fallen 6 dB before the edge. On a basis change the
+  display starts from its new readings (`Spectrum::snap`), not a fall from the old levels, so the
+  hold takes nothing of before. A peak's drawn label is part of it for the pointer. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
 
