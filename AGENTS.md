@@ -119,7 +119,8 @@ technique or paper it comes from.
 
 Root owns `Cargo.toml`, `Cargo.lock`, `LICENSE`, `NOTICE.md`, `TRADEMARKS.md`, `README.md`,
 `CONTRIBUTING.md`, `.cargo/`, `.github/`, `bundler.toml`, `test-bundles.txt` and `xtask/`;
-`plans/` holds this product's plan, and `docs/briefs/` its brief. `test-bundles.txt` names the
+`plans/` holds this product's plan, and `docs/briefs/` its brief. `HANDOVER.md` is the
+2026-10-15 handover between machines, temporary: delete it once read. `test-bundles.txt` names the
 plugins from other repositories that the host tests load: `mxm-mono-01`, the source they play.
 Each folder with an `AGENTS.md` owns its contents; the index is below.
 
