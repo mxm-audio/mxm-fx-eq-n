@@ -224,6 +224,9 @@ pub struct EqApp {
     /// The peak labels drawn last frame, by their place in `frozen.peaks`: a label is part of its
     /// peak for the pointer (plan §7.4).
     pub(crate) peak_labels: Vec<(usize, egui::Rect)>,
+    /// Where the primary button last went down on the graph: a click is judged there, not where it
+    /// was let go (egui forgets the press's origin in the release's pass).
+    pub(crate) press_at: Option<egui::Pos2>,
     /// The band the Solo button latched, until it is pressed again, another band is selected,
     /// the band leaves the sound or the patch is replaced.
     pub(crate) latched: Option<usize>,
@@ -282,6 +285,7 @@ impl EqApp {
             freeze_asked: false,
             focus_peak: None,
             peak_labels: Vec::new(),
+            press_at: None,
             pointer_solo: None,
             latched: None,
             solo_endings: 0,

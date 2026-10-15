@@ -3001,3 +3001,54 @@ fn a_label_near_a_side_is_shifted_into_the_graph() {
         );
     }
 }
+
+/// **A click is judged where it was pressed** (plan §7.4): pressed on a label, let go a little
+/// lower on the curve, within a click's reach, it makes nothing.
+#[test]
+fn a_click_pressed_on_a_label_and_let_go_on_the_curve_makes_nothing() {
+    // A peak whose marker sits 6 points under the flat curve: its label ends just above it.
+    let mut sizing = Rig::new();
+    sizing.press(Vec::new());
+    sizing.press(Vec::new());
+    let axes = graph::Axes::new(sizing.app.graph_rect, sizing.app.high());
+    let per_db = axes.spectrum_y(-47.0) - axes.spectrum_y(-48.0);
+    let db = -48.0 + (axes.y(0.0) + 6.0 - axes.spectrum_y(-48.0)) / per_db;
+    let mut rig = frozen_rig_at(1_000.0, 10f32.powf(db / 10.0) - 1.0e-6);
+    rig.press(Vec::new());
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let marker = graph::peak_marker(&axes, &peak);
+    let &(_, label) = rig.app.peak_labels.first().expect("its label is drawn");
+    let press = egui::pos2(label.left() + 2.0, label.bottom() - 1.0);
+    let release = egui::pos2(press.x, axes.y(0.0) + 1.0);
+    assert!(press.distance(release) < 6.0, "within a click's reach");
+    assert!(!label.contains(release) && release.distance(marker) > 12.0);
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    assert!(
+        curves.distance(&axes, release) <= 8.0,
+        "let go on the curve"
+    );
+    rig.press(pointer(press, Some(true)));
+    rig.press(pointer(release, Some(false)));
+    rig.press(Vec::new());
+    assert!(
+        (0..SLOTS).all(|slot| rig.band(slot).shape.is_none()),
+        "no band"
+    );
+}
+
+/// **The side chain's "SC" stays on the graph**: a loud key's line ending above the top keeps its
+/// label a line of text inside.
+#[test]
+fn a_loud_key_s_label_stays_on_the_graph() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let end = egui::pos2(axes.rect.right(), axes.rect.top() - 30.0);
+    let at = graph::side_chain_label_at(&axes, end);
+    assert!(
+        at.y - 13.0 >= axes.rect.top(),
+        "{at:?} under {:?}",
+        axes.rect.top()
+    );
+}

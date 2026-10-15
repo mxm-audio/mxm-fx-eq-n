@@ -120,6 +120,16 @@ pub fn peak_label(axes: &Axes, at: Pos2, size: Vec2) -> Rect {
 
 const PEAK_MARKER_RADIUS: f32 = 4.0;
 
+/// The bottom-right corner of the side-chain line's "SC", by the line's end at `end`: just above
+/// it, held a line of text below the graph's top so a loud key's label is not cut off.
+pub fn side_chain_label_at(axes: &Axes, end: Pos2) -> Pos2 {
+    let at = end + vec2(-4.0, -4.0);
+    pos2(at.x, at.y.max(axes.rect.top() + SIDE_CHAIN_LABEL_HEIGHT))
+}
+
+/// Room for the "SC" label's text, at its 11-point size.
+const SIDE_CHAIN_LABEL_HEIGHT: f32 = 16.0;
+
 /// The hover over a frozen peak (plan §7.4).
 const PEAK_DESCRIPTION: &str =
     "Drag up or down to make a bell at this peak, its width set from the peak's.";
@@ -628,8 +638,21 @@ impl EqApp {
             self.pointer_solo = Some(slot);
         }
 
+        if let Some(at) = ui.input(|input| {
+            input.events.iter().rev().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        }) {
+            self.press_at = Some(at);
+        }
         if response.clicked()
-            && let Some(at) = pointer
+            && let Some(at) = self.press_at.or(pointer)
         {
             // A click on a peak makes nothing (plan §7.4), even where its marker lies on the curve.
             if let Some(slot) = hit(at) {
@@ -982,7 +1005,7 @@ impl EqApp {
                 ));
                 if let Some(end) = end {
                     painter.text(
-                        end + vec2(-4.0, -4.0),
+                        side_chain_label_at(axes, end),
                         egui::Align2::RIGHT_BOTTOM,
                         "SC",
                         egui::FontId::proportional(11.0),
