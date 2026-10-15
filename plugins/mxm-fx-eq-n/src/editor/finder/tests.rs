@@ -297,6 +297,16 @@ fn each_resonance_is_placed_where_its_excess_is() {
     assert_eq!(domains_at(&side_only, 1_200.0), [Domain::Side]);
     let unequal = stereo(&[(1_200.0, 15.0, 10.0)], &[(1_200.0, 8.0, 10.0)], None);
     assert_eq!(domains_at(&unequal, 1_200.0), [Domain::Left, Domain::Right]);
+    // A pair's two bands stand at one centre, the candidate's.
+    let pair = unequal
+        .candidates()
+        .into_iter()
+        .find(|candidate| near(candidate.freq, 1_200.0, 1.0 / 24.0))
+        .unwrap();
+    assert!(
+        pair.bands.iter().all(|band| band.freq == pair.freq),
+        "{pair:?}"
+    );
     let centred = stereo(&[(1_200.0, 12.0, 10.0)], &[(1_200.0, 12.0, 10.0)], None);
     assert_eq!(domains_at(&centred, 1_200.0), [Domain::Average]);
 }
@@ -341,6 +351,7 @@ fn flat() -> HeardEq {
     HeardEq {
         bands: Vec::new(),
         sample_rate: f64::from(RATE),
+        deepest_db: 30.0,
     }
 }
 
@@ -514,6 +525,7 @@ fn a_treated_candidate_is_not_proposed_and_comes_back_when_it_is_not() {
             Placement::Stereo,
         )],
         sample_rate: f64::from(RATE),
+        deepest_db: 30.0,
     };
     // The EQ already takes a fifth of the prominence off.
     let treated = eq_cutting(-0.2 * prominence);
@@ -694,5 +706,274 @@ fn the_fit_finds_a_cookbook_bell_exactly() {
         assert!(near(freq, centre, 0.001), "{centre}: {freq}");
         assert!((fitted - gain).abs() < 0.05, "{centre}: gain {fitted}");
         assert!((fitted_q / q - 1.0).abs() < 0.01, "{centre}: Q {fitted_q}");
+    }
+}
+
+/// **The excitation lies outside the cell's own third** (plan §7.5), whatever the loudest cell is
+/// near: a cell between the loudest and the next loudest takes neither, if both are within its
+/// third, but the loudest beyond it.
+#[test]
+fn what_plays_for_a_cell_lies_outside_its_own_third() {
+    let sixth = 8;
+    // Loudest first: cell 100, then 109, then 140.
+    let loudest_first = [100, 109, 140, 60];
+    assert_eq!(
+        playing(&loudest_first, 104, sixth),
+        Some(140),
+        "100 and 109 are both near"
+    );
+    assert_eq!(playing(&loudest_first, 120, sixth), Some(100));
+    assert_eq!(playing(&loudest_first, 100, sixth), Some(109));
+    assert_eq!(playing(&[100, 101], 100, sixth), None);
+}
+
+/// **A low gain scale bounds the depth** (plan §7.5): a proposal never cuts deeper than a band can
+/// be heard to, so Apply gives the depth shown.
+#[test]
+fn the_gain_scale_bounds_how_deep_a_proposal_cuts() {
+    let finder = Finder::new(RATE);
+    let deep = [Candidate {
+        freq: 1_000.0,
+        audibility: 20.0,
+        bands: vec![Measured {
+            domain: Domain::Average,
+            rung: 0,
+            freq: 1_000.0,
+            db: -20.0,
+            prominence: 20.0,
+            q: 8.0,
+        }],
+    }];
+    let quiet = HeardEq {
+        deepest_db: 3.0,
+        ..flat()
+    };
+    let proposals = propose(finder.evidence(), &deep, 1.0, 24, &quiet, &[]);
+    assert_eq!(
+        proposals[0].bands[0].gain_db, -3.0,
+        "held where a band can reach"
+    );
+}
+
+/// **Dropping the worker waits for its thread** (plan §7.5): a search under way finishes, and no
+/// plugin code is left running.
+#[test]
+fn dropping_the_worker_ends_its_thread() {
+    let mut worker = Worker::new().expect("a thread");
+    let search = Search {
+        evidence: Finder::new(RATE).evidence().clone(),
+        candidates: None,
+        heard: flat(),
+        amount: 0.2,
+        free_slots: 24,
+        shown: Vec::new(),
+        listen: 0,
+    };
+    assert!(worker.start(search).is_ok());
+    assert!(worker.busy());
+    drop(worker);
+}
+
+/// **Early in a listen nothing false is proposed** (plan §7.5): at the first update, and as the
+/// lowest rung's first candidates come, neither the melody's lines nor the noise under it are.
+#[test]
+fn early_in_a_listen_nothing_false_is_proposed() {
+    for seconds in [4.5, 6.0, 8.0] {
+        let finder = melody_through(&[(1_000.0, 12.0, 10.0)], -10.0, seconds);
+        assert!(finder.listened());
+        for candidate in finder.candidates() {
+            assert!(
+                near(candidate.freq, 1_000.0, 1.0 / 24.0),
+                "{seconds} s, only the resonance: {candidate:?}"
+            );
+        }
+    }
+}
+
+/// **Every rate the plugin runs at is read without a gap, to as high as a band runs** (plan
+/// §7.5): the rungs own their frequencies continuously from the lowest to the DSP's
+/// `max_frequency`, at the plan's edges wherever every rung reaches them, on both sides of the
+/// decimation thresholds; where rung 0 is decimated, a rung at the full rate reads the top; and
+/// every rung but the fastest reads a third of an octave past what it owns.
+#[test]
+fn the_rungs_own_every_frequency_at_every_rate() {
+    for rate in [
+        4_000.0f32, 12_000.0, 32_000.0, 44_100.0, 48_000.0, 64_000.0, 65_000.0, 88_200.0, 96_000.0,
+        128_000.0, 130_000.0, 176_400.0, 192_000.0,
+    ] {
+        let finder = Finder::new(rate);
+        assert_eq!(finder.sample_rate(), rate);
+        let rungs = &finder.evidence().rungs;
+        let lowest = rungs.len() - 1;
+        assert_eq!(rungs[lowest].low, LOWEST_HZ, "{rate}");
+        for pair in rungs.windows(2) {
+            assert_eq!(
+                pair[1].high, pair[0].low,
+                "{rate}: a rung meets the one above"
+            );
+        }
+        assert_eq!(
+            rungs[0].high,
+            mxm_fx_eq_n_dsp::max_frequency(f64::from(rate)) as f32,
+            "{rate}: to as high as a band runs"
+        );
+        for rung in rungs {
+            assert!(
+                rung.high <= rung.top + 1.0e-3,
+                "{rate}: a rung owns only what it reads"
+            );
+        }
+        for rung in &rungs[1..] {
+            assert!(
+                rung.high * 2f32.powf(KEY_OCTAVES) <= rung.top * (1.0 + 1.0e-5),
+                "{rate}: a third of an octave read past what it owns"
+            );
+        }
+        if rate >= 44_100.0 {
+            let edges: Vec<f32> = rungs[lowest - 2..].iter().map(|rung| rung.low).collect();
+            assert_eq!(edges, [RUNG_EDGES[1], RUNG_EDGES[0], LOWEST_HZ], "{rate}");
+            assert_eq!(
+                rungs.len(),
+                if rate > FIRST_RATE_MAX { 4 } else { 3 },
+                "{rate}"
+            );
+        }
+    }
+}
+
+/// **A low rate is listened to as it is**: a 4 kHz finder takes 4 kHz blocks.
+#[test]
+fn a_low_rate_is_listened_to() {
+    let rate = 4_000.0f32;
+    let mut finder = Finder::new(rate);
+    let mut noise = Noise(5);
+    for seq in 0..(rate as usize * 6 / BLOCK_FRAMES) as u64 {
+        let mut block = Block {
+            seq,
+            generation: 0,
+            sample_rate: rate,
+            channels: 1,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for index in 0..BLOCK_FRAMES {
+            block.pre[0][index] = 0.3 * noise.next();
+        }
+        finder.ingest(&block);
+    }
+    assert!(finder.listened(), "{} s heard", finder.heard_seconds());
+}
+
+/// **Two excitations are two clusters a semitone apart, of the frames with one recorded** (plan
+/// §7.5): none recorded is no diversity; one, or one odd frame beside it, is one; one that drifts
+/// a quarter or three quarters of a semitone is one; two a semitone apart are two.
+#[test]
+fn excitations_are_counted_as_clusters_of_those_recorded() {
+    let cell = |excitations: &[(u16, u32)], present: u32| Cell {
+        eligible: present,
+        present,
+        excitations: excitations.to_vec(),
+    };
+    assert!(!cell(&[], 16).varied(), "none recorded");
+    assert!(!cell(&[(100, 16)], 16).varied(), "one");
+    assert!(
+        !cell(&[(100, 15), (120, 1)], 16).varied(),
+        "one, and one odd frame"
+    );
+    assert!(
+        !cell(&[(100, 1)], 16).varied(),
+        "one rare frame among those standing out"
+    );
+    assert!(
+        !cell(&[(100, 10), (101, 10)], 20).varied(),
+        "a quarter of a semitone"
+    );
+    assert!(
+        !cell(&[(100, 10), (103, 10)], 20).varied(),
+        "three quarters of a semitone"
+    );
+    assert!(
+        cell(&[(100, 10), (104, 10)], 20).varied(),
+        "a semitone apart"
+    );
+    let mut drifting = Cell::default();
+    for frame in 0..20 {
+        drifting.present += 1;
+        drifting.excited_by(if frame % 2 == 0 { 100 } else { 101 });
+    }
+    assert!(!drifting.varied(), "recorded as it comes");
+}
+
+/// White noise through `resonances`, `seconds` of it at `rate`, into a finder. Each resonance is
+/// the EQ's own bell, matched to its analogue curve up to the top of the range, so it keeps its Q
+/// near Nyquist where the cookbook's narrows.
+fn noise_through_at(rate: f32, resonances: &[(f32, f32, f32)], seconds: f32) -> Finder {
+    let mut finder = Finder::new(rate);
+    let mut noise = Noise(0x2545_f491);
+    let mut filters: Vec<mxm_fx_eq_n_dsp::filter::Filter> = resonances
+        .iter()
+        .map(|&(freq, gain_db, q)| {
+            mxm_fx_eq_n_dsp::filter::Filter::fresh(&mxm_fx_eq_n_dsp::design(
+                mxm_fx_eq_n_dsp::Design {
+                    shape: mxm_fx_eq_n_dsp::Shape::Bell,
+                    slope: mxm_fx_eq_n_dsp::Slope::Db12,
+                    freq: f64::from(freq),
+                    gain_db: f64::from(gain_db),
+                    q: f64::from(q),
+                },
+                f64::from(rate),
+            ))
+        })
+        .collect();
+    let blocks = (rate * seconds) as usize / BLOCK_FRAMES;
+    for seq in 0..blocks as u64 {
+        let mut block = Block {
+            seq,
+            generation: 0,
+            sample_rate: rate,
+            channels: 2,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for index in 0..BLOCK_FRAMES {
+            let mut x = f64::from(0.3 * noise.next());
+            for filter in &mut filters {
+                [x] = filter.process([x]);
+            }
+            block.pre[0][index] = x as f32;
+            block.pre[1][index] = x as f32;
+        }
+        finder.ingest(&block);
+    }
+    finder
+}
+
+/// **Resonances near the top and either side of a rung's boundary are found** (plan §7.5): within
+/// a semitone of `max_frequency` at 48 kHz; at 65 kHz just below and above where the decimated
+/// rung 0 hands over to the full-rate one (10.3 kHz) and just below its 13 kHz anti-alias corner;
+/// either side of the 1.6 kHz edge at 48 kHz; and in the full-rate rung at 96 kHz.
+#[test]
+fn resonances_at_the_edges_of_what_is_read_are_found() {
+    for (rate, freq) in [
+        (48_000.0f32, 21_000.0f32),
+        (48_000.0, 23_000.0),
+        (48_000.0, 1_550.0),
+        (48_000.0, 1_650.0),
+        (65_000.0, 10_000.0),
+        (65_000.0, 10_600.0),
+        (65_000.0, 12_800.0),
+        (65_000.0, 14_500.0),
+        (96_000.0, 22_000.0),
+    ] {
+        let finder = noise_through_at(rate, &[(freq, 12.0, 20.0)], 8.0);
+        let candidates = finder.evidence().candidates();
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| near(candidate.freq, freq, 1.0 / 48.0)),
+            "{freq} Hz at {rate}: {candidates:#?}"
+        );
     }
 }

@@ -5,7 +5,7 @@ decisions 27–30). **Its design approved by the agent-loop in round 5** (2026-1
 filed seven MAJOR findings and rounds 3–4 seven blockers, all accepted and applied here. **Approved
 by the owner** (2026-10-15, *"Approve all and build"*, decisions 27–30 as proposed); F4.0 done.
 The owner also set the rest of the plan's course: F5 to F8 phase by phase, each designed, reviewed
-and signed before it is built. F4.1–F4.2 built (2026-10-15); their code review is next. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
+and signed before it is built. F4.1–F4.2 built (2026-10-15) and their code approved by the agent-loop in round 6 (2026-10-15: the worker's lifetime, the gain scale's reach, listens kept apart, every sample rate read to as high as a band runs, excitations as clusters); F4.3, the owner's listening, is next. **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
 all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
 proposed); F3.0–F3.3 done, their code review approved in round 7; F3.4, the owner by eye and ear, next. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
@@ -1020,8 +1020,13 @@ analyser off turns Find off, and back on leaves it off. The listen runs from whe
   | 1 | a quarter of rung 0's | 400 Hz up to 1.6 kHz | 0.68 s | 0.17 s |
   | 2 | a sixteenth | below 400 Hz | 2.7 s | 0.68 s below 200 Hz, 0.34 s above |
 
-  The ranges are half-open and fixed at every rate; each decimation is the display's anti-alias low
-  pass (§4), run on left and right, mid and side formed after. A rung's spectrum runs past its own frequencies, so a peak near a boundary is
+  The ranges are half-open and continuous to as high as a band runs. What a rung reads and what it
+  owns differ: an undecimated rung reads to Nyquist, a decimated one to its anti-alias corner, and
+  a rung owns no frequency without a third of an octave read above it (a key point's reach), so a
+  slower rung hands the third below its top to the faster one; the edges above hold wherever
+  every rung reaches them (at 44.1 kHz and up). Where rung 0 is decimated (above 64 kHz), a rung
+  at the full rate goes above it and owns the top octaves. Each decimation is the display's
+  anti-alias low pass (§4), run on left and right, mid and side formed after. A rung's spectrum runs past its own frequencies, so a peak near a boundary is
   measured whole. Below about 200 Hz a semitone takes longer than a short note, so a fast bass line
   can look fixed there; Find's hover says so.
 - **Only heard frames count**: a frame whose input, both channels' power averaged, is at least
@@ -1038,7 +1043,10 @@ analyser off turns Find off, and back on leaves it off. The listen runs from whe
   the bump). Each candidate is **measured by the cookbook bell fitted to it**, least squares on a
   sloping floor over a third of an octave either side, its residuals Huber-weighted: its centre,
   its height P and its Q, which is the width at P/2 (one-point measures follow whichever line rides
-  highest on the bump). A candidate needs two heard width frames in its rung.
+  highest on the bump). A candidate needs three heard width frames in its rung, so the clip is in
+  force (the lowest rung's first candidates come about 5.5 s into a listen), and a fitted width of
+  at least four of their bins: anything narrower reports the frame's window, not the peak (§8.6),
+  and is a line or noise.
 - **Placed where the excess is**, with F2's placements (§7.3), the first rule that holds: the peak
   in one of left and right only, **Left** or **Right**; in both, their P more than 3 dB apart, a
   **Left and a Right** band, each its own depth; in the side and not the mid, **Side**; in the mid
@@ -1049,12 +1057,14 @@ analyser off turns Find off, and back on leaves it off. The listen runs from whe
   that spectrum's.
 - **Persistence decides**, on the movement frames. A candidate is present, within half a semitone,
   in at least half of the frames that could show it — those whose third of an octave around it is
-  within 40 dB of their loudest third, at least eight of them, so a passage that never reaches the
-  region does not vote it away. Present means F3's 6 dB of prominence taken over the **median** of
+  within 40 dB of their loudest third, at least sixteen of them, so a passage that never reaches
+  the region does not vote it away and noise does not pass by chance. Present means F3's 6 dB of prominence taken over the **median** of
   its surroundings, a twelfth to a third of an octave away, on 1/48-octave cells: over their lowest
-  point, one frame's noise has a 6 dB dip beside anything. **And those frames show at least two
-  excitations**: what plays elsewhere in the rung, its loudest outside that third, by semitone, the
-  commonest at most two thirds of them (the strongest other peak inside the third is none wherever
+  point, one frame's noise has a 6 dB dip beside anything. Near the edge of what a rung reads (the
+  top, an anti-alias corner, 20 Hz) the surroundings are what is read, so long as one whole side
+  is, so the top octave and both sides of a rung's edge are read too. **And those frames show at least two
+  excitations**: what plays elsewhere in the rung, its loudest outside that third, the commonest —
+  every one less than a semitone from it counted with it — at most two thirds of them (the strongest other peak inside the third is none wherever
   broadband sound excites a resonance). A region only one note reaches gives no verdict and nothing
   is proposed there. Moving harmonics fail; a room, body or cabinet
   resonance passes; a drone, a held note and a reflection's comb persist too (§8.2), so the player
@@ -1093,6 +1103,10 @@ editor's moment, never saved.
   sweeps end where they end and those centres stay short (Ramos & López also refine iteratively).
   Each proposal shows the depth Apply all gives it.
 
+A proposal never cuts deeper than a band can be heard to under the gain scale (its ±30 dB times
+the scale), so the depth shown is the depth applied. A Left and Right pair stands at one centre,
+midway between its two fits.
+
 **On the graph**, while Find has proposals: **the curve they would make**, dashed over the EQ's, and
 a **downward triangle** at each candidate labelled with frequency and depth (`320 Hz −2.1 dB`, a
 pair's two depths), told apart by shape and text, never hue; labels overlap by F3's rule. **A click
@@ -1115,8 +1129,9 @@ never under the graph, the graph shrinking to its floor first, then the surface 
 the columns scroll vertically together.
 
 **A listen ends** with Find off, the analyser off, Freeze on or the editor closed; a reset or a new
-rate starts it again, as the display's windows restart (§4). **The search runs on a worker
-thread**, on a copy of what was heard, one at a time: its fits take about 4 ms at 192 kHz, too long
+rate starts it again, as the display's windows restart (§4), and what an earlier listen found is
+never shown in a later one. **The search runs on a worker thread**, on a copy of what was heard,
+one at a time, joined when Find or the editor ends: its fits take about 4 ms at 192 kHz, too long
 for a frame, while listening and the copy stay inside the analyser's budget (§4).
 
 **Not in F4**: continuous or dynamic suppression; proposing dynamic bands; a decay test (it needs the
@@ -1127,7 +1142,7 @@ is applied.
 **Tests** (written at the end): a fixed Q-10 resonance at 1 kHz under a melody of quarter-second
 notes is found within a forty-eighth of an octave, its Q within 20 %, and neither the melody's
 harmonics nor a lone note's in a region nothing else reaches; resonances at 60 Hz (Q 15) and 8 kHz
-(Q 20) found; a left-only resonance a Left band, a side-only one a Side band, unequal channels a
+(Q 20) found; every rate read without a gap to as high as a band runs; a left-only resonance a Left band, a side-only one a Side band, unequal channels a
 Left and Right pair, and a centred one Stereo; quiet frames not counting, a reset restarting the
 listen; at 100 % the applied bell cancelling a cookbook-shaped peak within 1 dB across its width;
 two candidates a sixth of an octave apart, applied together, each within 0.5 dB of its target, and
@@ -1144,8 +1159,8 @@ reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192
 | Step | Delivers | Gate |
 |---|---|---|
 | **F4.0** | Decisions 27–30, signed. **Done** (2026-10-15) | Owner |
-| **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`). **Built** (2026-10-15): 11 finder tests, the measurements above found by them | Unit tests at the end |
-| **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column (opening 1,532 × 692); the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md`. **Built** (2026-10-15): 5 editor tests; 0.95 ms of a frame at worst at 192 kHz, a search 4.4 ms on the worker | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
+| **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`). **Built** (2026-10-15): the finder's tests, the measurements above found by them | Unit tests at the end |
+| **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column (opening 1,532 × 692); the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md`. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `finder_cost`'s, recorded in the plugin's `NOTES.md` (*Find*) | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
 
 ## 8. What must not break

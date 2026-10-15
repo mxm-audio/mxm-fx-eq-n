@@ -25,14 +25,16 @@ impl EqApp {
     /// a silence restarts its windows.
     fn drain_analyser(&mut self, settings: &ViewSettings, now: f64) {
         let rate = self.telemetry.sample_rate();
-        // Any change, the rule `ingest` keeps: a block at another rate is never analysed.
-        if rate != self.spectrum.sample_rate() {
+        // Any change, the rule `ingest` keeps: a block at another rate is never analysed. Compared
+        // with the rate they were built for, not the one they took (a rate the display cannot
+        // read is taken as another), so they are built once a change.
+        if rate.to_bits() != self.analysed_rate.to_bits() {
+            self.analysed_rate = rate;
             self.spectrum = super::spectrum::Spectrum::new(rate);
             self.unfreeze();
-        }
-        // A new rate starts a listen again, as it does the display's windows (plan §7.5).
-        if rate != self.finder.sample_rate() {
+            // A new rate starts a listen again, as it does the display's windows (plan §7.5).
             self.finder = super::finder::Finder::new(rate);
+            self.forget_listen();
         }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
         if settings.analyser && !self.analyser_on {

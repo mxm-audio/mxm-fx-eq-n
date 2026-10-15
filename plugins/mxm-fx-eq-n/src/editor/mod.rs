@@ -260,6 +260,10 @@ pub struct EqApp {
     /// has them, so what they find is there the same frame.
     worker: Option<finder::Worker>,
     pub(crate) inline_search: bool,
+    /// The finder's listen the shown candidates and proposals belong to.
+    listen_seen: u64,
+    /// A search that was to find the candidates again could not start: the next one does.
+    refind_pending: bool,
     /// Counts each new set of proposals, so the graph's dashed curve is computed again only then.
     pub(crate) proposals_version: u64,
     /// The keyboard's proposal while Find has some and no band is selected, and the labels drawn
@@ -281,6 +285,8 @@ pub struct EqApp {
     pub(crate) spectrum: spectrum::Spectrum,
     /// The analyser's switch last frame: coming back on starts the spectrum from silence.
     analyser_on: bool,
+    /// The rate the spectrum and the finder were built for, as the shell published it.
+    analysed_rate: f32,
     /// Where the cursor was last frame, so a move scrolls its target into view.
     last_target: (Option<usize>, Option<u64>, Option<String>),
     /// The cursor's new target, to scroll into view when the surface is drawn.
@@ -306,6 +312,7 @@ impl EqApp {
         let pointers = handles.params.pointers();
         let spectrum = spectrum::Spectrum::new(handles.telemetry.sample_rate());
         let finder = finder::Finder::new(handles.telemetry.sample_rate());
+        let analysed_rate = handles.telemetry.sample_rate();
         Self {
             params: handles.params,
             telemetry: handles.telemetry,
@@ -342,6 +349,8 @@ impl EqApp {
             proposals_stale: false,
             worker: None,
             inline_search: false,
+            listen_seen: 0,
+            refind_pending: false,
             proposals_version: 0,
             focus_proposal: None,
             proposal_labels: Vec::new(),
@@ -353,6 +362,7 @@ impl EqApp {
             solo_blocked: false,
             spectrum,
             analyser_on: false,
+            analysed_rate,
             last_target: (None, None, None),
             scroll_to: None,
             last_view: (egui::Vec2::ZERO, 1.0),
@@ -863,6 +873,7 @@ impl EqApp {
             if !self.find {
                 self.unfreeze();
                 self.finder.restart();
+                self.listen_seen = self.finder.listen();
                 self.find = true;
             }
         } else {
@@ -874,6 +885,7 @@ impl EqApp {
     pub(crate) fn end_find(&mut self) {
         self.find = false;
         self.finder.restart();
+        self.listen_seen = self.finder.listen();
         self.candidates.clear();
         self.found_at = None;
         self.found_revision = u64::MAX;
@@ -911,7 +923,11 @@ impl EqApp {
                 Some((cascade, self.placement_now(slot)))
             })
             .collect();
-        finder::HeardEq { bands, sample_rate }
+        finder::HeardEq {
+            bands,
+            sample_rate,
+            deepest_db: mxm_fx_eq_n_dsp::GAIN_RANGE as f32 * scale,
+        }
     }
 
     /// Why Find proposes nothing although it listens: every slot in use, or the gain scale at 0 %,
@@ -946,6 +962,10 @@ impl EqApp {
         if !self.find {
             return;
         }
+        // A reset restarted the listen: what the last one found goes with it.
+        if self.finder.listen() != self.listen_seen {
+            self.forget_listen();
+        }
         if let Some(found) = self.worker.as_mut().and_then(finder::Worker::take) {
             self.accept(found);
         }
@@ -964,54 +984,89 @@ impl EqApp {
         if !(heard_new || self.proposals_stale || eq_moved) {
             return;
         }
-        if heard_new {
-            self.found_revision = self.finder.revision();
-        }
-        self.proposed_on = basis;
-        self.proposed_at = now;
-        self.proposals_stale = false;
         if self.find_refusal().is_some() {
+            self.proposed_on = basis;
+            self.proposed_at = now;
+            self.proposals_stale = false;
             self.proposals.clear();
             self.proposals_version += 1;
             self.focus_proposal = None;
             return;
         }
+        // Candidates are found again when the finder heard something since, or when the last
+        // search that should have found them never ran.
+        let refind = heard_new || self.refind_pending;
+        let revision = self.finder.revision();
         let search = finder::Search {
             evidence: self.finder.evidence().clone(),
-            candidates: (!heard_new).then(|| self.candidates.clone()),
+            candidates: (!refind).then(|| self.candidates.clone()),
             heard: self.heard_eq(),
             amount: settings.amount_share(),
             free_slots: self.free_slots().count(),
             shown: self.proposals.clone(),
+            listen: self.finder.listen(),
         };
-        if self.inline_search {
+        let started = if self.inline_search {
             self.accept(search.run());
-            return;
-        }
-        if self.worker.is_none() {
-            self.worker = finder::Worker::new();
-        }
-        // Without a thread to run it on, it runs here.
-        let refused = match self.worker.as_mut() {
-            Some(worker) => worker.start(search).err(),
-            None => Some(Box::new(search)),
+            true
+        } else {
+            if self.worker.is_none() {
+                self.worker = finder::Worker::new();
+            }
+            // Never in the frame: without a thread to run it on (none could be made, or it has
+            // gone), the search waits, and the next frame tries again with a new thread.
+            self.worker
+                .as_mut()
+                .is_some_and(|worker| worker.start(search).is_ok())
         };
-        if let Some(search) = refused {
-            self.accept(search.run());
+        if started {
+            if refind {
+                self.found_revision = revision;
+            }
+            self.refind_pending = false;
+            self.proposed_on = basis;
+            self.proposed_at = now;
+            self.proposals_stale = false;
+        } else {
+            self.worker = None;
+            self.refind_pending |= refind;
+            self.proposals_stale = true;
         }
     }
 
-    /// What a search found, shown.
+    /// What a search found, shown, unless an earlier listen made it. The keyboard's proposal
+    /// stays the one at its frequency, wherever it now stands in the list, or goes.
     fn accept(&mut self, found: finder::Found) {
+        if found.listen != self.finder.listen() {
+            return;
+        }
         self.candidates = found.candidates;
         self.proposals = found.proposals;
         self.proposals_version += 1;
-        if self
-            .focus_proposal
-            .is_some_and(|index| index >= self.proposals.len())
-        {
-            self.focus_proposal = None;
+        let focus = self.focus_freq;
+        self.focus_proposal = self.focus_proposal.and_then(|_| {
+            self.proposals
+                .iter()
+                .position(|proposal| (proposal.freq / focus).log2().abs() <= finder::HALF_SEMITONE)
+        });
+        if let Some(index) = self.focus_proposal {
+            self.focus_freq = self.proposals[index].freq;
         }
+    }
+
+    /// The listen started again — a reset, a new rate — so what was found and proposed goes, and
+    /// a search still running for the old one with it.
+    pub(crate) fn forget_listen(&mut self) {
+        self.worker = None;
+        self.candidates.clear();
+        self.proposals.clear();
+        self.proposals_version += 1;
+        self.focus_proposal = None;
+        self.found_at = None;
+        self.found_revision = u64::MAX;
+        self.proposed_on.clear();
+        self.refind_pending = false;
+        self.listen_seen = self.finder.listen();
     }
 
     /// Applies proposals (plan §7.5): each band a static, unkeyed bell at its placement in the

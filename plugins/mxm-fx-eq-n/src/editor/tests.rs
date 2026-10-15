@@ -3348,3 +3348,87 @@ fn amount_sets_the_depth_and_a_full_set_proposes_nothing() {
     assert!(rig.app.proposals.is_empty());
     assert_eq!(rig.app.find_refusal(), Some(FindRefusal::Full));
 }
+
+/// **At a low gain scale a proposal is the depth Apply gives it** (plan §7.5): the band written
+/// is heard at the depth shown.
+#[test]
+fn at_a_low_gain_scale_apply_gives_the_depth_shown() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.gain_scale, 0.1);
+    rig.press(Vec::new());
+    finding(
+        &mut rig,
+        vec![candidate(1_000.0, &[(finder::Domain::Average, 30.0, 8.0)])],
+    );
+    let shown = rig.app.proposals[0].bands[0].gain_db;
+    assert!(shown >= -3.0 - 1.0e-4, "a band's 30 dB at 10 %: {shown}");
+    rig.app.apply_proposals(&[0], false);
+    rig.press(Vec::new());
+    let heard = rig.band(0).gain_db * 0.1;
+    assert!((heard - shown).abs() < 0.05, "heard {heard}, shown {shown}");
+}
+
+/// **A new rate starts the listen again** (plan §7.5): what was found and proposed goes.
+#[test]
+fn a_new_rate_forgets_what_was_found() {
+    let mut rig = finding_rig(vec![candidate(
+        1_000.0,
+        &[(finder::Domain::Average, 10.0, 8.0)],
+    )]);
+    assert!(!rig.app.proposals.is_empty());
+    rig.telemetry.publish_sample_rate(96_000.0);
+    rig.press(Vec::new());
+    assert!(rig.app.proposals.is_empty() && rig.app.candidates.is_empty());
+    assert!(rig.app.find, "Find stays on, listening afresh");
+}
+
+/// **The keyboard's proposal follows its frequency** (plan §7.5): when a search reorders the
+/// proposals, the focus stays on the one it was on.
+#[test]
+fn the_keyboard_s_proposal_follows_its_frequency_through_a_refresh() {
+    let mut rig = finding_rig(vec![
+        candidate(400.0, &[(finder::Domain::Average, 10.0, 8.0)]),
+        candidate(2_500.0, &[(finder::Domain::Average, 12.0, 8.0)]),
+    ]);
+    rig.app.selected = None;
+    rig.app.focus_freq = 1_000.0;
+    rig.app.on_surface(mxm_keys::Output::Navigate {
+        direction: mxm_keys::Direction::Right,
+        coarse: false,
+    });
+    assert_eq!(rig.app.focus_freq, 2_500.0);
+    // A new search finds a stronger one first.
+    let found = vec![
+        candidate(5_000.0, &[(finder::Domain::Average, 20.0, 8.0)]),
+        candidate(400.0, &[(finder::Domain::Average, 10.0, 8.0)]),
+        candidate(2_500.0, &[(finder::Domain::Average, 12.0, 8.0)]),
+    ];
+    rig.app.candidates = found;
+    rig.app.proposals_stale = true;
+    rig.press(Vec::new());
+    let index = rig.app.focus_proposal.expect("still focused");
+    assert_eq!(rig.app.proposals[index].freq, 2_500.0);
+    rig.app
+        .on_surface(mxm_keys::Output::Action(mxm_keys::Action::Add));
+    rig.press(Vec::new());
+    assert!((rig.band(0).freq - 2_500.0).abs() < 1.0, "ADD applies it");
+}
+
+/// **A rate the display cannot read is built for once** (plan §7.5): below 8 kHz the display takes
+/// another rate, and the editor still compares with the rate it built for, so neither the spectrum
+/// nor the finder is built again every frame.
+#[test]
+fn a_low_rate_builds_the_analysers_once() {
+    let mut rig = finding_rig(Vec::new());
+    rig.telemetry.publish_sample_rate(4_000.0);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.finder.sample_rate(), 4_000.0);
+    let version = rig.app.proposals_version;
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    assert_eq!(
+        rig.app.proposals_version, version,
+        "not forgotten again each frame"
+    );
+}

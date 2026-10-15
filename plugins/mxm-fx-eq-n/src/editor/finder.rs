@@ -3,8 +3,10 @@
 //! analyser is: it reads the analyser's pre-EQ blocks, and what it proposes the player applies as
 //! ordinary bands, so the DSP stays a plain band cascade (plan §4).
 //!
-//! - **Three rungs** (plan §7.5's table), each a frequency's only home: the input decimated to at
-//!   most 64 kHz, then a quarter and a sixteenth of that, read from 1.6 kHz, from 400 Hz, and below.
+//! - **Rungs** (plan §7.5's table), each a frequency's only home: the input decimated to at most
+//!   64 kHz, then a quarter and a sixteenth of that, read from 1.6 kHz, from 400 Hz, and below; above
+//!   64 kHz a fourth rung at the full rate reads the top octaves past rung 0's anti-alias corner, and
+//!   at a low rate a faster rung takes over where a slower one reads less high ([`ownership`]).
 //!   Each decimation is the display's anti-alias low pass, run on left and right; mid and side are
 //!   formed from their spectra, a linear step.
 //! - **Two kinds of evidence** (`research:effects/parametric-equalizers.md` §8.6): 8,192-point
@@ -43,12 +45,15 @@ use crate::analyser::{BLOCK_FRAMES, Block};
 pub const WIDTH_POINTS: usize = 8_192;
 /// The movement frames' length.
 pub const MOVEMENT_POINTS: usize = 2_048;
-/// Rung 0 is the input decimated by the smallest power of two that brings it to at most this.
+/// Rung 0 is the input decimated by the smallest power of two that brings it to at most this; a
+/// rung at the full rate goes above it then, so the top octaves are read too.
 pub const FIRST_RATE_MAX: f32 = 64_000.0;
 /// Each rung after the first is this much slower than the one before.
 pub const RUNG_STEP: usize = 4;
 /// The rungs' own frequencies, half-open: rung 2 below the first edge, rung 1 up to the second,
-/// rung 0 from it. Fixed at every rate.
+/// rung 0 from it, up to as high as a band runs; where a slower rung reads less than a third of an
+/// octave past its edge, a faster one takes over a third of an octave below its top
+/// ([`ownership`]).
 pub const RUNG_EDGES: [f32; 2] = [400.0, 1_600.0];
 /// The lowest frequency the finder reads.
 pub const LOWEST_HZ: f32 = 20.0;
@@ -62,18 +67,21 @@ pub const LISTEN_SECONDS: f64 = 4.0;
 pub const UPDATE_SECONDS: f64 = 0.5;
 /// Half a semitone, in octaves: how close two peaks are to be one.
 pub const HALF_SEMITONE: f32 = 1.0 / 24.0;
-/// A semitone: how far apart two excitations are to be two.
-const SEMITONE: f32 = 1.0 / 12.0;
 /// A frame could show a candidate when the third of an octave around it is within this of the
 /// frame's loudest third.
 pub const ELIGIBLE_DB: f32 = 40.0;
 /// The most of the frames where a peak stands out that one excitation may account for, for the
 /// peak to have been heard under two.
 pub const ONE_EXCITATION: f32 = 2.0 / 3.0;
-/// A candidate needs this many heard width frames in its rung …
-pub const MIN_WIDTH_FRAMES: u32 = 2;
-/// … and this many movement frames that could show it.
-pub const MIN_MOVEMENT_FRAMES: u32 = 8;
+/// The narrowest width, in bins of the width frames, a candidate is measured at: a frame of about
+/// 4/B seconds measures a bandwidth B (research §8.6), so anything narrower reports the window.
+pub const RESOLVED_BINS: f32 = 4.0;
+/// A candidate needs this many heard width frames in its rung, so the long-term clip ([`CLIP_DB`])
+/// is in force for every one (on the lowest rung from about 5.5 s into a listen) …
+pub const MIN_WIDTH_FRAMES: u32 = 3;
+/// … and this many movement frames that could show it: with fewer, a cell of noise stands out in
+/// half of them often enough for a few among hundreds to pass by chance.
+pub const MIN_MOVEMENT_FRAMES: u32 = 16;
 /// A peak in both channels, prominences further apart than this, is a Left and a Right band.
 pub const PAIR_DB: f32 = 3.0;
 /// Mid only when the side's level at the peak is within this of the mid's: otherwise the side has
@@ -105,7 +113,9 @@ pub const CLIP_DB: f32 = 3.0;
 
 /// The 1/48-octave cells persistence is counted in, from [`LOWEST_HZ`].
 const CELLS_PER_OCTAVE: f32 = 48.0;
-const CELLS: usize = 480;
+/// From [`LOWEST_HZ`] to a third of an octave past the DSP's `FREQ_MAX`, so the highest cell a
+/// band reaches has its surroundings.
+const CELLS: usize = 528;
 
 /// One of the five spectra.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,7 +324,7 @@ impl Decimator {
 struct Rung {
     rate: f32,
     top: f32,
-    /// What feeds it from the rung before (or from the input, for rung 0 above 64 kHz).
+    /// What feeds it from the rung above; none for the fastest, which takes the input.
     decimator: Option<Decimator>,
     width: Frames,
     /// Its movement frames: one length, or on the lowest rung two, each read in its own octaves.
@@ -355,7 +365,9 @@ struct Movement {
 /// its highest level within half a semitone over the median of its surroundings — the cells from
 /// a twelfth to a third of an octave either side — rather than over their lowest point, since one
 /// short frame's noise has deep dips everywhere and would put a "peak" within half a semitone of
-/// anything. `None` where its surroundings are not all read.
+/// anything. Near the edge of what is read (the top of the range, a rung's anti-alias corner, the
+/// lowest frequency) its half a semitone and its surroundings are what can be read, so long as
+/// a whole side of the surroundings is; `None` where less is, or where the cell itself is not read.
 fn stands_out(
     levels: &[f32],
     read: std::ops::Range<usize>,
@@ -364,22 +376,50 @@ fn stands_out(
 ) -> Option<f32> {
     let per = CELLS_PER_OCTAVE as usize;
     let (centre, near, far) = (per / 24, per / 12, per / 3);
-    if cell < read.start + far || cell + far >= read.end {
+    if !read.contains(&cell) {
         return None;
     }
+    let first = cell.saturating_sub(far).max(read.start);
+    let last = (cell + far).min(read.end - 1);
     flank.clear();
     flank.extend(
-        (cell - far..=cell + far)
+        (first..=last)
             .filter(|&other| other.abs_diff(cell) > near)
             .map(|other| levels[other]),
     );
+    if flank.len() < far - near {
+        return None;
+    }
     let middle = flank.len() / 2;
     let (_, median, _) = flank.select_nth_unstable_by(middle, f32::total_cmp);
     let median = *median;
-    let top = (cell - centre..=cell + centre)
+    let top = (cell.saturating_sub(centre).max(read.start)..=(cell + centre).min(read.end - 1))
         .map(|other| levels[other])
         .fold(f32::NEG_INFINITY, f32::max);
     Some(top - median)
+}
+
+/// Each rung's own frequencies, half-open and continuous from [`LOWEST_HZ`] up. Rungs come
+/// fastest first, each with the highest it may own; from the slowest up, a rung owns from where
+/// the one below stopped to that.
+pub(crate) fn ownership(limits: &[f32]) -> Vec<(f32, f32)> {
+    let mut ranges = vec![(0.0, 0.0); limits.len()];
+    let mut low = LOWEST_HZ;
+    for index in (0..limits.len()).rev() {
+        let high = limits[index].max(low);
+        ranges[index] = (low, high);
+        low = high;
+    }
+    ranges
+}
+
+/// What plays for `cell`: the first of `loudest_first` more than `away` cells from it, so
+/// outside its own third of an octave; `None` when every cell read is that close.
+pub(crate) fn playing(loudest_first: &[usize], cell: usize, away: usize) -> Option<usize> {
+    loudest_first
+        .iter()
+        .copied()
+        .find(|&other| other.abs_diff(cell) > away)
 }
 
 /// One cell's persistence counts on one spectrum.
@@ -390,32 +430,44 @@ struct Cell {
     eligible: u32,
     /// Those of them where it stands out ([`stands_out`]).
     present: u32,
-    /// Those, by their excitation — the semitone of the loudest of the rung's other frequencies,
+    /// Those, by their excitation — the cell of the loudest of the rung's other frequencies,
     /// outside this cell's third — and how many each.
     excitations: Vec<(u16, u32)>,
 }
 
 impl Cell {
-    /// Whether it stood out under at least two excitations: the commonest accounts for at most
-    /// [`ONE_EXCITATION`] of the frames, so one odd frame does not make a second.
+    /// Whether it stood out under at least two excitations: of the frames with one recorded, the
+    /// commonest — every excitation less than a semitone from one of them, so a drifting one is
+    /// still one — accounts for at most [`ONE_EXCITATION`], so one odd frame does not make a
+    /// second.
     fn varied(&self) -> bool {
+        let same = (CELLS_PER_OCTAVE / 12.0) as u16;
+        let recorded: u32 = self.excitations.iter().map(|&(_, count)| count).sum();
         let commonest = self
             .excitations
             .iter()
-            .map(|&(_, count)| count)
+            .map(|&(at, _)| {
+                self.excitations
+                    .iter()
+                    .filter(|(other, _)| other.abs_diff(at) < same)
+                    .map(|&(_, count)| count)
+                    .sum::<u32>()
+            })
             .max()
             .unwrap_or(0);
-        self.present > 0 && commonest as f32 <= ONE_EXCITATION * self.present as f32
+        // Only excitations recorded count, a frame with none being no diversity; and with the
+        // commonest at most two thirds of them, the rest lie a semitone or more from it.
+        recorded > 0 && commonest as f32 <= ONE_EXCITATION * recorded as f32
     }
 
-    fn excited_by(&mut self, semitone: u16) {
+    fn excited_by(&mut self, playing: u16) {
         match self
             .excitations
             .iter_mut()
-            .find(|(other, _)| *other == semitone)
+            .find(|(other, _)| *other == playing)
         {
             Some((_, count)) => *count += 1,
-            None => self.excitations.push((semitone, 1)),
+            None => self.excitations.push((playing, 1)),
         }
     }
 }
@@ -461,13 +513,14 @@ pub struct Candidate {
 /// The finder: everything heard since Find was turned on.
 pub struct Finder {
     sample_rate: f32,
-    /// What brings the input to rung 0's rate, when it is above [`FIRST_RATE_MAX`].
-    first: Option<Decimator>,
+    /// Its rungs, fastest first, each fed from the one above through its decimator.
     rungs: Vec<Rung>,
     expected_seq: Option<u64>,
     generation: Option<u32>,
     /// Counts every heard frame and every restart: what the finder knows changed.
     revision: u64,
+    /// Counts its restarts ([`Finder::listen`]).
+    listen: u64,
     evidence: Evidence,
     /// Working buffers for one frame, so a frame allocates nothing.
     power: Vec<f32>,
@@ -475,12 +528,15 @@ pub struct Finder {
     levels: Vec<f32>,
     thirds: Vec<f32>,
     flank: Vec<f32>,
+    order: Vec<usize>,
 }
 
 impl Finder {
+    /// A finder for audio at `sample_rate`: any rate the plugin runs at (from the DSP's
+    /// `MIN_SAMPLE_RATE`); one not finite is taken as 48 kHz.
     pub fn new(sample_rate: f32) -> Finder {
-        let sample_rate = if sample_rate.is_finite() && sample_rate >= 8_000.0 {
-            sample_rate
+        let sample_rate = if sample_rate.is_finite() {
+            sample_rate.max(mxm_fx_eq_n_dsp::MIN_SAMPLE_RATE as f32)
         } else {
             48_000.0
         };
@@ -488,20 +544,42 @@ impl Finder {
         while sample_rate / factor as f32 > FIRST_RATE_MAX {
             factor *= 2;
         }
-        let first = (factor > 1).then(|| Decimator::new(factor, sample_rate));
         let mut planner = Planner::new();
-        let mut rate = sample_rate / factor as f32;
+        // The rungs, fastest first: each one's rate, what decimates it from the rung above, the
+        // highest it reads, and the highest it may own. Rung 0 is the input at most 64 kHz, then a
+        // quarter and a sixteenth of it; where the input is decimated for rung 0, a rung at the
+        // full rate goes above it, so no rate loses its top octaves. An undecimated rung reads to
+        // Nyquist, a decimated one to its anti-alias corner. The fastest owns up to as high as a
+        // band runs; a slower one to its edge, but never into the third of an octave below what it
+        // reads, which the faster one owns: every frequency a rung owns has a key point's reach
+        // above it read in that rung, and a peak's half above it too.
+        let highest = mxm_fx_eq_n_dsp::max_frequency(f64::from(sample_rate)) as f32;
+        let reach = 2f32.powf(KEY_OCTAVES);
+        let first = sample_rate / factor as f32;
+        let mut specs: Vec<(f32, Option<usize>, f32, f32)> = Vec::new();
+        if factor > 1 {
+            specs.push((sample_rate, None, 0.5 * sample_rate, highest));
+            let top = TOP_SHARE * first;
+            specs.push((first, Some(factor), top, top / reach));
+        } else {
+            specs.push((first, None, 0.5 * first, highest));
+        }
+        for (step, edge) in [(1, RUNG_EDGES[1]), (2, RUNG_EDGES[0])] {
+            let rate = first / (RUNG_STEP as f32).powi(step);
+            let top = TOP_SHARE * rate;
+            specs.push((rate, Some(RUNG_STEP), top, edge.min(top / reach)));
+        }
+        let limits: Vec<f32> = specs.iter().map(|spec| spec.3).collect();
+        let ranges = ownership(&limits);
+        let lowest = specs.len() - 1;
         let mut rungs = Vec::new();
         let mut heard = Vec::new();
-        for index in 0..3 {
-            let decimator = (index > 0).then(|| Decimator::new(RUNG_STEP, rate * RUNG_STEP as f32));
+        for (index, ((rate, decimation, top, _), (low, high))) in
+            specs.into_iter().zip(ranges).enumerate()
+        {
+            let decimator = decimation.map(|step| Decimator::new(step, rate * step as f32));
             let width = Frames::new(&mut planner, WIDTH_POINTS);
             let bins = width.bins();
-            let (low, high) = match index {
-                0 => (RUNG_EDGES[1], f32::INFINITY),
-                1 => (RUNG_EDGES[0], RUNG_EDGES[1]),
-                _ => (LOWEST_HZ, RUNG_EDGES[0]),
-            };
             // About the shortest frame that tells notes a semitone apart in each octave (plan
             // §7.5): on the lowest rung its top octave takes half the length.
             let mut movements = vec![Movement {
@@ -509,8 +587,8 @@ impl Finder {
                 low,
                 high,
             }];
-            if index == 2 {
-                let split = RUNG_EDGES[0] / 2.0;
+            if index == lowest {
+                let split = (RUNG_EDGES[0] / 2.0).clamp(low, high);
                 movements[0].high = split;
                 movements.push(Movement {
                     frames: Frames::new(&mut planner, MOVEMENT_POINTS / 2),
@@ -521,28 +599,27 @@ impl Finder {
             heard.push(RungEvidence {
                 low,
                 high,
-                top: TOP_SHARE * rate,
+                top,
                 bin_hz: rate / width.len as f32,
                 sums: std::array::from_fn(|_| vec![0.0; bins]),
                 heard_frames: 0,
             });
             rungs.push(Rung {
                 rate,
-                top: TOP_SHARE * rate,
+                top,
                 decimator,
                 width,
                 movements,
             });
-            rate /= RUNG_STEP as f32;
         }
         let most_bins = WIDTH_POINTS / 2 + 1;
         Finder {
             sample_rate,
-            first,
             rungs,
             expected_seq: None,
             generation: None,
             revision: 0,
+            listen: 0,
             evidence: Evidence {
                 rungs: heard,
                 cells: std::array::from_fn(|_| vec![Cell::default(); CELLS]),
@@ -554,6 +631,7 @@ impl Finder {
             levels: vec![0.0; CELLS],
             thirds: vec![0.0; CELLS],
             flank: Vec::with_capacity(CELLS_PER_OCTAVE as usize),
+            order: Vec::with_capacity(CELLS),
         }
     }
 
@@ -591,6 +669,12 @@ impl Finder {
         self.revision
     }
 
+    /// Counts its listens: each restart begins another, and a search carries the one it was made
+    /// in, so what an earlier listen found is never shown in a later one.
+    pub fn listen(&self) -> u64 {
+        self.listen
+    }
+
     /// Whether enough has been heard for proposals (plan §7.5: four seconds).
     pub fn listened(&self) -> bool {
         self.evidence.listened()
@@ -602,6 +686,7 @@ impl Finder {
         self.expected_seq = None;
         self.generation = None;
         self.revision = self.revision.wrapping_add(1);
+        self.listen = self.listen.wrapping_add(1);
         let evidence = &mut self.evidence;
         evidence.heard_seconds = 0.0;
         for rung in &mut evidence.rungs {
@@ -618,9 +703,6 @@ impl Finder {
     /// A gap in the audio: the frames start again, never spliced across it, and what was heard
     /// before it stays.
     fn restart_windows(&mut self) {
-        if let Some(first) = &mut self.first {
-            first.restart();
-        }
         for rung in &mut self.rungs {
             if let Some(decimator) = &mut rung.decimator {
                 decimator.restart();
@@ -656,13 +738,6 @@ impl Finder {
         for index in 0..BLOCK_FRAMES {
             let frame = [block.pre[0][index], block.pre[1][index]]
                 .map(|x| if x.is_finite() { x } else { 0.0 });
-            let frame = match &mut self.first {
-                Some(first) => match first.push(frame) {
-                    Some(frame) => frame,
-                    None => continue,
-                },
-                None => frame,
-            };
             self.push_rung(0, frame);
         }
     }
@@ -707,7 +782,9 @@ impl Finder {
         for &domain in Domain::of(channels) {
             rung.width.power(domain, channels, &mut self.power[..bins]);
             // The frames before this one, for the clip: from the third frame on, a bin enters at
-            // most CLIP_DB above its mean so far.
+            // most CLIP_DB above its mean so far. One frame is too noisy a mean to clip against —
+            // a bin that read low in it would hold every later frame down — and until the third,
+            // persistence alone keeps the notes' lines out (on the lowest rung, the first 5.5 s).
             let before = f64::from(heard.heard_frames - 1);
             for (sum, power) in heard.sums[domain.index()]
                 .iter_mut()
@@ -778,17 +855,13 @@ impl Finder {
                     loudest_third = loudest_third.max(third);
                 }
             }
-            // What is playing: the loudest of the frame's own frequencies, and the loudest a sixth
-            // of an octave or more from it, for a cell near the first.
-            let loudest = |away: Option<usize>| {
-                own.clone()
-                    .filter(|&cell| away.is_none_or(|from| cell.abs_diff(from) > sixth))
-                    .max_by(|&a, &b| self.levels[a].total_cmp(&self.levels[b]))
-            };
-            let Some(first) = loudest(None) else {
-                continue;
-            };
-            let second = loudest(Some(first)).unwrap_or(first);
+            // What is playing: the frame's own frequencies, loudest first, so each cell takes the
+            // loudest outside its own third.
+            self.order.clear();
+            self.order.extend(own.clone());
+            let levels = &self.levels;
+            self.order
+                .sort_by(|&a, &b| levels[b].total_cmp(&levels[a]).then(a.cmp(&b)));
             let cells = &mut self.evidence.cells[domain.index()];
             for cell in own.clone() {
                 if self.thirds[cell] < loudest_third - ELIGIBLE_DB {
@@ -805,12 +878,9 @@ impl Finder {
                 }
                 state.present += 1;
                 // Its excitation: what is playing outside its own third of an octave, by semitone.
-                let playing = if cell.abs_diff(first) > sixth {
-                    first
-                } else {
-                    second
-                };
-                state.excited_by(semitone(cell_freq(playing)));
+                if let Some(playing) = playing(&self.order, cell, sixth) {
+                    state.excited_by(playing as u16);
+                }
             }
         }
     }
@@ -1036,8 +1106,22 @@ impl Evidence {
                 *band = fitted;
             }
         }
+        // A width under RESOLVED_BINS of its frames' bins is the window's, not the peak's (§8.6):
+        // a line or a spike of noise, not a resonance these frames can measure.
+        bands.retain(|band| {
+            let bin_hz = self.rungs[band.rung].bin_hz;
+            band.freq / band.q.max(f32::MIN_POSITIVE) >= RESOLVED_BINS * bin_hz
+        });
         let audibility = bands.iter().map(Measured::audibility).reduce(f32::max)?;
-        let centre = bands.iter().map(|band| band.freq).next().unwrap_or(freq);
+        // A pair's two bands stand at one centre, midway in log-frequency between their fits.
+        let centre = match bands.as_slice() {
+            [one] => one.freq,
+            [left, right] => (left.freq * right.freq).sqrt(),
+            _ => freq,
+        };
+        for band in &mut bands {
+            band.freq = centre;
+        }
         Some(Candidate {
             freq: centre,
             bands,
@@ -1300,14 +1384,6 @@ fn octaves(a: f32, b: f32) -> f32 {
     (a / b).log2()
 }
 
-/// The semitone `freq` falls in, counted from [`LOWEST_HZ`]: two excitations in different ones
-/// stand about a semitone or more apart.
-fn semitone(freq: f32) -> u16 {
-    (octaves(freq, LOWEST_HZ) / SEMITONE)
-        .round()
-        .clamp(0.0, f32::from(u16::MAX)) as u16
-}
-
 fn cell_freq(cell: usize) -> f32 {
     LOWEST_HZ * 2f32.powf(cell as f32 / CELLS_PER_OCTAVE)
 }
@@ -1502,6 +1578,16 @@ fn measure(db: &[f32], bin_hz: f32, peak: &BinPeak, search: (usize, usize)) -> O
 pub struct HeardEq {
     pub bands: Vec<(Cascade, Placement)>,
     pub sample_rate: f64,
+    /// The deepest a new band can be heard to cut: a band's gain range under the gain scale.
+    pub deepest_db: f32,
+}
+
+impl HeardEq {
+    /// The deepest a proposal cuts: [`MAX_CUT_DB`], or less where the gain scale cannot reach it,
+    /// so each proposal is the depth Apply gives it.
+    pub fn max_cut(&self) -> f32 {
+        MAX_CUT_DB.min(self.deepest_db.max(0.0))
+    }
 }
 
 /// `(a + jb)(c + jd)`.
@@ -1622,7 +1708,7 @@ pub fn propose(
                 domain: measured.domain,
                 freq: measured.freq,
                 q: measured.q.clamp(Q_RANGE.0, Q_RANGE.1),
-                gain_db: (-remainder).max(-MAX_CUT_DB),
+                gain_db: (-remainder).max(-heard.max_cut()),
                 target_db: -remainder,
             });
         }
@@ -1751,7 +1837,7 @@ pub fn solve(proposals: &mut [Proposal], heard: &HeardEq) {
             let error = bands[index].target_db - reached;
             worst = worst.max(error.abs());
             let band = &mut bands[index];
-            let gain = (band.gain_db + error).clamp(-MAX_CUT_DB, 0.0);
+            let gain = (band.gain_db + error).clamp(-heard.max_cut(), 0.0);
             if gain != band.gain_db {
                 band.gain_db = gain;
                 cascades[index] = band.cascade(rate);
@@ -1762,9 +1848,6 @@ pub fn solve(proposals: &mut [Proposal], heard: &HeardEq) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 // ---- the search, away from the editor's frame ------------------------------------------------
 
@@ -1778,12 +1861,15 @@ pub struct Search {
     pub amount: f32,
     pub free_slots: usize,
     pub shown: Vec<Proposal>,
+    /// The listen it was made in ([`Finder::listen`]).
+    pub listen: u64,
 }
 
-/// What a search found.
+/// What a search found, and in which listen.
 pub struct Found {
     pub candidates: Vec<Candidate>,
     pub proposals: Vec<Proposal>,
+    pub listen: u64,
 }
 
 impl Search {
@@ -1803,23 +1889,27 @@ impl Search {
         Found {
             candidates,
             proposals,
+            listen: self.listen,
         }
     }
 }
 
 /// A thread the editor hands its searches to, so a search's fits never cost the editor a frame
-/// (the analyser's 2 ms budget, plan §4); one search at a time. Dropping it ends the thread.
+/// (the analyser's 2 ms budget, plan §4); one search at a time. Dropping it closes its queue and
+/// waits for the thread to finish the search it is on and end, so no plugin code is left running
+/// when the editor, or the plugin, goes.
 pub struct Worker {
-    jobs: std::sync::mpsc::Sender<Search>,
+    jobs: Option<std::sync::mpsc::Sender<Search>>,
     found: std::sync::mpsc::Receiver<Found>,
     busy: bool,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Worker {
     pub fn new() -> Option<Worker> {
         let (jobs, take) = std::sync::mpsc::channel::<Search>();
         let (give, found) = std::sync::mpsc::channel::<Found>();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("mxm-fx-eq-n finder".to_owned())
             .spawn(move || {
                 for search in take {
@@ -1830,9 +1920,10 @@ impl Worker {
             })
             .ok()?;
         Some(Worker {
-            jobs,
+            jobs: Some(jobs),
             found,
             busy: false,
+            thread: Some(thread),
         })
     }
 
@@ -1843,10 +1934,10 @@ impl Worker {
 
     /// Starts `search`; refused, and handed back, while another runs or if the thread has gone.
     pub fn start(&mut self, search: Search) -> Result<(), Box<Search>> {
-        if self.busy {
+        let Some(jobs) = self.jobs.as_ref().filter(|_| !self.busy) else {
             return Err(Box::new(search));
-        }
-        match self.jobs.send(search) {
+        };
+        match jobs.send(search) {
             Ok(()) => {
                 self.busy = true;
                 Ok(())
@@ -1862,3 +1953,16 @@ impl Worker {
         Some(found)
     }
 }
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        // The queue closed, the thread ends after the search it is on.
+        self.jobs = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

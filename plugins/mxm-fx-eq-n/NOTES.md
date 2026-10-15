@@ -192,7 +192,13 @@ and `audition.rs`'s tests hold the lifecycle.
 - **Find, the resonance finder** (plan §7.5, `editor/finder.rs`), in the order the work goes:
   - *Listening.* The analyser's pre-EQ blocks, while Find is on, into three rungs: the input
     decimated to at most 64 kHz, then a quarter and a sixteenth of that, each a frequency's only
-    home (from 1.6 kHz, from 400 Hz, below), the display's anti-alias low pass on left and right.
+    home (from 1.6 kHz, from 400 Hz, below), the display's anti-alias low pass on left and right;
+    above 64 kHz a fourth at the full rate owns the top octaves. A rung reads to Nyquist, or to
+    its anti-alias corner when decimated, and owns nothing within a third of an octave of that, the
+    faster rung taking it (`ownership`): a peak there needs its key point's reach above it. The
+    edge test makes its resonances with the EQ's own matched bell, since the cookbook biquad's
+    bandwidth shrinks by sin w0 near Nyquist (its "Q 20" at 23 kHz and 48 kHz measured Q 290,
+    narrower than any movement frame resolves).
     8,192-point frames for width, 2,048 for movement (1,024 in the lowest rung's top octave, the
     shortest that tells a semitone apart there), Hann, a hop of half a frame; a frame under
     −60 dBFS counts for nothing. Five spectra, mid and side formed from the channels' spectra.
@@ -202,17 +208,26 @@ and `audition.rs`'s tests hold the lifecycle.
     biases every measurement; 6 dB leaves lines 2–3 dB high. No morphological opening for the
     lines: on noise it widens bumps (a Q-10 bell fits at 8.6 with one, 10.0 without). The
     consequence, stated in Find's hover: a resonance is measured where broadband sound reaches it.
+  - *The clip starts at the third width frame*: one frame is too noisy a mean to clip against (a
+    bin that read low would hold every later frame down; clipping from the second broke the 8 kHz
+    and placement scenes). A candidate therefore needs three width frames, so the clip is always in
+    force, and sixteen eligible movement frames: with ten, a cell of noise passes "half the frames"
+    by chance somewhere among hundreds (a 73 Hz candidate from noise alone at 4.5 s).
   - *Candidates* are its peaks by F3's rule, then **fitted**: Levenberg–Marquardt of the cookbook
     bell on a sloping floor over a third of an octave either side, Huber-weighted (1.5 dB) and run
     three times, 64 points. One-point measures — a parabola's top, the half-height crossings —
     follow whichever line rides highest on the bump; the fit reads it whole and is the shape the
     cut inverts. Exact on a noiseless bell (`the_fit_finds_a_cookbook_bell_exactly`); on noise
     alone Q within about 10 %. Only the final bands are fitted, and left and right when both have
-    the peak (the pair rule needs their true heights).
+    the peak (the pair rule needs their true heights). A fit narrower than four width bins is
+    dropped: §8.6's 4/B, under which the width is the window's (noise at 73 Hz fitted Q 200).
   - *Persistence* per 1/48-octave cell. A cell stands out in a movement frame when its highest
     level within half a semitone stands 6 dB (F3's prominence) over the **median** of the cells a
     twelfth to a third of an octave away: against the lowest of them, as F3 measures, one frame's
-    noise put a "peak" within half a semitone of anything. The excitation is the loudest of the
+    noise put a "peak" within half a semitone of anything. Near the edge of what a rung reads, the
+    median of what is read there, one whole side at least: asking for both sides left the top
+    third of an octave (18.7–23.5 kHz at 48 kHz) and the third below a rung's anti-alias corner
+    unable ever to stand out. The excitation is the loudest of the
     rung's other frequencies, outside the cell's third, by semitone, and "two excitations" means
     the commonest accounts for at most two thirds of the frames it stood out in: the plan's
     strongest other peak *in that third* sees only "none" where broadband sound excites a
@@ -224,8 +239,9 @@ and `audition.rs`'s tests hold the lifecycle.
     at all.
   - *Cost.* Listening and a copy of the evidence on the GUI thread; the search (candidates and
     proposals) on a worker thread (`finder::Worker`), one at a time, so its fits never cost a
-    frame. At 192 kHz in release (`finder_cost`, 2026-10-15): 0.23 ms a frame on average and
-    0.95 ms at worst on the GUI thread, the copy 0.23 ms; a search 4.4 ms, too long for a frame.
+    frame. At 192 kHz in release (`finder_cost`, 2026-10-15), the full-rate rung included:
+    0.54 ms a frame on average and 1.36 ms at worst on the GUI thread, the copy 0.41 ms; a search
+    4.5 ms, too long for a frame. With the analyser's 0.27 ms, inside its 2 ms.
   - *Test scenes.* A melody's notes need played edges (20 ms raised cosine) and untempered pitches:
     hard-edged notes smear lines tens of hertz wide, and a tempered scale shares harmonics between
     half its notes, which no persistence test can tell from a resonance (research §8.2). Under the
