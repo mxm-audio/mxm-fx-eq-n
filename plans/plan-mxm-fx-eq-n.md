@@ -1,6 +1,8 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
+**Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
+(2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
+all accepted). **Waiting for the owner's approval.** **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
 §7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
@@ -44,6 +46,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 12–13 | **Owner decisions** (2026-10-12): 2, a neutral Init; 5, the held-key layer in `crates/ui`; 8, a gain scale and no Mix; 9, phases in order. |
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
+| 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
 | 25 | **F2 designed** (2026-10-14), §7.3: Pro-Q's five placements and, by the owner's choice, its Split on a Stereo band (L/R, or M/S with Alt) (decision 18); placed bands disabled in mono (decision 19); a placed dynamic band detects its own channel (decision 20); no new presets (decision 21); channel bands before mid/side bands (decision 22); 24 placements appended; curves each a channel's self-response, labelled. Approved by the owner 2026-10-15 |
 | 24 | **The external side chain designed** (2026-10-14), §7.2, for the owner's approval: next, before F2, the EQ only and heard at home (decision 15); per band, the key band-limited as the input is (decision 16); solo plays what the band listens to (decision 17); one port, keyed layouts first; 24 switches appended |
 | 23 | **F1 designed** (2026-10-14), §7.1, for the owner's approval: Pro-Q's range-only controls, each band's own region as its detector, no external side chain yet (decisions 12–14); four parameters appended per slot; Wise's form (audio in series, detectors in parallel, a fixed detector filter); a dynamic band never parks; delivery F1.0–F1.5. |
@@ -89,6 +92,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 19 | **In mono, a placed band is disabled** and keeps its placement (Pro-Q's way); the alternative plays it as Stereo (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; a Left/Right pair then moves independently, Wise's phase intermodulation; the alternative links every band to the stereo peak, so a Left band also reacts to the right (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 21 | **No new presets for F2**; the proposal was two Side presets, *Mono bass* and *Wider air* (§7.3) | **Settled** (owner, 2026-10-15: the alternative) | — |
+| 23 | **Freeze is an explicit toggle**, holding each band's highest level of the last two seconds; no hover entry; the alternative is Pro-Q's hover-and-wait entry (§7.4) | **Proposed** | F3.2 |
+| 24 | **Peaks**: at least 6 dB of prominence within a third of an octave, within 40 dB of the loudest band, a sixth of an octave apart, at most eight; the alternative is a looser or tighter rule (§7.4) | **Proposed** | F3.1 |
+| 25 | **A grab makes a static bell**, Q from the peak's 3 dB width; the alternative makes a dynamic band directly (§7.4) | **Proposed** | F3.2 |
+| 26 | **The reference overlay is the side-chain input's spectrum**; the alternative is a captured snapshot of the EQ's own (§7.4) | **Proposed** | F3.3 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
@@ -877,6 +884,86 @@ MXM Player: every host test, and a placed band restored through the state heard 
 | **F2.2** | Shell: 24 placements, both migrations, host tests. **Built** | Unit and host tests at the end; `clap-validator` |
 | **F2.3** | Editor: the selector, Split, the grouped curves and their letters, the point's letter. **Built**; review approved in round 3 | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
 | **F2.4** | Listening, and the image checked by ear on speakers and headphones | Owner sign-off |
+
+### 7.4 F3 — spectrum grab and analyser extras (revision 26, for the owner's approval)
+
+The next phase in the owner's order (decision 9; the owner, 2026-10-15, *"yes to all"*). Pro-Q's
+Spectrum Grab is the reference (research §11, its manuals): the spectrum freezes, "the most
+important peaks" are labelled with their frequency, and dragging one makes a bell whose Q "is
+determined automatically", the drag setting its gain. FabFilter does not disclose what counts as
+a peak, how they are ranked, whether the frozen spectrum is an instant or a hold, or how Q is set;
+F3 states its own, below, each one a test.
+
+**Freeze, explicit** (decision 23). A **Freeze** toggle in the Analyser card holds the display.
+There is no hover entry: Pro-Q's freezes after "a few seconds" over the spectrum, a timer the
+player cannot see and the keyboard cannot reach. Freezing holds **each band's highest level of the
+last two seconds** — Kirchhoff-EQ accumulates frames before it picks — so a peak that comes and goes
+with the notes is there to grab; an instant would catch whatever the last frame held. The hold is
+the display's own smoothed levels (1/12 octave, §4), so what is labelled is what is drawn.
+**A freeze keeps one source and one representation**: the spectrum grabbed is fixed when Freeze is
+turned on — the post-EQ one when it is shown, else the pre-EQ one (Pro-Q's rule: post "works best"
+because it matches what is heard) — and the hold, its labels and every grab use it alone. **Any
+change to Show, Resolution, Speed or Tilt ends the freeze** (the toggle turns off and the display
+runs again), as do a reset and a change of rate, so held levels are never shown as another source
+or under another transform. **Freeze is the editor's moment, not a setting**: unlike the analyser's
+view state (§4) it is not saved with the project; turning the analyser off, closing the editor or a
+restored state or preset ends it, and its hold goes with it, so a reopened editor always shows the
+live spectrum.
+
+**Peaks** (decision 24), from the frozen spectrum alone:
+- a **local maximum standing at least 6 dB above the higher of the two lowest points between it and
+  the next higher level within a third of an octave each side** (its prominence, the usual
+  topographic one), so the spectrum falls at least 6 dB on both sides and both 3 dB points exist; a
+  maximum whose third-octave reaches the display's edge without that fall is not a peak;
+- **within 40 dB of the frozen spectrum's loudest band, and inside the range the graph draws**, so
+  structure near the analyser's floor (−120 dB) never displaces audible peaks;
+- **at least a sixth of an octave from a stronger one**, the stronger kept;
+- **at most eight**, ranked by prominence, each labelled with its frequency in the graph's own
+  reading (`1.20 kHz`), a label that would overlap a stronger one's not drawn.
+The numbers are this plan's: Sir Audio StandardEQ is the one product that exposes them (a maximum
+count, a minimum spacing, a range), and F4's resonance finder will share this list (research §11:
+"the grab gesture and the resonance detector can share one candidate list").
+
+**What a grab makes** (decision 25): dragging a labelled peak makes **a static bell** — Pro-Q's
+rule; it can be made dynamic afterwards (§7.1) — at the peak's frequency, with **Q from the peak's
+width**: `Q = f0 / (f_high − f_low)` between the first points 3 dB below it on each side of the
+frozen spectrum (they exist by the peak rule), held inside 0.5–12, and its gain following the vertical drag from 0 dB (down cuts, up lifts). It is one
+gesture and one undo step, BACK takes it away, and it takes the lowest Off slot like any new band;
+with every slot in use no peak is grabbable and the hover says why. A click on a label without a
+drag makes nothing. **The keyboard** reaches it in the graph's own language: while frozen, with no
+band selected, ← → walk the labelled peaks instead of the line, and ADD on one makes its bell, then
+VALUE sets its gain as for any band.
+
+**The reference overlay** (decision 26): **the side-chain input's spectrum** (§7.2), a third line
+drawn dashed and labelled "SC", never by hue alone, while the Analyser card's **Side chain** view is
+on. The plugin can observe whether its layout has the port — the shell publishes it with the channel
+count at activation — but not whether a host has routed anything to it: an unconnected port and a
+silent source are the same silence. So **the toggle is offered only on a layout with the port**, and
+the line shows what the port carries, at the display's floor when that is nothing; its hover says
+that with nothing routed there the line stays flat. It is analysed as the input is — the audio thread copies the
+key with the pre and post blocks, preallocated, nothing with no editor — so a kick's spectrum can be
+seen against the bass it keys. Another instance's spectrum is F7's.
+
+**Not in F3**: peak grabbing from the side chain (not documented anywhere; research §11), note
+names (no piano display here), a grab that makes a dynamic band directly.
+
+**Tests** (written at the end): freezing holds the two-second maximum and nothing moves while
+frozen, and a change of any analyser setting ends it, as do the analyser off, the editor closed and a restore, nothing of it saved; the peak rules on synthetic spectra — prominence on an asymmetric peak and a shoulder (not a
+peak), a maximum at the display's edge, a prominent bump 50 dB under the loudest band (not a peak), spacing, the count, the ranking, a label dropped for overlap; Q from width on a known peak, and its bounds; a grab makes the bell at the
+peak's frequency and Q, its gain the drag's, one undo step, BACK leaving nothing, the lowest Off slot,
+nothing with every slot in use; the keyboard walk and ADD; the Side chain toggle only on a layout with the port, its
+line at the floor on a silent key, the copy realtime-safe and absent with no editor; the analyser's cost with the side-chain line,
+inside its 2 ms budget (§4); the opening size with the new toggles.
+
+**Delivery** (tests at the end, one review over F3.1–F3.3):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F3.0** | Decisions 23–26, signed | Owner |
+| **F3.1** | The hold, the peak picker and Q from width, in the analyser's editor half | Unit tests at the end |
+| **F3.2** | Grab, mouse and keyboard; Freeze and Side chain in the Analyser card | Editor tests at the end |
+| **F3.3** | The side-chain line: the audio thread's copy and its analysis | Realtime and cost tests at the end; one agent-loop review of F3.1–F3.3 |
+| **F3.4** | The owner by eye and ear | Owner sign-off |
 
 ## 8. What must not break
 
