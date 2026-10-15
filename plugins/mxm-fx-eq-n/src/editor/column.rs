@@ -65,6 +65,10 @@ pub enum Leaf {
     Moving,
     /// Whether a dynamic band listens to the side chain (plan §7.2).
     SideChain,
+    /// Where the band works in the stereo image (plan §7.3).
+    Placement,
+    /// A Stereo band into a Left/Right or Mid/Side pair (plan §7.3).
+    Split,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -90,6 +94,25 @@ const GAIN_SCALE_UNHEARD: &str = concat!(
     "changes nothing now; cuts, notches and band passes stay as drawn."
 );
 const DELETE_DESCRIPTION: &str = "Removes the band. Undo brings it back.";
+const PLACEMENT_DESCRIPTION: &str = "Where the band works: on both channels, on the left or the \
+     right alone, or on the middle or the sides of the stereo image. A Mid or Side cut also moves \
+     the image a little near its frequency.";
+const PLACEMENT_MONO_DESCRIPTION: &str = "This band works on one part of a stereo image, which a \
+     mono track does not have, so it is not heard here. Choose Stereo to hear it.";
+const SPLIT_DESCRIPTION: &str = "Splits the band into a left and a right copy, to set each on \
+     its own. Alt-click splits it into a middle and a sides copy instead.";
+const SPLIT_PLACED_DESCRIPTION: &str =
+    "This band already works on one channel. Only a Stereo band splits.";
+const SPLIT_FULL_DESCRIPTION: &str = "Every band slot is in use, so there is no room for a copy.";
+
+/// What the Band card offers of placement (plan §7.3): the choice and Split in a stereo layout;
+/// in mono nothing for a Stereo band, and the way back to Stereo for a placed one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlacementRow {
+    Offered,
+    Restore,
+    Absent,
+}
 
 fn slopes() -> Vec<String> {
     Slope::ALL
@@ -207,14 +230,33 @@ fn button_leaf(key: Leaf, label: &str) -> Node<Leaf> {
 }
 
 /// One shape's Band body, for slot `slot`.
-pub(crate) fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slope) -> Node<Leaf> {
+pub(crate) fn band_body(
+    params: &EqParams,
+    slot: usize,
+    shape: Shape,
+    slope: Slope,
+    placement: PlacementRow,
+) -> Node<Leaf> {
+    let bypass = leaf(
+        Leaf::Bypass,
+        Kind::Toggle {
+            label: "Bypass".to_owned(),
+        },
+    );
+    // Placement shares Bypass's row, so the card that holds it still opens inside the budget.
+    let first = if placement == PlacementRow::Absent {
+        bypass
+    } else {
+        let names = mxm_fx_eq_n_dsp::Placement::ALL
+            .map(|placement| crate::params::placement_name(placement).to_owned())
+            .to_vec();
+        tree::row(vec![
+            bypass,
+            selector_leaf(Leaf::Placement, "Placement", names),
+        ])
+    };
     let mut rows = vec![
-        leaf(
-            Leaf::Bypass,
-            Kind::Toggle {
-                label: "Bypass".to_owned(),
-            },
-        ),
+        first,
         selector_leaf(Leaf::Shape, "Shape", shapes()),
         slider_leaf(params, slot, Slider::Frequency),
     ];
@@ -261,6 +303,9 @@ pub(crate) fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slo
             },
         ));
     }
+    if placement == PlacementRow::Offered {
+        actions.push(button_leaf(Leaf::Split, "Split"));
+    }
     actions.push(button_leaf(Leaf::Delete, "Delete band"));
     rows.push(row_gap(SPACE_3, actions));
     stack(rows)
@@ -270,15 +315,22 @@ pub(crate) fn band_body(params: &EqParams, slot: usize, shape: Shape, slope: Slo
 pub fn band_tree(app: &EqApp) -> Node<Leaf> {
     let params = &app.params;
     let alternatives = vec![
-        band_body(params, 0, Shape::Bell, Slope::Db12),
-        band_body(params, 0, Shape::LowCut, Slope::Db12),
+        band_body(params, 0, Shape::Bell, Slope::Db12, PlacementRow::Offered),
+        band_body(params, 0, Shape::LowCut, Slope::Db12, PlacementRow::Offered),
     ];
     let shown = app
         .selected
         .and_then(|slot| {
             let band = app.band_now(slot);
+            let placement = if !app.telemetry.mono() {
+                PlacementRow::Offered
+            } else if app.placement_heard(slot) {
+                PlacementRow::Absent
+            } else {
+                PlacementRow::Restore
+            };
             band.shape
-                .map(|shape| band_body(params, slot, shape, band.slope))
+                .map(|shape| band_body(params, slot, shape, band.slope, placement))
         })
         .unwrap_or_else(|| stack(Vec::new()));
     tree::reserve(shown, alternatives)
@@ -490,6 +542,79 @@ impl EqApp {
                         &setter,
                         0.0,
                     );
+                }
+            }
+            Leaf::Placement => {
+                if let Some(slot) = selected {
+                    use mxm_fx_eq_n_dsp::Placement;
+                    let current = self.placement_now(slot);
+                    // In mono a placed band is offered only the way back (plan §7.3).
+                    let restore = !self.placement_heard(slot);
+                    let choices: Vec<Placement> = if restore {
+                        vec![current, Placement::Stereo]
+                    } else {
+                        Placement::ALL.to_vec()
+                    };
+                    let names: Vec<&str> = choices
+                        .iter()
+                        .map(|placement| crate::params::placement_name(*placement))
+                        .collect();
+                    let mut index = choices
+                        .iter()
+                        .position(|placement| *placement == current)
+                        .unwrap_or(0);
+                    let stereo = choices.iter().position(|p| *p == Placement::Stereo);
+                    let name = self.params.places[slot].placement.name().to_owned();
+                    let description = if restore {
+                        PLACEMENT_MONO_DESCRIPTION
+                    } else {
+                        PLACEMENT_DESCRIPTION
+                    };
+                    let changed = navigation::at(ui, crate::params::place_ids()[slot], |ui| {
+                        mxm_ui::control::selector_named(
+                            ui,
+                            tokens,
+                            "Placement",
+                            &name,
+                            &names,
+                            &mut index,
+                            None,
+                            stereo,
+                            description,
+                        )
+                    });
+                    if changed && choices[index] != current {
+                        self.set_placement(slot, choices[index]);
+                    }
+                }
+            }
+            Leaf::Split => {
+                if let Some(slot) = selected {
+                    let refused = self.split_refused(slot);
+                    let hover = match refused {
+                        None => SPLIT_DESCRIPTION,
+                        Some(super::SplitRefusal::Full) => SPLIT_FULL_DESCRIPTION,
+                        Some(super::SplitRefusal::Placed | super::SplitRefusal::Mono) => {
+                            SPLIT_PLACED_DESCRIPTION
+                        }
+                    };
+                    let pressed = navigation::at(ui, "split", |ui| {
+                        let response = ui
+                            .add_enabled(
+                                refused.is_none(),
+                                egui::Button::new("Split")
+                                    .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
+                            )
+                            .on_hover_text(hover)
+                            .on_disabled_hover_text(hover);
+                        navigation::mark_unclaimed(ui, response.id, response.rect);
+                        response
+                            .clicked()
+                            .then(|| ui.input(|input| input.modifiers.alt))
+                    });
+                    if let Some(mid_side) = pressed {
+                        self.split(slot, mid_side);
+                    }
                 }
             }
             Leaf::Shape => {

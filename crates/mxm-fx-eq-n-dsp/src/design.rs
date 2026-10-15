@@ -246,6 +246,38 @@ impl Section {
     }
 }
 
+impl Section {
+    /// `H` at the frequency whose `tan(ω/2)` is `tan_half`, as (real, imaginary): the analogue
+    /// prototype the trapezoidal section is exactly, at `s = j·tan(ω/2)/g`; Nyquist is `m0`.
+    pub fn response(&self, tan_half: f64) -> (f64, f64) {
+        match *self {
+            Section::Second { g, k, m0, m1, m2 } => {
+                if tan_half.is_infinite() {
+                    return (m0, 0.0);
+                }
+                // (m0·s² + (m0·k + m1)·s + m0 + m2) / (s² + k·s + 1)
+                let w = tan_half / g;
+                let u = w * w;
+                divide((m0 * (1.0 - u) + m2, (m0 * k + m1) * w), (1.0 - u, k * w))
+            }
+            Section::First { g, m0, m1 } => {
+                if tan_half.is_infinite() {
+                    return (m0, 0.0);
+                }
+                // (m0·(1 + s) + m1) / (1 + s)
+                let w = tan_half / g;
+                divide((m0 + m1, m0 * w), (1.0, w))
+            }
+        }
+    }
+}
+
+/// `(a + jb) / (c + jd)`.
+fn divide((a, b): (f64, f64), (c, d): (f64, f64)) -> (f64, f64) {
+    let denominator = (c * c + d * d).max(f64::MIN_POSITIVE);
+    ((a * c + b * d) / denominator, (b * c - a * d) / denominator)
+}
+
 /// A band's sections, in the order they run. A first-order section, when there is one, is first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cascade {
@@ -289,6 +321,18 @@ impl Cascade {
 
     pub fn sections(&self) -> &[Section] {
         &self.sections[..self.count]
+    }
+
+    /// The complex response at `freq`, from the numbers the audio runs: what the graph combines
+    /// when bands sit on different channels (plan §7.3).
+    pub fn response(&self, freq: f64, sample_rate: f64) -> (f64, f64) {
+        let tan_half = tan_half(freq, usable_sample_rate(sample_rate));
+        self.sections()
+            .iter()
+            .fold((1.0, 0.0), |(re, im), section| {
+                let (a, b) = section.response(tan_half);
+                (re * a - im * b, re * b + im * a)
+            })
     }
 
     /// The magnitude response in dB at `freq`, from the numbers the audio runs. At or above

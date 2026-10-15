@@ -1,12 +1,13 @@
 //! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
-//! **Twenty-four band slots, two globals, each slot's dynamics and side-chain switch, 266
-//! parameters.** The slots are
+//! **Twenty-four band slots, two globals, each slot's dynamics, side-chain switch and placement,
+//! 290 parameters.** The slots are
 //! nested, so their ids are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`,
 //! `slope_1`, through `slope_24`. The globals are `output` and `gainscale`. F1's dynamics (plan
 //! §7.1) come after them, four per slot: `range_1`, `threshold_1`, `attack_1`, `release_1`, through
-//! `release_24`, so no v1 id moved, and the side-chain switches after those (plan §7.2), `key_1`
-//! through `key_24`. Every id is permanent. A host keeps its parameter names from
+//! `release_24`, so no v1 id moved, the side-chain switches after those (plan §7.2), `key_1`
+//! through `key_24`, and the placements last (plan §7.3), `place_1` through `place_24`. Every id
+//! is permanent. A host keeps its parameter names from
 //! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
 //! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
@@ -27,8 +28,8 @@ use mxm_fx_eq_n_dsp::dynamics::{
     THRESHOLD_DB_MIN,
 };
 use mxm_fx_eq_n_dsp::{
-    Band, Dynamics, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX,
-    Q_MIN, SLOTS, Shape, Slope,
+    Band, Dynamics, FREQ_MAX, FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB,
+    Placement, Q_MAX, Q_MIN, SLOTS, Shape, Slope,
 };
 use nice_plug::prelude::*;
 
@@ -70,8 +71,64 @@ pub const DYNAMICS_BASE: usize = SLOTS * BAND_FIELDS.len() + GLOBAL_IDS.len();
 /// dynamics (plan §7.2).
 pub const KEY_BASE: usize = DYNAMICS_BASE + SLOTS * DYNAMICS_FIELDS.len();
 
+/// Where the placements start in [`EqParams::erased`]'s order, one per slot (plan §7.3).
+pub const PLACE_BASE: usize = KEY_BASE + SLOTS;
+
 /// Every host parameter.
-pub const PARAMETERS: usize = KEY_BASE + SLOTS;
+pub const PARAMETERS: usize = PLACE_BASE + SLOTS;
+
+/// The placement's stepped domain, reserved now as `type`'s and `slope`'s are: 0 Stereo, 1 Left,
+/// 2 Right, 3 Mid, 4 Side, 5–7 unassigned (plan §7.3).
+pub const PLACE_MAX: i32 = 7;
+
+/// The placement at a stored value: an unassigned one is Stereo.
+pub fn placement_of(value: i32) -> Placement {
+    usize::try_from(value)
+        .ok()
+        .and_then(|index| Placement::ALL.get(index).copied())
+        .unwrap_or(Placement::Stereo)
+}
+
+/// The stored value of a placement.
+pub fn placement_value(placement: Placement) -> i32 {
+    Placement::ALL
+        .iter()
+        .position(|other| *other == placement)
+        .map_or(0, |index| index as i32)
+}
+
+fn placement_text(value: i32) -> String {
+    match usize::try_from(value)
+        .ok()
+        .and_then(|index| Placement::ALL.get(index))
+    {
+        Some(placement) => placement_name(*placement).to_owned(),
+        None => format!("Unavailable {value}"),
+    }
+}
+
+/// A placement's name, as the host and the editor show it.
+pub fn placement_name(placement: Placement) -> &'static str {
+    match placement {
+        Placement::Stereo => "Stereo",
+        Placement::Left => "Left",
+        Placement::Right => "Right",
+        Placement::Mid => "Mid",
+        Placement::Side => "Side",
+    }
+}
+
+fn placement_parse(text: &str) -> Option<i32> {
+    let text = text.trim();
+    if let Some(placement) = Placement::ALL
+        .iter()
+        .find(|placement| placement_name(**placement).eq_ignore_ascii_case(text))
+    {
+        return Some(placement_value(*placement));
+    }
+    text.strip_prefix("Unavailable ")
+        .and_then(|number| number.parse().ok())
+}
 
 /// The shape at a type value, or none for Off and for an unassigned value.
 pub fn shape_of(value: i32) -> Option<Shape> {
@@ -318,6 +375,35 @@ impl KeyParams {
     }
 }
 
+/// One slot's placement in the stereo image (plan §7.3).
+#[derive(Params)]
+pub struct PlaceParams {
+    #[id = "place"]
+    pub placement: IntParam,
+}
+
+impl PlaceParams {
+    pub(crate) fn new(index: usize) -> Self {
+        Self {
+            placement: IntParam::new(
+                format!("Band {} placement", index + 1),
+                0,
+                IntRange::Linear {
+                    min: 0,
+                    max: PLACE_MAX,
+                },
+            )
+            .with_value_to_string(Arc::new(placement_text))
+            .with_string_to_value(Arc::new(placement_parse)),
+        }
+    }
+
+    /// The slot's placement as the engine takes it.
+    pub fn placement(&self) -> Placement {
+        placement_of(self.placement.value())
+    }
+}
+
 #[derive(Params)]
 pub struct EqParams {
     #[nested(array, group = "Band")]
@@ -335,6 +421,9 @@ pub struct EqParams {
     /// The side-chain switches, after the dynamics so that nothing moved (plan §7.2).
     #[nested(array, group = "Band")]
     pub keys: [KeyParams; SLOTS],
+    /// The placements, last (plan §7.3).
+    #[nested(array, group = "Band")]
+    pub places: [PlaceParams; SLOTS],
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
@@ -374,6 +463,7 @@ impl Default for EqParams {
             .with_string_to_value(formatters::s2v_f32_percentage()),
             dynamics: std::array::from_fn(DynamicsParams::new),
             keys: std::array::from_fn(KeyParams::new),
+            places: std::array::from_fn(PlaceParams::new),
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
         }
@@ -384,7 +474,7 @@ impl EqParams {
     /// Every host parameter, in the order the undo history's indices name them: each slot's
     /// fields in [`BAND_FIELDS`] order, slot by slot, then [`GLOBAL_IDS`], then each slot's
     /// dynamics in [`DYNAMICS_FIELDS`] order from [`DYNAMICS_BASE`], then each slot's side-chain
-    /// switch from [`KEY_BASE`].
+    /// switch from [`KEY_BASE`], then each slot's placement from [`PLACE_BASE`].
     pub fn erased(&self) -> Vec<&dyn mxm_params::ErasedParam> {
         let mut all: Vec<&dyn mxm_params::ErasedParam> = Vec::with_capacity(PARAMETERS);
         for band in &self.bands {
@@ -397,6 +487,9 @@ impl EqParams {
         }
         for key in &self.keys {
             all.push(&key.side_chain);
+        }
+        for place in &self.places {
+            all.push(&place.placement);
         }
         all
     }
@@ -416,7 +509,8 @@ impl EqParams {
                 let at = index - DYNAMICS_BASE;
                 self.dynamics[at / DYNAMICS].parameters()[at % DYNAMICS]
             }
-            index => &self.keys[(index - KEY_BASE).min(SLOTS - 1)].side_chain,
+            index if index < PLACE_BASE => &self.keys[index - KEY_BASE].side_chain,
+            index => &self.places[(index - PLACE_BASE).min(SLOTS - 1)].placement,
         }
     }
 
@@ -445,6 +539,9 @@ impl EqParams {
         }
         for key in &self.keys {
             all.push(key.side_chain.as_ptr());
+        }
+        for place in &self.places {
+            all.push(place.placement.as_ptr());
         }
         all
     }
@@ -492,6 +589,21 @@ pub fn key_ids() -> &'static [&'static str; SLOTS] {
 /// Whether `id` is a side-chain switch, which a preset or state from before §7.2 does not hold.
 pub fn is_key_id(id: &str) -> bool {
     KEY_IDS.contains(&id)
+}
+
+/// Every slot's placement id, `place_1` … `place_24` (plan §7.3).
+static PLACE_IDS: LazyLock<[&'static str; SLOTS]> = LazyLock::new(|| {
+    std::array::from_fn(|slot| &*Box::leak(format!("place_{}", slot + 1).into_boxed_str()))
+});
+
+/// Every slot's placement id, slot by slot.
+pub fn place_ids() -> &'static [&'static str; SLOTS] {
+    &PLACE_IDS
+}
+
+/// Whether `id` is a placement, which a preset or state from before §7.3 does not hold.
+pub fn is_place_id(id: &str) -> bool {
+    PLACE_IDS.contains(&id)
 }
 
 /// Frequency: 10 Hz to 30 kHz, skewed so the middle of the travel is near 1 kHz, as a log axis
@@ -634,7 +746,7 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_266() {
+    fn the_ids_are_complete_unique_permanent_and_290() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()
@@ -646,11 +758,13 @@ mod tests {
         want.extend(GLOBAL_IDS);
         want.extend((0..SLOTS).flat_map(|slot| *dynamics_ids(slot)));
         want.extend(key_ids());
-        assert_eq!(want.len(), 266);
+        want.extend(place_ids());
+        assert_eq!(want.len(), 290);
         // In the host's order: every v1 id where it was, the dynamics after them.
         assert_eq!(ids[..DYNAMICS_BASE], want[..DYNAMICS_BASE]);
         assert_eq!(ids[DYNAMICS_BASE..KEY_BASE], want[DYNAMICS_BASE..KEY_BASE]);
-        assert_eq!(ids[KEY_BASE..], want[KEY_BASE..]);
+        assert_eq!(ids[KEY_BASE..PLACE_BASE], want[KEY_BASE..PLACE_BASE]);
+        assert_eq!(ids[PLACE_BASE..], want[PLACE_BASE..]);
         for id in &want {
             assert!(ids.iter().any(|other| other == id), "missing {id}");
         }
@@ -675,6 +789,8 @@ mod tests {
         assert!(is_dynamics_id("attack_7") && !is_dynamics_id("gain_7"));
         assert_eq!((key_ids()[0], key_ids()[23]), ("key_1", "key_24"));
         assert!(is_key_id("key_7") && !is_key_id("attack_7") && !is_dynamics_id("key_7"));
+        assert_eq!((place_ids()[0], place_ids()[23]), ("place_1", "place_24"));
+        assert!(is_place_id("place_7") && !is_place_id("key_7") && !is_key_id("place_7"));
     }
 
     /// The editor's indices name the same parameters as the host's order.
@@ -692,6 +808,7 @@ mod tests {
             "Band 7 release"
         );
         assert_eq!(params.param(KEY_BASE + 6).name(), "Band 7 side chain");
+        assert_eq!(params.param(PLACE_BASE + 6).name(), "Band 7 placement");
         assert_eq!(params.pointers().len(), PARAMETERS);
     }
 
@@ -733,6 +850,29 @@ mod tests {
                 (8, Some(Shape::TiltShelf)),
             ]
         );
+        // The placements (plan §7.3): 0–7, five assigned, the rest Stereo to the DSP.
+        let place = &EqParams::default().places[0];
+        for value in 0..=PLACE_MAX {
+            let normalized = place.placement.preview_normalized(value);
+            assert_eq!(normalized, value as f32 / PLACE_MAX as f32, "place {value}");
+            assert_eq!(place.placement.preview_plain(normalized), value);
+        }
+        let placements: Vec<Placement> = (0..=PLACE_MAX).map(placement_of).collect();
+        assert_eq!(
+            placements,
+            [
+                Placement::Stereo,
+                Placement::Left,
+                Placement::Right,
+                Placement::Mid,
+                Placement::Side,
+                Placement::Stereo,
+                Placement::Stereo,
+                Placement::Stereo,
+            ]
+        );
+        assert_eq!(place.placement.to_string(), "Stereo");
+        assert_eq!(placement_text(6), "Unavailable 6");
         let slopes: Vec<u16> = (0..8)
             .map(|v| slope_of(v).unwrap().db_per_octave())
             .collect();

@@ -59,6 +59,33 @@ pub const QUIET_FLOOR: f64 = 1.0e-10;
 /// finite signal. Recovery, not character: no reasonable setting comes near it.
 pub const OUTPUT_BOUND: f64 = 16.0;
 
+/// Where a band works in the stereo image (plan §7.3): both channels, one of them, or the mid or
+/// the side of the pair, `M = (L + R)/2` and `S = (L − R)/2`. In mono only Stereo is heard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Placement {
+    #[default]
+    Stereo,
+    Left,
+    Right,
+    Mid,
+    Side,
+}
+
+impl Placement {
+    pub const ALL: [Placement; 5] = [
+        Placement::Stereo,
+        Placement::Left,
+        Placement::Right,
+        Placement::Mid,
+        Placement::Side,
+    ];
+
+    /// On the mid or the side: run after every Stereo, Left and Right band (decision 22).
+    pub fn is_mid_side(self) -> bool {
+        matches!(self, Placement::Mid | Placement::Side)
+    }
+}
+
 /// One slot as the host and the editor set it: the plugin's parameters as plain values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Band {
@@ -96,8 +123,58 @@ impl Band {
             } else {
                 Slope::Db12
             },
+            placement: Placement::Stereo,
         })
     }
+}
+
+/// One arm on the channels its placement works on, in a stage whose signal is `[L, R]` or
+/// `[M, S]`: a Stereo arm on both, a placed arm on its one. In mono a placed arm does nothing.
+#[inline]
+fn run_arm<const C: usize>(running: &mut Running, input: [f64; C]) -> [f64; C] {
+    let channel = match running.structure.placement {
+        Placement::Stereo => return running.filter.process(input),
+        Placement::Left | Placement::Mid => 0,
+        Placement::Right | Placement::Side => 1,
+    };
+    if C < 2 {
+        return input;
+    }
+    let mut output = input;
+    output[channel] = running.filter.process([input[channel]])[0];
+    output
+}
+
+/// A solo audition of `placement` on `source`: the band's channel where it sits in the image — a
+/// Left band's region in the left, a Mid band's in the centre, a Side band's as side (plan §7.3).
+#[inline]
+fn audition<const C: usize>(
+    filter: &mut Filter,
+    placement: Placement,
+    source: [f64; C],
+) -> [f64; C] {
+    if placement == Placement::Stereo {
+        return filter.process(source);
+    }
+    let mut output = [0.0; C];
+    if C < 2 {
+        return output;
+    }
+    match placement {
+        Placement::Left => output[0] = filter.process([source[0]])[0],
+        Placement::Right => output[1] = filter.process([source[1]])[0],
+        Placement::Mid => {
+            let mid = filter.process([(source[0] + source[1]) * 0.5])[0];
+            output[0] = mid;
+            output[1] = mid;
+        }
+        Placement::Side | Placement::Stereo => {
+            let side = filter.process([(source[0] - source[1]) * 0.5])[0];
+            output[0] = side;
+            output[1] = -side;
+        }
+    }
+    output
 }
 
 /// What a band's filter is built for. Two bands with the same structure differ only in values,
@@ -106,6 +183,9 @@ impl Band {
 struct Structure {
     shape: Shape,
     slope: Slope,
+    /// Its place in the stereo image: another placement is another band, crossfaded or, across
+    /// the family boundary, faded out and in at each family's stage (plan §7.3).
+    placement: Placement,
 }
 
 /// A value gliding toward its target, carried as the remaining distance so that it lands on the
@@ -210,6 +290,8 @@ struct BandEngine {
     detector_for: Option<Shape>,
     /// Whether the detector reads the side-chain input instead of the EQ's input (plan §7.2).
     side_chain: bool,
+    /// Where the band works in the stereo image, as set (plan §7.3).
+    placement: Placement,
     /// The loudest detector output this interval, across channels.
     peak: f64,
     /// Whether the band listens this interval: a dynamic shape, Range or a moving part not 0, and
@@ -245,6 +327,7 @@ impl BandEngine {
         detector: Filter::EMPTY,
         detector_for: None,
         side_chain: false,
+        placement: Placement::Stereo,
         peak: 0.0,
         listening: false,
         dynamics_moved: false,
@@ -253,6 +336,43 @@ impl BandEngine {
     /// Whether this band does anything to the audio this sample.
     fn active(&self) -> bool {
         self.fade != Fade::None || (self.current.is_some() && !self.parked)
+    }
+
+    /// What the band should be built as, its placement included.
+    fn wanted(&self) -> Option<Structure> {
+        self.target.structure().map(|structure| Structure {
+            placement: self.placement,
+            ..structure
+        })
+    }
+
+    /// Whether an arm of the band runs on the mid or the side, so the mid/side stage must run.
+    fn has_mid_side_arm(&self) -> bool {
+        let mid_side = |running: &Option<Running>| {
+            running
+                .as_ref()
+                .is_some_and(|running| running.structure.placement.is_mid_side())
+        };
+        (mid_side(&self.current) && !self.parked) || mid_side(&self.previous)
+    }
+
+    /// The detector hears its placement's channel of `source`, the input or the key: a Stereo band
+    /// the linked peak of both (F1), a placed band its own channel (decision 20), a placed band in
+    /// mono nothing.
+    fn detect<const C: usize>(&mut self, source: [f64; C]) {
+        let peak = match self.placement {
+            Placement::Stereo => self
+                .detector
+                .process(source)
+                .into_iter()
+                .fold(0.0, |peak: f64, value| peak.max(value.abs())),
+            _ if C < 2 => return,
+            Placement::Left => self.detector.process([source[0]])[0].abs(),
+            Placement::Right => self.detector.process([source[1]])[0].abs(),
+            Placement::Mid => self.detector.process([(source[0] + source[1]) * 0.5])[0].abs(),
+            Placement::Side => self.detector.process([(source[0] - source[1]) * 0.5])[0].abs(),
+        };
+        self.peak = self.peak.max(peak);
     }
 
     /// The targets in the gliding domains, held inside their ranges.
@@ -379,41 +499,84 @@ impl BandEngine {
         self.fade = Fade::None;
     }
 
+    /// The band in one stage of the cascade (plan §7.3): `mid_side` false is the channel stage,
+    /// its signal `[L, R]` (or the one channel in mono), true the mid/side stage, `[M, S]`. Each arm
+    /// runs in its own family's stage: a crossfade within a family mixes its arms where they both
+    /// run, as v1's did; across the boundary the old arm fades out to identity in its stage while
+    /// the new one fades in from identity in its own. The fade's countdown is
+    /// [`advance`](Self::advance)'s, once a sample.
     #[inline]
-    fn tick<const C: usize>(&mut self, input: [f64; C], fade: u32) -> [f64; C] {
-        let output = match self.fade {
-            Fade::None => {
-                return match &mut self.current {
-                    Some(running) if !self.parked => running.filter.process(input),
-                    _ => input,
-                };
-            }
+    fn tick<const C: usize>(&mut self, input: [f64; C], mid_side: bool, fade: u32) -> [f64; C] {
+        match self.fade {
+            Fade::None => match &mut self.current {
+                Some(running)
+                    if !self.parked && running.structure.placement.is_mid_side() == mid_side =>
+                {
+                    run_arm(running, input)
+                }
+                _ => input,
+            },
             Fade::In | Fade::Out => match &mut self.current {
-                Some(running) => running.filter.process(input),
-                None => input,
+                Some(running) if running.structure.placement.is_mid_side() == mid_side => {
+                    run_arm(running, input)
+                }
+                _ => input,
             },
             Fade::Cross => {
-                let old = match &mut self.previous {
-                    Some(running) => running.filter.process(input),
-                    None => input,
+                // A dry arm runs with the other, as the identity it is.
+                let family = |running: &Option<Running>| {
+                    running.map(|r| r.structure.placement.is_mid_side())
                 };
-                let new = match &mut self.current {
-                    Some(running) => running.filter.process(input),
-                    None => input,
-                };
+                let (old_family, new_family) = (family(&self.previous), family(&self.current));
+                let old_stage = old_family.or(new_family).unwrap_or(false);
+                let new_stage = new_family.or(old_family).unwrap_or(false);
                 let t = 1.0 - f64::from(self.left) / f64::from(fade);
-                let mut mixed = old;
-                for (out, new) in mixed.iter_mut().zip(new) {
-                    *out += (new - *out) * t;
+                if old_stage == new_stage {
+                    if old_stage != mid_side {
+                        return input;
+                    }
+                    let old = match &mut self.previous {
+                        Some(running) => run_arm(running, input),
+                        None => input,
+                    };
+                    let new = match &mut self.current {
+                        Some(running) => run_arm(running, input),
+                        None => input,
+                    };
+                    let mut mixed = old;
+                    for (out, new) in mixed.iter_mut().zip(new) {
+                        *out += (new - *out) * t;
+                    }
+                    mixed
+                } else {
+                    let (arm, weight) = if old_stage == mid_side {
+                        (&mut self.previous, 1.0 - t)
+                    } else {
+                        (&mut self.current, t)
+                    };
+                    let Some(running) = arm else {
+                        return input;
+                    };
+                    let filtered = run_arm(running, input);
+                    let mut mixed = input;
+                    for (out, filtered) in mixed.iter_mut().zip(filtered) {
+                        *out += (filtered - *out) * weight;
+                    }
+                    mixed
                 }
-                mixed
             }
-        };
-        self.left = self.left.saturating_sub(1);
-        if self.left == 0 {
-            self.finish();
         }
-        output
+    }
+
+    /// One sample of the fade in progress, after every stage has run.
+    #[inline]
+    fn advance(&mut self) {
+        if self.fade != Fade::None {
+            self.left = self.left.saturating_sub(1);
+            if self.left == 0 {
+                self.finish();
+            }
+        }
     }
 
     fn largest_state(&self) -> f64 {
@@ -484,6 +647,9 @@ struct Solo {
     /// Whether the audition built plays the side chain: what its band listens to (plan §7.2). A
     /// band that changes source is another audition, as another structure is.
     keyed: bool,
+    /// The placement of its band when it was built: the audition plays the band's channel, where it
+    /// sits in the image (plan §7.3). Another placement is another audition.
+    placement: Placement,
     filter: Filter,
     /// 0 is the EQ, 1 the audition.
     mix: f64,
@@ -498,6 +664,7 @@ impl Solo {
         slot: None,
         structure: None,
         keyed: false,
+        placement: Placement::Stereo,
         filter: Filter::EMPTY,
         mix: 0.0,
         heard: false,
@@ -625,6 +792,23 @@ impl Engine {
         }
     }
 
+    /// Where a slot works in the stereo image (plan §7.3). A change is a change of structure,
+    /// faded as one; the detector starts fresh on its new channel.
+    pub fn set_placement(&mut self, slot: usize, placement: Placement) {
+        if let Some(band) = self.bands.get_mut(slot) {
+            if band.placement != placement {
+                band.placement = placement;
+                band.detector_for = None;
+                band.peak = 0.0;
+            }
+        }
+    }
+
+    /// A slot's placement, as last set.
+    pub fn placement(&self, slot: usize) -> Option<Placement> {
+        self.bands.get(slot).map(|band| band.placement)
+    }
+
     /// Whether a slot listens to the side chain, as last set.
     pub fn side_chain(&self, slot: usize) -> Option<bool> {
         self.bands.get(slot).map(|band| band.side_chain)
@@ -706,7 +890,7 @@ impl Engine {
             band.retarget(sample_rate);
             band.changed = false;
             band.snap();
-            let wanted = band.target.structure();
+            let wanted = band.wanted();
             band.destination = wanted;
             band.previous = None;
             band.fade = Fade::None;
@@ -777,14 +961,14 @@ impl Engine {
         let complete = self.countdown == 0;
         let band_settled = |band: &BandEngine| {
             let gliding = band.current.as_ref().is_some_and(|running| {
-                let Structure { shape, slope } = running.structure;
+                let Structure { shape, slope, .. } = running.structure;
                 band.log_freq.is_moving()
                     || (shape.has_gain() && band.gain_db.is_moving())
                     || (shape.has_q(slope) && band.log_q.is_moving())
             });
             !band.changed
                 && !band.dynamics_changed
-                && band.target.structure() == band.destination
+                && band.wanted() == band.destination
                 && band.fade == Fade::None
                 && !gliding
                 && !band.dynamics_moved
@@ -894,7 +1078,7 @@ impl Engine {
                 band.changed = false;
             }
             band.dynamics_changed = false;
-            let wanted = band.target.structure();
+            let wanted = band.wanted();
             if wanted != band.destination && band.fade == Fade::None {
                 band.start(wanted, scale, sample_rate, fade);
             }
@@ -1029,6 +1213,7 @@ impl Engine {
         let matches = |slot: usize, solo: &Solo| {
             bands[slot].destination == solo.structure
                 && keyed(&bands[slot], solo.structure) == solo.keyed
+                && bands[slot].placement == solo.placement
         };
         let current = solo.slot.is_some()
             && solo.slot == valid
@@ -1048,6 +1233,7 @@ impl Engine {
                         solo.slot = Some(slot);
                         solo.structure = Some(structure);
                         solo.keyed = keyed(band, Some(structure));
+                        solo.placement = band.placement;
                         solo.filter = Filter::fresh(&cascade);
                     }
                 }
@@ -1092,6 +1278,11 @@ impl Engine {
             .any(|band| band.listening && band.side_chain)
             || (self.solo.keyed && self.solo.slot.is_some());
         let key = key.filter(|_| keyed);
+        // Two stages (plan §7.3, decision 22): every Stereo, Left and Right band, then every Mid
+        // and Side band on the encoded pair. Arms change only at a control step or a fade's end, so
+        // this is decided once for the frames here; with no mid/side arm the second stage never
+        // runs, and an EQ of Stereo bands is v1's, bit for bit.
+        let mid_side = C == 2 && self.bands.iter().any(BandEngine::has_mid_side_arm);
         let mut heard_input = false;
         let finite = |sample: f32| {
             if sample.is_finite() {
@@ -1106,9 +1297,9 @@ impl Engine {
                 *value = finite(channel[index]);
                 heard_input |= *value != 0.0;
             }
-            let mut side = [0.0f64; C];
+            let mut keyed_in = [0.0f64; C];
             if let Some(key) = &key {
-                for (value, channel) in side.iter_mut().zip(key.iter()) {
+                for (value, channel) in keyed_in.iter_mut().zip(key.iter()) {
                     *value = channel.get(index).copied().map_or(0.0, finite);
                     heard_input |= *value != 0.0;
                 }
@@ -1117,14 +1308,27 @@ impl Engine {
             let mut wet = dry;
             for band in &mut self.bands {
                 if band.listening {
-                    let heard = if band.side_chain { side } else { dry };
-                    for value in band.detector.process(heard) {
-                        band.peak = band.peak.max(value.abs());
-                    }
+                    band.detect(if band.side_chain { keyed_in } else { dry });
                 }
                 if band.active() {
-                    wet = band.tick(wet, fade);
+                    wet = band.tick(wet, false, fade);
+                    if !mid_side {
+                        band.advance();
+                    }
                 }
+            }
+            if mid_side {
+                let mut pair = wet;
+                pair[0] = (wet[0] + wet[1]) * 0.5;
+                pair[1] = (wet[0] - wet[1]) * 0.5;
+                for band in &mut self.bands {
+                    if band.active() {
+                        pair = band.tick(pair, true, fade);
+                        band.advance();
+                    }
+                }
+                wet[0] = pair[0] + pair[1];
+                wet[1] = pair[0] - pair[1];
             }
 
             let solo = &mut self.solo;
@@ -1136,7 +1340,8 @@ impl Engine {
                 };
             }
             if solo.mix > 0.0 && solo.slot.is_some() {
-                let audition = solo.filter.process(if solo.keyed { side } else { dry });
+                let source = if solo.keyed { keyed_in } else { dry };
+                let audition = audition(&mut solo.filter, solo.placement, source);
                 for (out, audition) in wet.iter_mut().zip(audition) {
                     *out += (audition - *out) * solo.mix;
                 }

@@ -135,6 +135,8 @@ enum Chain {
     /// Slot 1 restored as a broad dynamic bell at the note, drawn at 0 dB, Range −24 dB from a
     /// −60 dB threshold: it cuts only what gets loud, and the note does.
     Dynamic,
+    /// The high cut, placed Left (plan §7.3): the left is cut and the right is the dry one.
+    LeftCut,
 }
 
 /// The restored band, written into the instance's own saved state, values plain as nice-plug
@@ -142,7 +144,7 @@ enum Chain {
 fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     let mut state = save_state(instance);
     let params = state["params"].as_object_mut().expect("parameter map");
-    assert_eq!(params.len(), 266);
+    assert_eq!(params.len(), 290);
     assert_eq!(
         params["type_1"],
         json!({"i32": 0}),
@@ -211,6 +213,17 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
     if let Some(effect) = harness.fx.first_mut() {
         if chain == Chain::HighCut {
             restore_high_cut(&mut effect.instance);
+        }
+        if chain == Chain::LeftCut {
+            let mut state = save_state(&mut effect.instance);
+            let params = state["params"].as_object_mut().expect("parameter map");
+            assert_eq!(params.len(), 290);
+            params.insert("type_1".into(), json!({"i32": 5}));
+            params.insert("slope_1".into(), json!({"i32": 7}));
+            params.insert("freq_1".into(), json!({"f32": 50.0}));
+            params.insert("place_1".into(), json!({"i32": 1}));
+            load_state(&mut effect.instance, &state);
+            assert_eq!(text(&mut effect.instance, "Band 1 placement"), "Left");
         }
         if chain == Chain::Dynamic {
             let state = dynamic_bell(&mut effect.instance);
@@ -358,9 +371,16 @@ fn an_older_state_restores_every_band_static_through_the_host() {
     let mut older = dynamic.clone();
     let params = older["params"].as_object_mut().expect("parameter map");
     params.retain(|id, _| {
-        !["range_", "threshold_", "attack_", "release_", "key_"]
-            .iter()
-            .any(|field| id.starts_with(field))
+        ![
+            "range_",
+            "threshold_",
+            "attack_",
+            "release_",
+            "key_",
+            "place_",
+        ]
+        .iter()
+        .any(|field| id.starts_with(field))
     });
     assert_eq!(params.len(), 146);
     load_state(instance, &older);
@@ -368,4 +388,26 @@ fn an_older_state_restores_every_band_static_through_the_host() {
     assert_eq!(text(instance, "Band 1 range"), "0.0 dB");
     assert_eq!(text(instance, "Band 1 release"), "150 ms");
     harness.shutdown();
+}
+
+/// **A placed band is heard on its channel, through the host** (plan §7.3): the Left high cut takes
+/// the left down and leaves the right exactly the dry render's.
+#[test]
+fn a_restored_placed_band_is_heard_on_its_channel_only() {
+    let Some(dry) = render(Chain::Dry, false) else {
+        return;
+    };
+    let wet = render(Chain::LeftCut, false).expect("the bundle existed above");
+    let channel = |samples: &[f32], index: usize| -> Vec<f32> {
+        samples.chunks(CHANNELS).map(|frame| frame[index]).collect()
+    };
+    assert_eq!(
+        channel(&wet, 1),
+        channel(&dry, 1),
+        "the right is the dry render"
+    );
+    assert!(
+        rms(&channel(&wet, 0)) < rms(&channel(&dry, 0)) / 10.0,
+        "the left is cut"
+    );
 }

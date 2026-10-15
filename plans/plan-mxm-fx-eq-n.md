@@ -5,7 +5,7 @@
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
 after that, approved by the agent-loop in round 6 (3 findings over rounds 4–5, all accepted). F2.1–F2.3
-in progress. **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
+built (2026-10-15), in code review. **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
 (2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), their code review approved in round 2 (one finding,
@@ -820,8 +820,9 @@ Stereo, a copy keeps its original's placement (`slot_writes`, twelve fields).
 
 **The editor.**
 - A **Placement** selector in the Band card for every shape, its hover saying what each choice does.
-  The opening is at 1204 × 1048 now; a row more would pass 1080, so the selector shares a row with
-  Shape. The tree checks and the opening size are re-measured (§8).
+  The opening is at 1204 × 1048 now; a row more would pass 1080, so the selector shares a row, with
+  Bypass (two selectors do not fit Shape's). The tree checks and the opening size are re-measured
+  (§8).
 - **The graph groups the curves by the channels they act on**, Pro-Q's way: with every band on
   Stereo it is today's one curve. With placed bands, the EQ is a 2 × 2 response: **each curve is one
   channel's response to itself** — Left and Right in the left/right basis when a Left or Right band

@@ -473,9 +473,11 @@ fn the_cursor_reaches_and_operates_every_control() {
                 "attack_1",
                 "release_1",
                 "key_1",
+                "place_1",
+                "split",
             ][..],
         ),
-        (Shape::LowCut, &["q_1", "slope_1"][..]),
+        (Shape::LowCut, &["q_1", "slope_1", "place_1", "split"][..]),
     ] {
         let params = Arc::new(EqParams::default());
         let recorder = Arc::new(mxm_plugin_test::keyboard_checks::Recorder::default());
@@ -1783,6 +1785,7 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
     rig.press(Vec::new());
     set_plain(&rig.app.params.dynamics[0].range, -12.0);
     set_plain_bool(&rig.app.params.keys[0].side_chain, true);
+    set_plain_int(&rig.app.params.places[0].placement, 3);
     rig.press(Vec::new());
     rig.type_keys(&[job_key(ADD)]);
     rig.press(Vec::new());
@@ -1795,7 +1798,13 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
         !rig.app.params.keys[0].side_chain.value(),
         "a new band hears its own input"
     );
+    assert_eq!(
+        rig.app.params.places[0].placement.value(),
+        0,
+        "and is Stereo"
+    );
     set_plain_bool(&rig.app.params.keys[0].side_chain, true);
+    set_plain_int(&rig.app.params.places[0].placement, 2);
 
     set_plain(&rig.app.params.dynamics[0].range, -9.0);
     set_plain(&rig.app.params.dynamics[0].attack, 3.0);
@@ -1830,6 +1839,11 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
         rig.app.params.keys[1].side_chain.value(),
         "a copy of a keyed band is keyed"
     );
+    assert_eq!(
+        rig.app.params.places[1].placement.value(),
+        2,
+        "and keeps its placement"
+    );
     assert!(rig.gestures_balanced());
 }
 
@@ -1839,7 +1853,13 @@ fn a_new_band_is_static_and_a_copy_takes_the_original_s_dynamics() {
 fn the_dynamics_group_belongs_to_the_bells_and_shelves() {
     let params = EqParams::default();
     for shape in crate::params::SHAPES {
-        let body = column::band_body(&params, 0, shape, DEFAULT_SLOPE);
+        let body = column::band_body(
+            &params,
+            0,
+            shape,
+            DEFAULT_SLOPE,
+            column::PlacementRow::Offered,
+        );
         let found: Vec<column::Leaf> = body.keys().into_iter().copied().collect();
         let group = [
             column::Leaf::Slider(column::Slider::Range),
@@ -2020,6 +2040,8 @@ fn undoing_a_dynamics_edit_shows_its_band() {
     assert_eq!(slot_of(dynamics_index(5, DynamicsField::Release)), Some(5));
     assert_eq!(slot_of(key_index(0)), Some(0));
     assert_eq!(slot_of(key_index(23)), Some(23));
+    assert_eq!(slot_of(place_index(0)), Some(0));
+    assert_eq!(slot_of(place_index(23)), Some(23));
 
     let mut rig = Rig::new();
     rig.press(Vec::new());
@@ -2073,4 +2095,204 @@ fn a_switch_kept_from_a_dynamic_shape_means_nothing_to_another() {
     rig.press(Vec::new());
     assert!(rig.app.key_now(0), "the switch is kept");
     assert!(!rig.app.listens_to_key(0), "but a cut does not listen");
+}
+
+/// **The Band card's placement row** (plan §7.3): the selector and Split in a stereo layout; in
+/// mono nothing for a Stereo band, and only the selector, the way back, for a placed one.
+#[test]
+fn the_placement_row_follows_the_layout() {
+    let params = EqParams::default();
+    for (row, placement, split) in [
+        (column::PlacementRow::Offered, true, true),
+        (column::PlacementRow::Restore, true, false),
+        (column::PlacementRow::Absent, false, false),
+    ] {
+        let body = column::band_body(&params, 0, Shape::Bell, DEFAULT_SLOPE, row);
+        let found: Vec<column::Leaf> = body.keys().into_iter().copied().collect();
+        assert_eq!(
+            found.contains(&column::Leaf::Placement),
+            placement,
+            "{row:?}"
+        );
+        assert_eq!(found.contains(&column::Leaf::Split), split, "{row:?}");
+    }
+}
+
+/// **Split makes a pair of one band, as one step** (plan §7.3): Left and Right, or Mid and Side
+/// with Alt, every other field copied, the original still selected; undo takes the pair back; a
+/// placed band, a full set of slots and a mono layout refuse.
+#[test]
+fn split_makes_a_pair_as_one_step_and_refuses_what_it_cannot() {
+    use mxm_fx_eq_n_dsp::Placement;
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.bands[0].gain, 6.0);
+    rig.press(Vec::new());
+    let depth = rig.depth();
+    rig.app.split(0, false);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.placement_now(0), Placement::Left);
+    assert_eq!(rig.app.placement_now(1), Placement::Right);
+    // Every other field copied, through each parameter's plain value.
+    let (original, copy) = (rig.band(0), rig.band(1));
+    assert_eq!(
+        (copy.shape, copy.bypass, copy.slope, copy.gain_db),
+        (
+            original.shape,
+            original.bypass,
+            original.slope,
+            original.gain_db
+        )
+    );
+    assert!((copy.freq - original.freq).abs() < 1e-2 && (copy.q - original.q).abs() < 1e-4);
+    assert_eq!(rig.app.selected, Some(0));
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+    assert_eq!(
+        rig.app.split_refused(0),
+        Some(SplitRefusal::Placed),
+        "a placed band does not split"
+    );
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert_eq!(rig.band(1).shape, None);
+    assert_eq!(rig.app.placement_now(0), Placement::Stereo);
+
+    rig.app.split(0, true);
+    rig.press(Vec::new());
+    assert_eq!(
+        (rig.app.placement_now(0), rig.app.placement_now(1)),
+        (Placement::Mid, Placement::Side)
+    );
+    rig.app.undo();
+    rig.press(Vec::new());
+    for slot in 1..SLOTS {
+        rig.app.insert_at(100.0 + 300.0 * slot as f32);
+    }
+    rig.press(Vec::new());
+    assert_eq!(rig.app.split_refused(0), Some(SplitRefusal::Full));
+    rig.app.telemetry.publish_channels(1);
+    assert_eq!(rig.app.split_refused(0), Some(SplitRefusal::Mono));
+}
+
+/// **In mono a placed band is not in the sound** (plan §7.3): no solo, no gain to scale, not drawn
+/// into the curve.
+#[test]
+fn in_mono_a_placed_band_is_not_heard() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.bands[0].gain, 6.0);
+    set_plain_int(&rig.app.params.places[0].placement, 1);
+    rig.press(Vec::new());
+    assert!(rig.app.offers_solo(0) && rig.app.gain_heard());
+    rig.app.telemetry.publish_channels(1);
+    assert!(!rig.app.placement_heard(0));
+    assert!(!rig.app.offers_solo(0), "no solo");
+    assert!(!rig.app.gain_heard(), "no gain to scale");
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    assert!(curves.channels.is_empty());
+    assert!(curves.composite.iter().all(|db| db.abs() < 1.0e-6), "flat");
+}
+
+/// The gain, in dB, a left-only (or mid-only, `mid` true) 1 kHz tone takes on its own channel
+/// through an engine set as the editor's bands are.
+fn rendered_self_gain(bands: &[(f32, f32, mxm_fx_eq_n_dsp::Placement)], mid: bool) -> f64 {
+    let mut engine = mxm_fx_eq_n_dsp::Engine::new(48_000.0);
+    for (slot, (freq, gain_db, placement)) in bands.iter().enumerate() {
+        engine.set_band(
+            slot,
+            mxm_fx_eq_n_dsp::Band {
+                shape: Some(Shape::Bell),
+                bypass: false,
+                freq: *freq,
+                gain_db: *gain_db,
+                q: 1.0,
+                slope: DEFAULT_SLOPE,
+            },
+        );
+        engine.set_placement(slot, *placement);
+    }
+    engine.reset();
+    let n = 48_000;
+    let tone: Vec<f32> = (0..n)
+        .map(|i| (0.25 * (std::f64::consts::TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+        .collect();
+    let mut left = tone.clone();
+    let mut right = if mid { tone.clone() } else { vec![0.0; n] };
+    engine.process_stereo(&mut left, &mut right);
+    let (mut c, mut s) = (0.0f64, 0.0f64);
+    for (i, (&l, &r)) in left.iter().zip(&right).enumerate().skip(n / 2) {
+        let y = if mid { (l + r) * 0.5 } else { l };
+        let phase = std::f64::consts::TAU * 1_000.0 * i as f64 / 48_000.0;
+        c += f64::from(y) * phase.cos();
+        s += f64::from(y) * phase.sin();
+    }
+    20.0 * (2.0 * (c * c + s * s).sqrt() / (n / 2) as f64 / 0.25).log10()
+}
+
+/// **Each line is its channel's response to itself, as the audio renders it** (plan §7.3), with
+/// one family and with both.
+#[test]
+fn each_channel_line_is_what_its_channel_renders() {
+    use mxm_fx_eq_n_dsp::Placement;
+    for bands in [
+        vec![(1_000.0, 6.0, Placement::Left)],
+        vec![
+            (1_000.0, 6.0, Placement::Left),
+            (1_000.0, 6.0, Placement::Mid),
+        ],
+        vec![
+            (800.0, -4.0, Placement::Stereo),
+            (1_200.0, 5.0, Placement::Side),
+            (1_000.0, 3.0, Placement::Mid),
+        ],
+    ] {
+        let mut rig = Rig::new();
+        rig.press(Vec::new());
+        for (slot, (freq, gain, placement)) in bands.iter().enumerate() {
+            rig.app.insert_at(*freq);
+            rig.press(Vec::new());
+            set_plain(&rig.app.params.bands[slot].gain, *gain);
+            set_plain(&rig.app.params.bands[slot].freq, *freq);
+            set_plain_int(
+                &rig.app.params.places[slot].placement,
+                crate::params::placement_value(*placement),
+            );
+        }
+        rig.press(Vec::new());
+        let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+        let curves = graph::Curves::compute(&rig.app, &axes);
+        let at = curves
+            .freqs
+            .iter()
+            .position(|&freq| freq >= 1_000.0)
+            .unwrap();
+        let line = |letter: &str| {
+            curves
+                .channels
+                .iter()
+                .find(|line| line.letter == letter)
+                .map(|line| f64::from(line.db[at]))
+        };
+        let near = |drawn: f64, heard: f64| (drawn - heard).abs() < 0.25;
+        if let Some(drawn) = line("L") {
+            let heard = rendered_self_gain(&bands, false);
+            assert!(
+                near(drawn, heard),
+                "{bands:?}: L drawn {drawn}, heard {heard}"
+            );
+        }
+        if let Some(drawn) = line("M") {
+            let heard = rendered_self_gain(&bands, true);
+            assert!(
+                near(drawn, heard),
+                "{bands:?}: M drawn {drawn}, heard {heard}"
+            );
+        }
+        assert!(!curves.channels.is_empty(), "{bands:?}");
+    }
 }

@@ -75,6 +75,9 @@ impl MxmFxEqN {
         for (slot, key) in self.params.keys.iter().enumerate() {
             self.engine.set_side_chain(slot, key.side_chain.value());
         }
+        for (slot, place) in self.params.places.iter().enumerate() {
+            self.engine.set_placement(slot, place.placement());
+        }
         self.engine.set_output_gain(self.params.output.value());
         self.engine.set_gain_scale(self.params.gain_scale.value());
         let solo = if self.offline || !self.telemetry.connected() {
@@ -99,6 +102,7 @@ impl MxmFxEqN {
         self.channels = input_channels.clamp(1, 2);
         self.offline = offline;
         self.telemetry.publish_sample_rate(sample_rate);
+        self.telemetry.publish_channels(self.channels);
         self.tap.discontinuity(sample_rate);
         *self.engine = Engine::new(f64::from(sample_rate));
         self.seed();
@@ -269,12 +273,10 @@ impl Plugin for MxmFxEqN {
         self.params.clone()
     }
 
-    /// A state from before F1 restores every band static, its loaded preset still clean
-    /// (`preset::add_dynamics_at_defaults`).
+    /// A state from before F1, the side chain or the placements restores every band static, on its
+    /// own input, in Stereo, its loaded preset still clean (`preset::add_missing_at_defaults`).
     fn filter_state(state: &mut PluginState) {
-        preset::add_dynamics_at_defaults(state);
-        // And from before §7.2: every band on its own input.
-        mxm_preset::add_switches_off(state, params::key_ids());
+        preset::add_missing_at_defaults(state);
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {

@@ -28,7 +28,7 @@
 //!   on noise whose level drops 30 dB every other block, so every band's detector runs and its gain
 //!   moves and is redesigned all the time.
 
-use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, SLOTS, Shape, Slope};
+use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, Placement, SLOTS, Shape, Slope};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -41,6 +41,8 @@ enum Load {
     Parked,
     Typical,
     Dynamic,
+    /// 24 bells on the mid: the mid/side stage at its fullest (plan §7.3).
+    Mid,
 }
 
 fn cut(freq: f32, slope: Slope) -> Band {
@@ -70,7 +72,7 @@ fn measure(load: Load, rate: f64) -> f64 {
                 q: 2.0,
                 slope: Slope::Db12,
             },
-            Load::Dynamic => Band {
+            Load::Dynamic | Load::Mid => Band {
                 shape: Some(Shape::Bell),
                 bypass: false,
                 freq: 100.0 * 1.25f32.powi(slot as i32),
@@ -90,6 +92,9 @@ fn measure(load: Load, rate: f64) -> f64 {
             _ => cut(2_000.0 + 300.0 * slot as f32, Slope::Db96),
         };
         engine.set_band(slot, band);
+        if let Load::Mid = load {
+            engine.set_placement(slot, Placement::Mid);
+        }
         if let Load::Dynamic = load {
             engine.set_dynamics(
                 slot,
@@ -209,6 +214,7 @@ fn main() {
         ("24 parked bells", Load::Parked),
         ("8 bells", Load::Typical),
         ("24 dynamic bells", Load::Dynamic),
+        ("24 mid bells", Load::Mid),
     ] {
         print!("{label:<18}");
         for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {

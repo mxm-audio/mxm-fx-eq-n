@@ -12,7 +12,7 @@ pub use mxm_preset::{Category, Preset, PresetIdentity};
 
 use crate::params::{
     DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, band_ids, dynamics_ids, is_dynamics_id,
-    is_key_id, key_ids,
+    is_key_id, is_place_id, key_ids, place_ids,
 };
 
 impl mxm_preset::Instrument for EqParams {
@@ -38,14 +38,18 @@ impl mxm_preset::Instrument for EqParams {
         for (id, key) in key_ids().iter().zip(&self.keys) {
             out.push((*id, &key.side_chain as &dyn mxm_params::ErasedParam));
         }
+        for (id, place) in place_ids().iter().zip(&self.places) {
+            out.push((*id, &place.placement as &dyn mxm_params::ErasedParam));
+        }
         out
     }
 
     /// **F1's dynamics are older presets' defaults** (plan §7.1): a preset written before them
     /// leaves every band static, not keeping a Range the instance had.
-    /// The side-chain switches too (plan §7.2): an older preset leaves every band on its own input.
+    /// The side-chain switches and placements too (plan §7.2, §7.3): an older preset leaves every
+    /// band on its own input, in Stereo.
     fn default_missing_legacy_parameter(&self, id: &str) -> bool {
-        is_dynamics_id(id) || is_key_id(id)
+        is_dynamics_id(id) || is_key_id(id) || is_place_id(id)
     }
 
     fn identity(&self) -> &RwLock<PresetIdentity> {
@@ -57,16 +61,17 @@ impl mxm_preset::Instrument for EqParams {
     }
 }
 
-/// **A host state from before F1 restores every band static** (plan §7.1), for
-/// `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each missing dynamics
-/// id is written at its default, and a loaded preset's baseline that lacks it gains its normalised
-/// default, so the preset keeps its clean or Modified meaning (`mxm_preset::add_switches_off`'s
-/// rule, at each field's own default rather than Off).
-pub fn add_dynamics_at_defaults(state: &mut nice_plug::prelude::PluginState) {
-    static DEFAULTS: std::sync::LazyLock<Vec<(&'static str, f32, f32)>> =
+/// **A host state from before F1, §7.2 or §7.3 restores every band static, on its own input, in
+/// Stereo**, for `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each
+/// missing dynamics, side-chain or placement id is written at its default, and a loaded preset's
+/// baseline that lacks it gains its normalised default, so the preset keeps its clean or Modified
+/// meaning (`mxm_preset::add_switches_off`'s rule, at each field's own default).
+pub fn add_missing_at_defaults(state: &mut nice_plug::prelude::PluginState) {
+    use nice_plug::plugin::ParamValue;
+    static DEFAULTS: std::sync::LazyLock<Vec<(&'static str, ParamValue, f32)>> =
         std::sync::LazyLock::new(|| {
             use nice_plug::params::Param;
-            let mut all = Vec::with_capacity(SLOTS * DYNAMICS_FIELDS.len());
+            let mut all = Vec::with_capacity(SLOTS * (DYNAMICS_FIELDS.len() + 2));
             for slot in 0..SLOTS {
                 let params = DynamicsParams::new(slot);
                 let fields = [
@@ -78,18 +83,25 @@ pub fn add_dynamics_at_defaults(state: &mut nice_plug::prelude::PluginState) {
                 for (id, param) in dynamics_ids(slot).iter().zip(fields) {
                     all.push((
                         *id,
-                        param.default_plain_value(),
+                        ParamValue::F32(param.default_plain_value()),
                         param.default_normalized_value(),
                     ));
                 }
             }
+            // §7.2's switches Off and §7.3's placements Stereo, both at normalised 0.
+            all.extend(
+                key_ids()
+                    .iter()
+                    .map(|id| (*id, ParamValue::Bool(false), 0.0)),
+            );
+            all.extend(place_ids().iter().map(|id| (*id, ParamValue::I32(0), 0.0)));
             all
         });
     for (id, plain, _) in DEFAULTS.iter() {
         state
             .params
             .entry((*id).to_owned())
-            .or_insert(nice_plug::plugin::ParamValue::F32(*plain));
+            .or_insert_with(|| plain.clone());
     }
     let Some(serialized) = state.fields.get_mut("preset") else {
         return;
@@ -706,7 +718,7 @@ mod dynamics_migration {
         let mut older = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
         older
             .params
-            .retain(|id, _| !is_dynamics_id(id) && !is_key_id(id));
+            .retain(|id, _| !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id));
         assert_eq!(older.params.len(), 146);
         let (writes, problems) = older.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -724,7 +736,7 @@ mod dynamics_migration {
         );
         // And one from F1, before the side chain: every band on its own input.
         let mut f1 = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        f1.params.retain(|id, _| !is_key_id(id));
+        f1.params.retain(|id, _| !is_key_id(id) && !is_place_id(id));
         assert_eq!(f1.params.len(), 242);
         let (writes, problems) = f1.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -734,10 +746,22 @@ mod dynamics_migration {
             .map(|(_, _, v)| *v)
             .collect();
         assert_eq!(keys, vec![0.0; SLOTS]);
+        // And one from the side chain, before the placements: every band Stereo.
+        let mut keyed = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
+        keyed.params.retain(|id, _| !is_place_id(id));
+        assert_eq!(keyed.params.len(), 266);
+        let (writes, problems) = keyed.resolve(&params);
+        assert!(problems.is_empty(), "{problems:?}");
+        let places: Vec<f32> = writes
+            .iter()
+            .filter(|(id, _, _)| is_place_id(id))
+            .map(|(_, _, v)| *v)
+            .collect();
+        assert_eq!(places, vec![0.0; SLOTS]);
     }
 
     /// **A host state from before F1 restores every band static, and its preset stays clean**
-    /// (`add_dynamics_at_defaults`): each missing id gains its plain default, a loaded preset's
+    /// (`add_missing_at_defaults`): each missing id gains its plain default, a loaded preset's
     /// baseline its normalised one; a value the state holds is kept, and with no preset loaded
     /// there is no baseline to extend.
     #[test]
@@ -747,7 +771,7 @@ mod dynamics_migration {
             .parameters()
             .into_iter()
             .map(|(id, _)| id)
-            .filter(|id| !is_dynamics_id(id) && !is_key_id(id))
+            .filter(|id| !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id))
             .collect();
         let identity = PresetIdentity {
             loaded: Some(LoadedPreset {
@@ -772,6 +796,7 @@ mod dynamics_migration {
         <crate::MxmFxEqN as nice_plug::prelude::Plugin>::filter_state(&mut state);
         assert_eq!(state.params.len(), crate::params::PARAMETERS);
         assert!(matches!(state.params["key_24"], ParamValue::Bool(false)));
+        assert!(matches!(state.params["place_24"], ParamValue::I32(0)));
         assert!(matches!(state.params["range_1"], ParamValue::F32(v) if v == 0.0));
         assert!(matches!(state.params["release_24"], ParamValue::F32(v) if v == 150.0));
         assert!(
@@ -781,6 +806,7 @@ mod dynamics_migration {
         let migrated: PresetIdentity = deserialize_field(&state.fields["preset"]).unwrap();
         assert_eq!(migrated.baseline.len(), crate::params::PARAMETERS);
         assert_eq!(migrated.baseline["key_1"], 0.0);
+        assert_eq!(migrated.baseline["place_1"], 0.0);
         assert_eq!(
             migrated.baseline["range_1"],
             nice_plug::params::Param::default_normalized_value(&params.dynamics[0].range)
@@ -797,7 +823,7 @@ mod dynamics_migration {
             .into_iter()
             .collect(),
         };
-        add_dynamics_at_defaults(&mut unloaded);
+        add_missing_at_defaults(&mut unloaded);
         let none: PresetIdentity = deserialize_field(&unloaded.fields["preset"]).unwrap();
         assert!(none.baseline.is_empty());
     }

@@ -113,6 +113,14 @@ pub fn band_index(slot: usize, field: Field) -> usize {
     slot * BAND_FIELDS.len() + field as usize
 }
 
+/// Why Split cannot act (plan §7.3), each with its hover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitRefusal {
+    Mono,
+    Placed,
+    Full,
+}
+
 /// A slot's dynamics fields (plan §7.1), in [`crate::params::DYNAMICS_FIELDS`] order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DynamicsField {
@@ -132,14 +140,21 @@ pub fn key_index(slot: usize) -> usize {
     crate::params::KEY_BASE + slot
 }
 
+/// A slot's placement's place in [`EqParams::pointers`] and the history's indices (plan §7.3).
+pub fn place_index(slot: usize) -> usize {
+    crate::params::PLACE_BASE + slot
+}
+
 /// The slot a history index belongs to: a band field's, a dynamics field's or a side-chain
 /// switch's, none for a global.
 pub fn slot_of(index: usize) -> Option<usize> {
     let dynamics = crate::params::DYNAMICS_BASE;
     if index < OUTPUT_INDEX {
         Some(index / BAND_FIELDS.len())
+    } else if index >= crate::params::PLACE_BASE {
+        Some(index - crate::params::PLACE_BASE).filter(|&slot| slot < SLOTS)
     } else if index >= crate::params::KEY_BASE {
-        Some(index - crate::params::KEY_BASE).filter(|&slot| slot < SLOTS)
+        Some(index - crate::params::KEY_BASE)
     } else if index >= dynamics {
         Some((index - dynamics) / crate::params::DYNAMICS_FIELDS.len()).filter(|&slot| slot < SLOTS)
     } else {
@@ -468,6 +483,10 @@ impl EqApp {
     /// The normalised value of a host parameter, as `plain` would set it.
     pub(crate) fn normalised(&self, index: usize, plain: f32) -> f32 {
         let params = &self.params;
+        if index >= crate::params::PLACE_BASE {
+            let place = &params.places[(index - crate::params::PLACE_BASE).min(SLOTS - 1)];
+            return place.placement.preview_normalized(plain.round() as i32);
+        }
         if index >= crate::params::KEY_BASE {
             let key = &params.keys[(index - crate::params::KEY_BASE).min(SLOTS - 1)];
             return key.side_chain.preview_normalized(plain >= 0.5);
@@ -511,6 +530,10 @@ impl EqApp {
     pub(crate) fn current_plain(&self, index: usize) -> f32 {
         let params = &self.params;
         let normalised = self.normalised_now(index);
+        if index >= crate::params::PLACE_BASE {
+            let place = &self.params.places[(index - crate::params::PLACE_BASE).min(SLOTS - 1)];
+            return place.placement.preview_plain(normalised) as f32;
+        }
         if index >= crate::params::KEY_BASE {
             return normalised;
         }
@@ -558,7 +581,8 @@ impl EqApp {
         band: mxm_fx_eq_n_dsp::Band,
         dynamics: mxm_fx_eq_n_dsp::Dynamics,
         keyed: bool,
-    ) -> [(usize, f32); 11] {
+        placement: mxm_fx_eq_n_dsp::Placement,
+    ) -> [(usize, f32); 12] {
         let at = |field| band_index(slot, field);
         let dyn_at = |field| dynamics_index(slot, field);
         [
@@ -597,7 +621,76 @@ impl EqApp {
                 self.normalised(dyn_at(DynamicsField::Release), dynamics.release_ms),
             ),
             (key_index(slot), if keyed { 1.0 } else { 0.0 }),
+            (
+                place_index(slot),
+                self.normalised(
+                    place_index(slot),
+                    crate::params::placement_value(placement) as f32,
+                ),
+            ),
         ]
+    }
+
+    /// A slot's placement, as this editor last set it.
+    pub(crate) fn placement_now(&self, slot: usize) -> mxm_fx_eq_n_dsp::Placement {
+        crate::params::placement_of(self.current_plain(place_index(slot)).round() as i32)
+    }
+
+    /// Whether the layout hears a slot's placement: in mono only Stereo is (plan §7.3).
+    pub(crate) fn placement_heard(&self, slot: usize) -> bool {
+        !self.telemetry.mono() || self.placement_now(slot) == mxm_fx_eq_n_dsp::Placement::Stereo
+    }
+
+    pub(crate) fn set_placement(&mut self, slot: usize, placement: mxm_fx_eq_n_dsp::Placement) {
+        self.close_open();
+        let index = place_index(slot);
+        self.instant(&[(
+            index,
+            self.normalised(index, crate::params::placement_value(placement) as f32),
+        )]);
+    }
+
+    /// Why Split cannot act on `slot` now, or `None` when it can (plan §7.3): only a Stereo band in
+    /// a stereo layout splits, into a free slot.
+    pub(crate) fn split_refused(&self, slot: usize) -> Option<SplitRefusal> {
+        if self.telemetry.mono() {
+            Some(SplitRefusal::Mono)
+        } else if self.placement_now(slot) != mxm_fx_eq_n_dsp::Placement::Stereo {
+            Some(SplitRefusal::Placed)
+        } else if self.free_slot().is_none() {
+            Some(SplitRefusal::Full)
+        } else {
+            None
+        }
+    }
+
+    /// Split: the band becomes Left (or Mid) and a copy of it in the lowest Off slot Right (or
+    /// Side), every other field copied, as one undo step; the original stays selected.
+    pub(crate) fn split(&mut self, slot: usize, mid_side: bool) {
+        if self.split_refused(slot).is_some() {
+            return;
+        }
+        let Some(copy) = self.free_slot() else {
+            return;
+        };
+        use mxm_fx_eq_n_dsp::Placement;
+        let (kept, made) = if mid_side {
+            (Placement::Mid, Placement::Side)
+        } else {
+            (Placement::Left, Placement::Right)
+        };
+        let band = self.band_now(slot);
+        let dynamics = self.dynamics_now(slot);
+        let keyed = self.key_now(slot);
+        self.close_open();
+        let mut writes: Vec<(usize, f32)> =
+            self.slot_writes(copy, band, dynamics, keyed, made).to_vec();
+        let index = place_index(slot);
+        writes.push((
+            index,
+            self.normalised(index, crate::params::placement_value(kept) as f32),
+        ));
+        self.instant(&writes);
     }
 
     /// Whether a slot listens to the side chain, as this editor last set it.
@@ -658,6 +751,7 @@ impl EqApp {
             // left.
             mxm_fx_eq_n_dsp::Dynamics::STATIC,
             false,
+            mxm_fx_eq_n_dsp::Placement::Stereo,
         );
         self.close_open();
         if opened {
@@ -785,13 +879,14 @@ impl EqApp {
     pub(crate) fn gain_heard(&self) -> bool {
         (0..SLOTS).any(|slot| {
             let band = self.band_now(slot);
-            !band.bypass && band.shape.is_some_and(Shape::has_gain)
+            !band.bypass && band.shape.is_some_and(Shape::has_gain) && self.placement_heard(slot)
         })
     }
 
+    /// A placed band in mono is not in the sound, so it offers no solo either (plan §7.3).
     pub(crate) fn offers_solo(&self, slot: usize) -> bool {
         let band = self.band_now(slot);
-        band.shape.is_some_and(Shape::offers_solo) && !band.bypass
+        band.shape.is_some_and(Shape::offers_solo) && !band.bypass && self.placement_heard(slot)
     }
 
     fn end_solo(&mut self) {
@@ -1093,8 +1188,9 @@ impl EqApp {
         let band = self.band_now(original);
         let dynamics = self.dynamics_now(original);
         let keyed = self.key_now(original);
+        let placement = self.placement_now(original);
         self.close_open();
-        for (index, value) in self.slot_writes(slot, band, dynamics, keyed) {
+        for (index, value) in self.slot_writes(slot, band, dynamics, keyed, placement) {
             self.send(index, value);
         }
         self.copy = Some((slot, original));

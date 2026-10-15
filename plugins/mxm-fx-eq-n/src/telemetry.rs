@@ -20,6 +20,8 @@ pub struct Telemetry {
     connected: AtomicBool,
     analyser_on: AtomicBool,
     sample_rate: AtomicU32,
+    /// The layout's channel count, 1 or 2: in mono a placed band is disabled (plan §7.3).
+    channels: AtomicU32,
     /// The Out meter, post output gain: left, right.
     pub output: [PeakMeter; 2],
     /// Each slot's drawn and heard gains in dB, as `f32` bits.
@@ -34,6 +36,7 @@ impl Default for Telemetry {
             connected: AtomicBool::new(false),
             analyser_on: AtomicBool::new(true),
             sample_rate: AtomicU32::new(48_000f32.to_bits()),
+            channels: AtomicU32::new(2),
             output: [PeakMeter::new(), PeakMeter::new()],
             gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
             heard_scale: AtomicU32::new(1f32.to_bits()),
@@ -98,6 +101,15 @@ impl Telemetry {
     /// Whether the audio thread should hand blocks to the analyser at all.
     pub fn analyser_wanted(&self) -> bool {
         self.connected() && self.analyser_on.load(Ordering::Relaxed)
+    }
+
+    pub fn publish_channels(&self, channels: usize) {
+        self.channels.store(channels as u32, Ordering::Relaxed);
+    }
+
+    /// Whether the layout is mono, as the shell last activated it.
+    pub fn mono(&self) -> bool {
+        self.channels.load(Ordering::Relaxed) == 1
     }
 
     pub fn publish_sample_rate(&self, rate: f32) {

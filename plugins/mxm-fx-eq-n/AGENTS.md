@@ -10,7 +10,8 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 [`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E4**: the host
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
-and two presets (F1.1–F1.4), and their side chain (plan §7.2). DAW and listening checks are E5's,
+and two presets (F1.1–F1.4), their side chain (plan §7.2), and F2's per-band stereo placement
+(plan §7.3). DAW and listening checks are E5's,
 F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
@@ -39,7 +40,7 @@ F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand 
   its index: stereo and mono each with a **"Side chain"** input of the main's channel count, then
   plain stereo and mono, which MXM Player selects. The two channels are processed identically. No
   note port, so no developer channel (`plugins/AGENTS.md`, *A developer channel*).
-- **266 permanent parameters** (`params.rs`):
+- **290 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
@@ -49,13 +50,16 @@ F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand 
     `attack_<n>` and `release_<n>`, named "Band 7 range" and grouped with their slot; their place
     in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved;
   - the side-chain switches after them (plan §7.2), `key_1` … `key_24`, "Band 7 side chain", from
-    `params::KEY_BASE`.
+    `params::KEY_BASE`;
+  - the placements last (plan §7.3), `place_1` … `place_24`, "Band 7 placement", stepped 0–7
+    (0 Stereo, 1 Left, 2 Right, 3 Mid, 4 Side, 5–7 unassigned, read *Unavailable n*, heard as
+    Stereo), from `params::PLACE_BASE`.
 
-  `the_ids_are_complete_unique_permanent_and_266` holds them.
-- **A state or preset from before F1 or §7.2 leaves every band static, on its own input**: a preset
-  through `default_missing_legacy_parameter`, a host state through `filter_state`
-  (`preset::add_dynamics_at_defaults`, then mxm-kit's `add_switches_off` for the keys), which also
-  extend a loaded preset's baseline so it stays clean.
+  `the_ids_are_complete_unique_permanent_and_290` holds them.
+- **A state or preset from before F1, §7.2 or §7.3 leaves every band static, on its own input, in
+  Stereo**: a preset through `default_missing_legacy_parameter`, a host state through `filter_state`
+  (`preset::add_missing_at_defaults`), which also extends a loaded preset's baseline so it stays
+  clean.
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
   and a preset's band 3 is slot 3. No ownership state exists.
 
@@ -136,11 +140,9 @@ transaction.
 ## The editor (plan §5) — [NOTES.md § The editor in full](NOTES.md#the-editor-in-full)
 
 - **Layout**, the named exception to paged cards: the graph takes every spare point, the Out meter
-  rail beside it, a fixed-width column of Band, Output and Analyser cards to its right, never under
-  it. The window opens at `REFERENCE` and narrows to `MINIMUM`
-  (`the_opening_size_is_inside_the_budget_and_holds_the_column_without_scrolling`,
-  `the_app_bar_holds_in_the_minimum_window`). Each card body is a tree and passes the tree checks
-  in every Band state; the Band card is reserved to its tallest shape.
+  beside it, a fixed-width column of Band, Output and Analyser cards to its right, never under it;
+  it opens at `REFERENCE`, narrows to `MINIMUM`, and every card is a tree passing the tree checks
+  in every Band state, the Band card reserved to its tallest shape (the opening-size tests).
 - **The graph**: clicking the line adds a 0 dB bell in the lowest Off slot, every field written; a
   point is drawn at its own gain; a drag is one gesture, BACK puts it back; the wheel turns Q only
   over a point with focus or Alt; identity never rests on hue; every point has a name and value.
@@ -148,24 +150,25 @@ transaction.
   (`navigation::paged_with_bar`, every card a `bar_card`); **the graph is a surface**
   (`navigation::surface`, `on_surface`), where MOVE, VALUE, EXTENT, MICRO's edges, DUPLICATE, ADD,
   REMOVE and DELETE act on the bands, OUT keeps a gesture as one undo step and BACK reverts it.
-- **Solo is a toggle** (the owner, 2026-10-14): the Solo button latches it on the selected band
-  until it is pressed again, another band is selected, the band leaves the sound, the patch is
-  replaced or the editor closes; Ctrl/Cmd held on a point solos it while held.
-- **The gain scale fades** while no band in the sound has a gain (`gain_heard`), and its hover says
-  so; it stays operable. With no band selected the Band card's hover says how to get one.
+- **Solo is a toggle** (the owner, 2026-10-14), latched on the selected band until pressed again,
+  another selection, the band leaving the sound, a patch replaced or the editor closed; Ctrl/Cmd on
+  a point solos while held. **The gain scale fades** while no band in the sound has a gain.
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
   too, where the host has it, writing nothing**; the history is the instance's.
 - **The editor reads what it sent** (`normalised_now`, `band_now`, `dynamics_now`, `key_now`): its
   own reads take the history's pending values until the host applies them; the column's shared
   controls read the parameter itself ([NOTES.md](NOTES.md#the-editor-in-full), *a known limit*).
-- **Dynamic bands** (plan §7.1): a bell or shelf's Band card has Range, Threshold, Attack and
-  Release on the shared binding and a meter of how far it moves now; the graph rings a dynamic
-  band's point, draws a line to where its Range would take it, and, while a band moves, the curve
-  as heard over the drawn one, faint. Both read `Telemetry::gains`, published only with an editor
-  connected. A new band writes static dynamics and an Off side chain into its slot; a copy takes
-  the original's. The **Side chain** toggle (plan §7.2) sits in the group; a keyed band's ring is
-  dashed, and its solo's hover says it plays the side chain.
+- **Dynamic bands** (plan §7.1, §7.2): Range, Threshold, Attack, Release, the Side chain toggle and
+  a meter of the movement in a bell or shelf's card; the graph rings the point (dashed when keyed),
+  draws where Range would take it and, while a band moves, the curve as heard over the drawn one,
+  both from `Telemetry::gains`, published only with an editor connected.
+- **Stereo placement** (plan §7.3): a **Placement** selector beside Bypass, a **Split** button (a
+  Stereo band into Left/Right, Alt into Mid/Side) beside Delete band. With placed bands the graph
+  draws each channel's response to itself (L, R; M, S dashed), lettered, as is a placed point. In
+  mono (`Telemetry::mono`) a placed band is faint, refuses solo, and offers only Stereo.
+- **Every slot field is written** by a new band (static, unkeyed, Stereo) and carried by a copy
+  (`slot_writes`, twelve fields); Split is one undo step.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
   falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),

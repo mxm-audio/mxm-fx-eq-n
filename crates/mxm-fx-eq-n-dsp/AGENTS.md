@@ -109,6 +109,21 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
   it counts as input, so a key over a silent input ends no tail. Solo plays what its band listens
   to; a source switch fades the audition out and back in on the new source, as a shape change does.
 
+## Stereo placement (F2) — plan §7.3
+
+- `Engine::set_placement` puts a slot on Stereo, Left, Right, Mid or Side (`Placement`); the
+  placement is part of the band's structure, so a change fades.
+- **Two stages** in `render`: every Stereo, Left and Right arm, then — only while a band has a Mid
+  or Side arm — every Mid and Side arm on `M = (L + R)/2`, `S = (L − R)/2`. Within a stage the bands
+  commute, so slot order never matters; with every band on Stereo the second stage never runs and
+  the output is v1's, bit for bit. A crossfade within a family mixes its arms in their stage; across
+  the boundary each arm fades against identity in its own (`tick`'s `mid_side`), and a fade counts
+  down once a sample in `advance`.
+- A placed arm runs one channel of its filter; in mono it does nothing. Its detector reads its own
+  channel of the input or the key, a Stereo band the linked peak (decision 20); solo plays the
+  band's channel where it sits in the image.
+- `Cascade::response` is the complex response the editor combines into each channel's line.
+
 ## Numeric and realtime contracts — [NOTES.md § Reasons](NOTES.md#the-numeric-contracts-reasons)
 
 - `f64` coefficients and state, `f32` only at the buffers; denormals flushed on every state write;

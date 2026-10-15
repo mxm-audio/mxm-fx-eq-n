@@ -604,3 +604,29 @@ fn a_keyed_band_hears_the_side_chain_through_the_shell() {
     );
     assert!(tone_db(&render(48_000, false), 1_000.0, 0.005).abs() < 0.05);
 }
+
+/// **The shell feeds each slot's placement to the engine** (plan §7.3): a Left bell through the
+/// parameters leaves the right bit for bit; and the editor learns the layout's channels.
+#[test]
+fn a_placement_set_through_its_parameter_is_heard_on_its_channel() {
+    let mut plugin = prepared(2);
+    set_band(
+        &plugin.params.bands[0],
+        Some(Shape::Bell),
+        1_000.0,
+        12.0,
+        2.0,
+        Slope::Db12,
+    );
+    set_int(&plugin.params.places[0].placement, 1);
+    let input: Vec<f32> = (0..96_000)
+        .map(|i| (0.25 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+        .collect();
+    let mut buffers = vec![input.clone(), input.clone()];
+    run(&mut plugin, &mut buffers);
+    assert_eq!(buffers[1], input, "the right is untouched");
+    assert!(tone_db(&buffers[0][..], 1_000.0, 0.25) > 11.0);
+    assert!(!plugin.telemetry.mono());
+    let mono = prepared(1);
+    assert!(mono.telemetry.mono(), "a mono activation is published");
+}

@@ -217,3 +217,11 @@ recovery from a bad sample; DC through jumping bells, notches and cuts; bounded 
 modulation; tails, reset, hostile settings at every rate, the gain scale, mono against stereo,
 and no allocation. The plugin's wrapper, its host status and
 real DAWs belong to E2 and E5.
+
+## Stereo placement, measured (F2, 2026-10-15)
+
+`eq_n_cost`, `main` (a457958) and the placement branch back to back on one machine, three runs: the
+**steady** load (24 stereo 96 dB/oct cuts) takes 19.1–19.3 % of real time at 192 kHz before and
+20.3–20.7 % after, about 2 ns per band per sample for the stage test every arm now passes. **24 mid
+bells** take 9.6–12.0 % at 192 kHz: a placed band runs one channel, and the mid/side stage's
+encoding is two adds a sample. Both inside the 35 % steady budget (plan §3.5).

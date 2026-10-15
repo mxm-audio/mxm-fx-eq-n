@@ -19,7 +19,8 @@
 
 use egui::{Color32, Pos2, Rect, Sense, Shape as Painted, Stroke, Ui, Vec2, pos2, vec2};
 use mxm_fx_eq_n_dsp::{
-    Band, Cascade, Design, FREQ_MAX, FREQ_MIN, GAIN_RANGE, Q_MAX, Q_MIN, SLOTS, Shape, design,
+    Band, Cascade, Design, FREQ_MAX, FREQ_MIN, GAIN_RANGE, Placement, Q_MAX, Q_MIN, SLOTS, Shape,
+    design,
 };
 use mxm_ui::theme::Tokens;
 use mxm_ui::visual::{AXIS_STROKE, CANVAS_RADIUS, EMPHASIS_STROKE};
@@ -91,6 +92,12 @@ pub struct Drag {
 /// What the graph draws this frame, from the bands' designs.
 pub struct Curves {
     cascades: [Option<Cascade>; SLOTS],
+    placements: [Placement; SLOTS],
+    /// With a band placed off Stereo (plan §7.3), each channel's response to itself; empty
+    /// otherwise, when `composite` is the one curve.
+    pub channels: Vec<Line>,
+    /// `channels` at the gains the bands have now, while a dynamic band moves.
+    pub moving_channels: Vec<Line>,
     pub xs: Vec<f32>,
     pub freqs: Vec<f32>,
     pub composite: Vec<f32>,
@@ -104,13 +111,119 @@ pub struct Curves {
 /// A band's gain is moving when the heard gain is this far from the drawn one, in dB.
 const MOVING_DB: f32 = 0.01;
 
+/// One channel's response to itself, labelled with the channel's letter (plan §7.3).
+pub struct Line {
+    pub letter: &'static str,
+    pub db: Vec<f32>,
+}
+
+/// `(a + jb)(c + jd)`.
+fn times((a, b): (f64, f64), (c, d): (f64, f64)) -> (f64, f64) {
+    (a * c - b * d, a * d + b * c)
+}
+
+fn db_of((re, im): (f64, f64)) -> f32 {
+    (10.0 * (re * re + im * im).max(1.0e-30).log10()) as f32
+}
+
+/// Each channel's response to itself at `freq` (plan §7.3): the channel stage is `diag(dl, dr)` in
+/// the left/right basis, the mid/side stage `diag(dm, ds)` in the mid/side one, run in that order.
+/// Left and Right when a Left or Right band is in the sound, Mid and Side when a Mid or Side band
+/// is; with one family the other's stage is the identity and each line is exactly what its
+/// channel hears.
+fn self_responses(
+    cascades: &[Option<Cascade>; SLOTS],
+    placements: &[Placement; SLOTS],
+    freq: f32,
+    sample_rate: f64,
+) -> [Option<(&'static str, f32)>; 4] {
+    let one = (1.0, 0.0);
+    let (mut dl, mut dr, mut dm, mut ds) = (one, one, one, one);
+    let (mut channels, mut mid_side) = (false, false);
+    for (cascade, placement) in cascades.iter().zip(placements) {
+        let Some(cascade) = cascade else {
+            continue;
+        };
+        let h = cascade.response(f64::from(freq), sample_rate);
+        match placement {
+            Placement::Stereo => {
+                dl = times(dl, h);
+                dr = times(dr, h);
+            }
+            Placement::Left => {
+                dl = times(dl, h);
+                channels = true;
+            }
+            Placement::Right => {
+                dr = times(dr, h);
+                channels = true;
+            }
+            Placement::Mid => {
+                dm = times(dm, h);
+                mid_side = true;
+            }
+            Placement::Side => {
+                ds = times(ds, h);
+                mid_side = true;
+            }
+        }
+    }
+    let half = |(a, b): (f64, f64), (c, d): (f64, f64), sign: f64| {
+        (0.5 * (a + sign * c), 0.5 * (b + sign * d))
+    };
+    let mut lines = [None; 4];
+    if channels {
+        // L→L = ½(dm + ds)·dl, R→R = ½(dm + ds)·dr.
+        let both = half(dm, ds, 1.0);
+        lines[0] = Some(("L", db_of(times(both, dl))));
+        lines[1] = Some(("R", db_of(times(both, dr))));
+    }
+    if mid_side {
+        // M→M = dm·½(dl + dr), S→S = ds·½(dl + dr).
+        let both = half(dl, dr, 1.0);
+        lines[2] = Some(("M", db_of(times(dm, both))));
+        lines[3] = Some(("S", db_of(times(ds, both))));
+    }
+    lines
+}
+
+/// Every line of `self_responses` over `freqs`, in L, R, M, S order.
+fn lines_over(
+    cascades: &[Option<Cascade>; SLOTS],
+    placements: &[Placement; SLOTS],
+    freqs: &[f32],
+    sample_rate: f64,
+) -> Vec<Line> {
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, &freq) in freqs.iter().enumerate() {
+        for (slot, line) in self_responses(cascades, placements, freq, sample_rate)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if index == 0 {
+                lines.push(Line {
+                    letter: line.0,
+                    db: Vec::with_capacity(freqs.len()),
+                });
+            }
+            lines[slot].db.push(line.1);
+        }
+    }
+    lines
+}
+
 impl Curves {
     pub fn compute(app: &EqApp, axes: &Axes) -> Curves {
         let sample_rate = app.sample_rate();
         let scale = app.gain_scale_now();
+        // A placed band in mono is not heard, so it is not drawn into the curve (plan §7.3).
+        let placements: [Placement; SLOTS] = std::array::from_fn(|slot| app.placement_now(slot));
         let cascades = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
-            let shape = band.shape.filter(|_| !band.bypass)?;
+            let shape = band
+                .shape
+                .filter(|_| !band.bypass && app.placement_heard(slot))?;
             Some(design(
                 Design {
                     shape,
@@ -137,9 +250,9 @@ impl Curves {
         let heard_scale = app.telemetry.heard_scale();
         let heard_cascades: [Option<Cascade>; SLOTS] = std::array::from_fn(|slot| {
             let band = app.band_now(slot);
-            let shape = band
-                .shape
-                .filter(|shape| any_moving && !band.bypass && shape.has_gain())?;
+            let shape = band.shape.filter(|shape| {
+                any_moving && !band.bypass && shape.has_gain() && app.placement_heard(slot)
+            })?;
             let (_, heard) = app.telemetry.gains(slot);
             Some(design(
                 Design {
@@ -159,18 +272,38 @@ impl Curves {
         let freqs: Vec<f32> = xs.iter().map(|&x| axes.freq(x)).collect();
         let mut curves = Curves {
             cascades,
+            placements,
+            channels: Vec::new(),
+            moving_channels: Vec::new(),
             xs,
             composite: Vec::new(),
             moving: None,
             freqs,
             sample_rate,
         };
+        let placed = (0..SLOTS).any(|slot| {
+            curves.cascades[slot].is_some() && curves.placements[slot] != Placement::Stereo
+        });
+        if placed {
+            curves.channels = lines_over(
+                &curves.cascades,
+                &curves.placements,
+                &curves.freqs,
+                sample_rate,
+            );
+            if any_moving {
+                let heard: [Option<Cascade>; SLOTS] =
+                    std::array::from_fn(|slot| heard_cascades[slot].or(curves.cascades[slot]));
+                curves.moving_channels =
+                    lines_over(&heard, &curves.placements, &curves.freqs, sample_rate);
+            }
+        }
         curves.composite = curves
             .freqs
             .iter()
             .map(|&freq| curves.composite_at(freq))
             .collect();
-        if any_moving {
+        if any_moving && !placed {
             let heard: Vec<&Cascade> = (0..SLOTS)
                 .filter_map(|slot| {
                     heard_cascades[slot]
@@ -194,7 +327,16 @@ impl Curves {
         curves
     }
 
+    /// The line a click and the keyboard work on at `freq`: the one curve, or with placed bands
+    /// the first channel line.
     pub fn composite_at(&self, freq: f32) -> f32 {
+        if !self.channels.is_empty() {
+            return self_responses(&self.cascades, &self.placements, freq, self.sample_rate)
+                .into_iter()
+                .flatten()
+                .next()
+                .map_or(0.0, |(_, db)| db);
+        }
         self.cascades
             .iter()
             .filter_map(Option::as_ref)
@@ -202,19 +344,33 @@ impl Curves {
             .sum::<f64>() as f32
     }
 
-    /// The shortest distance from `point` to the drawn composite line.
+    /// The lines drawn: the one curve, or with placed bands each channel's.
+    fn drawn(&self) -> Vec<&[f32]> {
+        if self.channels.is_empty() {
+            vec![&self.composite]
+        } else {
+            self.channels
+                .iter()
+                .map(|line| line.db.as_slice())
+                .collect()
+        }
+    }
+
+    /// The shortest distance from `point` to a drawn line.
     fn distance(&self, axes: &Axes, point: Pos2) -> f32 {
         let mut best = f32::INFINITY;
-        for index in 1..self.xs.len() {
-            let (x0, x1) = (self.xs[index - 1], self.xs[index]);
-            if x1 < point.x - 40.0 || x0 > point.x + 40.0 {
-                continue;
+        for db in self.drawn() {
+            for index in 1..self.xs.len() {
+                let (x0, x1) = (self.xs[index - 1], self.xs[index]);
+                if x1 < point.x - 40.0 || x0 > point.x + 40.0 {
+                    continue;
+                }
+                let a = pos2(x0, axes.y(db[index - 1]));
+                let b = pos2(x1, axes.y(db[index]));
+                let along = b - a;
+                let t = ((point - a).dot(along) / along.length_sq().max(1.0e-6)).clamp(0.0, 1.0);
+                best = best.min(point.distance(a + along * t));
             }
-            let a = pos2(x0, axes.y(self.composite[index - 1]));
-            let b = pos2(x1, axes.y(self.composite[index]));
-            let along = b - a;
-            let t = ((point - a).dot(along) / along.length_sq().max(1.0e-6)).clamp(0.0, 1.0);
-            best = best.min(point.distance(a + along * t));
         }
         best
     }
@@ -254,6 +410,13 @@ impl EqApp {
             }
             if shape.has_slope() {
                 text += &format!("   {} dB/oct", band.slope.db_per_octave());
+            }
+        }
+        let placement = self.placement_now(slot);
+        if placement != Placement::Stereo {
+            text += &format!("   {}", crate::params::placement_name(placement));
+            if !self.placement_heard(slot) {
+                text += ", not heard in mono";
             }
         }
         if band.bypass {
@@ -667,19 +830,60 @@ impl EqApp {
                 .map(|(&x, &db)| pos2(x, axes.y(db)))
                 .collect()
         };
-        match &curves.moving {
-            Some(moving) => {
-                painter.add(Painted::line(
-                    line(&curves.composite),
-                    Stroke::new(1.5, tokens.accent.gamma_multiply(0.4)),
-                ));
-                painter.add(Painted::line(line(moving), Stroke::new(2.0, tokens.accent)));
+        if curves.channels.is_empty() {
+            match &curves.moving {
+                Some(moving) => {
+                    painter.add(Painted::line(
+                        line(&curves.composite),
+                        Stroke::new(1.5, tokens.accent.gamma_multiply(0.4)),
+                    ));
+                    painter.add(Painted::line(line(moving), Stroke::new(2.0, tokens.accent)));
+                }
+                None => {
+                    painter.add(Painted::line(
+                        line(&curves.composite),
+                        Stroke::new(2.0, tokens.accent),
+                    ));
+                }
             }
-            None => {
-                painter.add(Painted::line(
-                    line(&curves.composite),
-                    Stroke::new(2.0, tokens.accent),
-                ));
+        } else {
+            // With placed bands, each channel's own line (plan §7.3), labelled with its letter at
+            // its end: identity never rests on hue. Mid and Side are dashed, so the two families
+            // read apart where they cross.
+            let letter_font = egui::FontId::proportional(11.0);
+            let moving = !curves.moving_channels.is_empty();
+            for (index, channel) in curves.channels.iter().enumerate() {
+                let stroke = if moving {
+                    Stroke::new(1.5, tokens.accent.gamma_multiply(0.4))
+                } else {
+                    Stroke::new(2.0, tokens.accent)
+                };
+                let points = line(&channel.db);
+                let mid_side = matches!(channel.letter, "M" | "S");
+                let end = points.last().copied();
+                if mid_side {
+                    painter.extend(Painted::dashed_line(&points, stroke, 6.0, 3.0));
+                } else {
+                    painter.add(Painted::line(points, stroke));
+                }
+                if let Some(heard) = curves.moving_channels.get(index) {
+                    let heard = line(&heard.db);
+                    let stroke = Stroke::new(2.0, tokens.accent);
+                    if mid_side {
+                        painter.extend(Painted::dashed_line(&heard, stroke, 6.0, 3.0));
+                    } else {
+                        painter.add(Painted::line(heard, stroke));
+                    }
+                }
+                if let Some(end) = end {
+                    painter.text(
+                        end + vec2(-4.0, -4.0),
+                        egui::Align2::RIGHT_BOTTOM,
+                        channel.letter,
+                        letter_font.clone(),
+                        tokens.text_primary,
+                    );
+                }
             }
         }
 
@@ -770,12 +974,16 @@ impl EqApp {
                     Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
                 );
             }
-            let text_color = if band.bypass {
-                painter.circle_stroke(
-                    at,
-                    POINT_RADIUS,
-                    Stroke::new(EMPHASIS_STROKE, tokens.accent),
-                );
+            // A placed band in mono is not heard (plan §7.3): drawn faint, as a bypassed one is
+            // hollow.
+            let heard = self.placement_heard(slot);
+            let accent = if heard {
+                tokens.accent
+            } else {
+                tokens.accent.gamma_multiply(0.35)
+            };
+            let text_color = if band.bypass || !heard {
+                painter.circle_stroke(at, POINT_RADIUS, Stroke::new(EMPHASIS_STROKE, accent));
                 tokens.text_primary
             } else {
                 painter.circle_filled(at, POINT_RADIUS, tokens.accent);
@@ -788,6 +996,23 @@ impl EqApp {
                 number_font.clone(),
                 text_color,
             );
+            // Its placement's letter beside the number, as on its channel's line.
+            let letter = match self.placement_now(slot) {
+                Placement::Stereo => None,
+                Placement::Left => Some("L"),
+                Placement::Right => Some("R"),
+                Placement::Mid => Some("M"),
+                Placement::Side => Some("S"),
+            };
+            if let Some(letter) = letter {
+                painter.text(
+                    at + vec2(POINT_RADIUS + 2.0, -POINT_RADIUS - 2.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    letter,
+                    number_font.clone(),
+                    tokens.text_primary,
+                );
+            }
         }
 
         // A reading of the selected band, or of the keyboard's position.

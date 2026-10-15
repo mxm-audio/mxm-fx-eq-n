@@ -23,7 +23,7 @@ pub use design::{
     analogue_db, design, design_running, design_solo, design_with, max_frequency,
 };
 pub use dynamics::Dynamics;
-pub use engine::{Band, Engine};
+pub use engine::{Band, Engine, Placement};
 
 /// The band slots a host sees (decision 1).
 pub const SLOTS: usize = 24;
