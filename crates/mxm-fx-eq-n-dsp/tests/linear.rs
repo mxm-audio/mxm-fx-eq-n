@@ -384,3 +384,129 @@ fn the_drawn_curve_is_what_the_kernel_does() {
         );
     }
 }
+
+/// **Linear phase keeps the whole gain range** (plan §7.7): five coincident +60 dB bells
+/// (+30 dB under a 200 % gain scale), +300 dB, take a 1e−14 tone at their centre to the level the
+/// kernel's drawn response says, within 0.5 dB, more than +290 dB (the top of so steep a peak is
+/// narrower than Low's bins, so it is read at High); and 24 of them, +1,440 dB, stay finite inside
+/// the output's bound, loud, not silenced.
+#[test]
+fn the_whole_gain_range_is_kept() {
+    let stack = |count: usize| {
+        move |engine: &mut Engine| {
+            for slot in 0..count {
+                engine.set_band(slot, bell(1_000.0, 30.0, 1.0));
+            }
+            engine.set_gain_scale(2.0);
+        }
+    };
+    let n = RATE as usize;
+    let tone: Vec<f32> = (0..n)
+        .map(|i| (1.0e-14 * (std::f64::consts::TAU * 1_000.0 * i as f64 / RATE).sin()) as f32)
+        .collect();
+    let mut late = linear(Resolution::High, stack(5));
+    let (out, _) = run(&mut late, &tone.clone(), &tone, 512, |_, _| {});
+    let mut heard_eq = mxm_fx_eq_n_dsp::linear::Heard::EMPTY;
+    for slot in 0..5 {
+        heard_eq.bands[slot] = Some((
+            design(
+                Design {
+                    shape: Shape::Bell,
+                    slope: Slope::Db12,
+                    freq: 1_000.0,
+                    gain_db: 60.0,
+                    q: 1.0,
+                },
+                RATE,
+            ),
+            Placement::Stereo,
+        ));
+    }
+    let [drawn, ..] = mxm_fx_eq_n_dsp::linear::heard_lines(
+        &heard_eq,
+        1_000.0,
+        RATE,
+        Sizes::new(RATE, Resolution::High),
+    );
+    let window = n / 2;
+    let gain = level_db(&out[n - window..], 1_000.0) - level_db(&tone[n - window..], 1_000.0);
+    let want = 20.0 * drawn.log10();
+    assert!((gain - want).abs() <= 0.5, "{gain} dB against {want} dB");
+    assert!(gain > 290.0, "{gain} dB");
+
+    let mut worst = linear(Resolution::Low, stack(mxm_fx_eq_n_dsp::SLOTS));
+    let input = noise(n / 2, 13);
+    let (out, _) = run(&mut worst, &input.clone(), &input, 512, |_, _| {});
+    let latency = worst.latency() as usize;
+    let bound = mxm_fx_eq_n_dsp::engine::OUTPUT_BOUND as f32;
+    assert!(out.iter().all(|x| x.is_finite() && x.abs() <= bound));
+    assert!(
+        out[latency + 4_096..].iter().any(|x| x.abs() > 1.0),
+        "loud, not silenced"
+    );
+}
+
+/// **Any rate the plugin is given sizes a kernel** (plan §7.7): powers of two, never past the
+/// largest, never a panic, from the DSP's lowest rate to the largest finite one.
+#[test]
+fn every_rate_sizes_a_kernel() {
+    let largest = Sizes::new(768_000.0, Resolution::High);
+    for rate in [
+        1.0,
+        1_000.0,
+        22_050.0,
+        768_000.0,
+        1.0e7,
+        f64::from(f32::MAX),
+        f64::MAX,
+    ] {
+        for resolution in Resolution::ALL {
+            let sizes = Sizes::new(rate, resolution);
+            assert!(sizes.kernel.is_power_of_two() && sizes.block.is_power_of_two());
+            assert!(sizes.kernel <= largest.kernel && sizes.kernel >= 8 * sizes.block);
+        }
+    }
+}
+
+/// **A reset hears the settings as they stand** (plan §7.7): a band changed just before a reset is
+/// heard from the reset's first sample, bit for bit as a fresh engine primed with it — offline at
+/// once, waiting for its kernel; in realtime never waiting, its kernel taken unfaded once designed
+/// while nothing sounding has been convolved.
+#[test]
+fn a_reset_hears_the_settings_as_they_stand() {
+    let changed = |engine: &mut Engine| engine.set_band(0, bell(1_000.0, 12.0, 1.0));
+    let input = noise(RATE as usize / 4, 21);
+    let mut fresh = linear(Resolution::Low, changed);
+    let (want, _) = run(&mut fresh, &input.clone(), &input, 256, |_, _| {});
+
+    // Offline: the reset waits.
+    let mut offline = linear(Resolution::Low, |_| {});
+    let _ = run(&mut offline, &input.clone(), &input, 256, |_, _| {});
+    changed(&mut offline);
+    offline.reset();
+    let (heard, _) = run(&mut offline, &input.clone(), &input, 256, |_, _| {});
+    assert_eq!(heard, want, "offline");
+
+    // Realtime: silence until the kernel is in, then the same input.
+    let mut realtime = linear(Resolution::Low, |_| {});
+    realtime.set_offline(false);
+    let _ = run(&mut realtime, &input.clone(), &input, 256, |_, _| {});
+    changed(&mut realtime);
+    realtime.reset();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut silent = 0;
+    while !realtime.is_settled() {
+        assert!(std::time::Instant::now() < until, "the kernel never came");
+        let (mut l, mut r) = ([0.0f32; 64], [0.0f32; 64]);
+        realtime.process_stereo(&mut l, &mut r);
+        assert!(l.iter().chain(&r).all(|x| *x == 0.0));
+        silent += 64;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let mut reference = linear(Resolution::Low, changed);
+    let quiet = vec![0.0f32; silent];
+    let _ = run(&mut reference, &quiet.clone(), &quiet, 64, |_, _| {});
+    let (want, _) = run(&mut reference, &input.clone(), &input, 256, |_, _| {});
+    let (heard, _) = run(&mut realtime, &input.clone(), &input, 256, |_, _| {});
+    assert_eq!(heard, want, "realtime, after {silent} silent frames");
+}

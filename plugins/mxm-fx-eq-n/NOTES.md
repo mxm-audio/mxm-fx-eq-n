@@ -270,15 +270,26 @@ and `audition.rs`'s tests hold the lifecycle.
     so `D` is the EQ's response alone.
 
 - **Phase, the latency and its restart** (plan §7.7):
+  - *One latency per activation* (the kit's *Latency is fixed*): activation builds the engine in
+    the phase the parameters hold (`Engine::with_phase`, Linear phase's kernel primed before the
+    first sample) and reports its latency (`ActivateContext::set_latency_samples`); a phase asked
+    for while active is reported from `process`, which nice-plug turns into the host's restart, the
+    phase in force playing on until then (MXM Player's headless path never restarts, so there it
+    waits for the next activation). `Telemetry::phase` publishes the phase in force; `deactivate`
+    drops Linear phase's engine and its design thread.
   - *Reported at activation.* nice-plug defers `ActivateContext::set_latency_samples` until
     `activate` returns, and a latency different from the last one asks the host for a restart once
     the plugin is active; reporting the same again asks nothing, so the restart does not loop.
     Through MXM Player (`a_restored_linear_phase_eq_delays_the_render_by_its_latency`) a restored
     Linear phase's render is the dry one later by exactly the latency, 2,304 frames at Low.
   - *Asked while active.* `process` reports the asked phase's latency once (`phase_change`); the
-    engine keeps the phase activation built until the host restarts the plugin, and the editor
-    draws the phase in force, not the one asked for. A resolution changed in Zero latency asks
-    nothing.
+    engine keeps the phase activation built until the host restarts the plugin. The editor draws
+    the phase in force, not the one asked for, and the hovers give the delay in force and what a
+    waiting change makes it. A resolution changed in Zero latency asks nothing.
+  - *A reset.* A host resets on the audio thread, so in realtime the reset asks for the settings'
+    kernel and never waits: it is taken the first partition it is ready, unfaded while only
+    silence has been convolved, else faded in at the next boundary (code review, 2026-10-15).
+    Offline it waits, so a bounce hears it from its first sample.
   - *The Output card.* Phase and Resolution side by side were 333 px in a 308 px column, so they
     stack; the window opens at `REFERENCE`, the second column grown by the two rows.
 

@@ -229,14 +229,21 @@ encoding is two adds a sample. Both inside the 35 % steady budget (plan §3.5).
 ## Linear phase, measured (F6, 2026-10-15)
 
 `eq_n_cost` in release, one machine: **linear, steady** (High, 24 bells across Left, Right, Mid and
-Side, four kernels) takes 0.5 % of real time at 44.1–48 kHz and 1.9 % at 192 kHz; **linear,
+Side, four kernels) takes 1.1–1.4 % of real time at 44.1–48 kHz and 4.3 % at 192 kHz; **linear,
 moving** (every band moved every block, so a kernel asked for at every boundary and two banks
-running through the fades) 1.2–1.3 % and 2.9 %, the IIR control intervals included. **A bank's
-design** on the design thread: 2.0–2.1 ms at 44.1–48 kHz, 5.1 ms at 192 kHz. All far inside brief
+running through the fades) 2.5–2.9 % and 8.8 %, the IIR control intervals included. **A bank's
+design** on the design thread: 2.0 ms at 44.1–48 kHz, 5.1 ms at 192 kHz. All far inside brief
 A6's 35 % and 70 %.
+
+**The convolution is `f64`**, as the cascade is: valid settings reach +1,440 dB (24 coincident
++60 dB bells under a 200 % gain scale), past `f32`'s range, and an `f32` kernel turned them into
+infinity and then silence (code review, round 1); holding the kernel's gain under `f32` instead
+changed a valid response (round 2: five such bells are +300 dB, and a 1e−14 tone must come out at
+that). `f64` doubled the convolution's cost (`f32`: 1.9 % steady, 2.9 % moving at 192 kHz); `the_whole_gain_range_is_kept`
+holds the +300 dB case to the drawn response within 0.5 dB.
 
 Found building it: the kernel's response at each bin is exactly the sampled magnitude smoothed
 ¼, ½, ¼ (the periodic Hann's transform), so `heard_lines` draws what the kernel does from the
 designs alone, within 0.1 dB between bins for bands wider than eight bins
-(`the_drawn_curve_is_what_the_kernel_does`); the convolution in `f32` puts a kernel change within
-−90 dB of a fresh convolution of the whole input once its fade is done.
+(`the_drawn_curve_is_what_the_kernel_does`); a kernel change is within −90 dB of a fresh
+convolution of the whole input once its fade is done.

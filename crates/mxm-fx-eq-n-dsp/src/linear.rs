@@ -8,8 +8,10 @@
 //!   `sin²(π·m/N)` and its tap pairs mirrored, so it is symmetric to the bit about tap N/2 and its
 //!   group delay is N/2 at every frequency. With the window, each bin hears its neighbours by
 //!   ¼, ½, ¼: the window's transform ([`heard_lines`] reads it so).
-//! - **The convolver** keeps one frequency-domain delay line of the input's partitions of B; a
-//!   kernel bank is only coefficients, so a new bank's first output is its convolution of
+//! - **The convolver** runs in `f64`, as the cascade does: valid settings reach +1,440 dB (24
+//!   coincident +60 dB bells), past anything `f32` holds, and the output's own bound clips after.
+//!   It keeps one frequency-domain delay line of the input's partitions of B; a kernel bank is only
+//!   coefficients, so a new bank's first output is its convolution of
 //!   everything heard (overlap-save, `research:effects/convolution-reverb.md` §7's family).
 //! - **Banks are designed off the audio thread**, on the engine's own design thread, into one of
 //!   three preallocated banks handed over through atomics; the audio thread takes the newest
@@ -68,6 +70,9 @@ const MIN_BLOCK: usize = 32;
 pub const BLOCKS_PER_UPDATE: usize = 4;
 /// How long the design thread rests between looks for a request.
 const DESIGN_REST: std::time::Duration = std::time::Duration::from_millis(1);
+/// The most octaves a resolution's lengths are scaled up, at 768 kHz and above, so no rate the
+/// plugin is given can ask for a kernel past what memory holds.
+const MAX_OCTAVES: i32 = 4;
 /// How long a wait for a bank (offline, or at activation) lasts at most, so a design thread that
 /// has gone can never hang the host.
 const LONGEST_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -83,9 +88,11 @@ pub struct Sizes {
 
 impl Sizes {
     pub fn new(sample_rate: f64, resolution: Resolution) -> Sizes {
-        let octaves = (crate::usable_sample_rate(sample_rate) / 48_000.0)
+        // `usable_sample_rate` holds the rate at or above 1 kHz, at most six octaves down.
+        let octaves = ((crate::usable_sample_rate(sample_rate) / 48_000.0)
             .log2()
-            .round() as i32;
+            .round() as i32)
+            .min(MAX_OCTAVES);
         let scaled = |base: usize| {
             if octaves >= 0 {
                 base << octaves.unsigned_abs()
@@ -280,7 +287,7 @@ pub fn heard_lines(heard: &Heard, freq: f64, sample_rate: f64, sizes: Sizes) -> 
 struct Bank {
     layout: Layout,
     seq: u64,
-    kernels: [Vec<Complex<f32>>; 4],
+    kernels: [Vec<Complex<f64>>; 4],
 }
 
 impl Bank {
@@ -305,16 +312,16 @@ struct Designer {
     taps: Vec<f64>,
     window: Vec<f64>,
     gains: Vec<[f64; 4]>,
-    forward: RealFft<f32>,
-    forward_scratch: Vec<Complex<f32>>,
-    segment: Vec<f32>,
+    forward: RealFft<f64>,
+    forward_scratch: Vec<Complex<f64>>,
+    segment: Vec<f64>,
 }
 
 impl Designer {
     fn new(sizes: Sizes, sample_rate: f64) -> Designer {
         let n = sizes.kernel;
         let inverse = Planner::<f64>::new().real(n);
-        let forward = Planner::<f32>::new().real(2 * sizes.block);
+        let forward = Planner::<f64>::new().real(2 * sizes.block);
         Designer {
             sizes,
             sample_rate,
@@ -348,7 +355,9 @@ impl Designer {
         }
         for (bin, gains) in self.gains.iter_mut().enumerate() {
             let freq = bin as f64 * self.sample_rate / n as f64;
-            *gains = kernel_gains(layout, stage_magnitudes(heard, freq, self.sample_rate));
+            // Every valid gain is finite in `f64`; a non-finite one is no sound.
+            *gains = kernel_gains(layout, stage_magnitudes(heard, freq, self.sample_rate))
+                .map(|gain| if gain.is_finite() { gain } else { 0.0 });
         }
         for kernel in 0..layout.kernels() {
             for (value, gains) in self.spectrum.iter_mut().zip(&self.gains) {
@@ -376,7 +385,7 @@ impl Designer {
                     .iter_mut()
                     .zip(&self.taps[part * b..(part + 1) * b])
                 {
-                    *out = *tap as f32;
+                    *out = *tap;
                 }
                 self.segment[b..].fill(0.0);
                 let _ = self.forward.forward(
@@ -476,21 +485,25 @@ pub struct Linear {
     old: Option<usize>,
     faded: usize,
     offline: bool,
+    /// After a restart in realtime: the bank asked for is taken the first partition it is ready.
+    fresh: bool,
+    /// Whether a partition with sound in it has been convolved since the last clear.
+    sounded: bool,
     blocks: usize,
-    forward: RealFft<f32>,
-    inverse: RealFft<f32>,
-    scratch: Vec<Complex<f32>>,
+    forward: RealFft<f64>,
+    inverse: RealFft<f64>,
+    scratch: Vec<Complex<f64>>,
     /// Per channel the transform's window, the partition before and the one filling.
-    window: [Vec<f32>; 2],
+    window: [Vec<f64>; 2],
     filled: usize,
     /// The frequency-domain delay line: per channel `parts × (B + 1)`, `head` the newest.
-    line: [Vec<Complex<f32>>; 2],
+    line: [Vec<Complex<f64>>; 2],
     head: usize,
-    work_in: Vec<f32>,
-    work_out: Vec<f32>,
-    accumulator: Vec<Complex<f32>>,
+    work_in: Vec<f64>,
+    work_out: Vec<f64>,
+    accumulator: Vec<Complex<f64>>,
     /// The partition's output, per bank in use (current, old) and channel.
-    outputs: [[Vec<f32>; 2]; 2],
+    outputs: [[Vec<f64>; 2]; 2],
     /// The delay line of the latency: an empty EQ's output, and solo's input.
     delay: [Vec<f32>; 2],
     delay_at: usize,
@@ -521,7 +534,7 @@ impl Linear {
                 .ok()?
         };
         let b = sizes.block;
-        let mut planner = Planner::<f32>::new();
+        let mut planner = Planner::<f64>::new();
         let forward = planner.real(2 * b);
         let inverse = forward.clone();
         let line_len = sizes.parts() * (b + 1);
@@ -538,6 +551,8 @@ impl Linear {
             old: None,
             faded: 0,
             offline: false,
+            fresh: false,
+            sounded: false,
             blocks: 0,
             scratch: forward.make_scratch(),
             forward,
@@ -615,6 +630,14 @@ impl Linear {
             .map(|_| newest)
     }
 
+    /// Whether a finished bank holds the kernel asked for last, or a newer one.
+    fn asked_ready(&self) -> bool {
+        (0..3).any(|index| {
+            self.shared.states[index].load(Ordering::Acquire) == READY
+                && self.shared.seqs[index].load(Ordering::Relaxed) >= self.asked
+        })
+    }
+
     /// Waits, at most [`LONGEST_WAIT`], for the bank asked for last: only offline and at
     /// activation, never on a realtime audio thread.
     fn wait_for_asked(&mut self) -> Option<usize> {
@@ -623,10 +646,7 @@ impl Linear {
             if self.heard_seq() >= self.asked {
                 return None;
             }
-            if (0..3).any(|index| {
-                self.shared.states[index].load(Ordering::Acquire) == READY
-                    && self.shared.seqs[index].load(Ordering::Relaxed) >= self.asked
-            }) {
+            if self.asked_ready() {
                 return self.take_ready();
             }
             if std::time::Instant::now() > until {
@@ -641,10 +661,42 @@ impl Linear {
     pub fn prime(&mut self, heard: &Heard) {
         self.ask(heard);
         if let Some(index) = self.wait_for_asked() {
-            let (current, old) = (self.current.take(), self.old.take());
-            self.release(current);
-            self.release(old);
-            self.current = Some(index);
+            self.hear_at_once(index);
+        }
+    }
+
+    /// After [`Linear::clear`], the kernel for `heard` (a reset, plan §7.7): offline designed now
+    /// and heard from the next sample, as at activation; in realtime asked for, never waited for,
+    /// and taken the first partition it is ready — unfaded while nothing sounding has been
+    /// convolved since the clear, so heard as if primed; else at the next update boundary, faded
+    /// in as any change is.
+    pub fn restart(&mut self, heard: &Heard) {
+        if self.offline {
+            self.prime(heard);
+        } else {
+            self.ask(heard);
+            self.fresh = true;
+        }
+    }
+
+    /// `index` heard from the next partition, no fade: the banks in use released.
+    fn hear_at_once(&mut self, index: usize) {
+        let (current, old) = (self.current.take(), self.old.take());
+        self.release(current);
+        self.release(old);
+        self.current = Some(index);
+    }
+
+    /// A restart's bank, at a partition: taken unfaded while every partition convolved since the
+    /// clear was silent, since every kernel's output on silence is the same nothing.
+    fn take_fresh(&mut self) {
+        if self.sounded || self.heard_seq() >= self.asked {
+            self.fresh = false;
+        } else if self.asked_ready() {
+            if let Some(index) = self.take_ready() {
+                self.hear_at_once(index);
+            }
+            self.fresh = false;
         }
     }
 
@@ -673,6 +725,8 @@ impl Linear {
         self.release(old);
         self.faded = 0;
         self.since_input = usize::MAX;
+        self.fresh = false;
+        self.sounded = false;
     }
 
     /// Whether the output may still sound: the input's last nonzero sample within the tail.
@@ -709,6 +763,9 @@ impl Linear {
     /// The partition just filled: into the delay line, and out through each bank in use.
     fn block(&mut self) {
         self.blocks += 1;
+        if self.fresh {
+            self.take_fresh();
+        }
         if self.blocks.is_multiple_of(BLOCKS_PER_UPDATE) {
             self.boundary();
         }
@@ -739,7 +796,7 @@ impl Linear {
                     let at = (head + parts - part) % parts;
                     let range = part * bins..(part + 1) * bins;
                     let input = |channel: usize| &self.line[channel][at * bins..(at + 1) * bins];
-                    let mut add = |kernel: &[Complex<f32>], input: &[Complex<f32>]| {
+                    let mut add = |kernel: &[Complex<f64>], input: &[Complex<f64>]| {
                         for ((sum, h), x) in self.accumulator.iter_mut().zip(kernel).zip(input) {
                             *sum += h * x;
                         }
@@ -767,6 +824,8 @@ impl Linear {
         }
         self.head = (head + 1) % parts;
         self.filled = 0;
+        // `tick` counted this partition's samples before calling here.
+        self.sounded = self.since_input != usize::MAX;
     }
 
     /// One frame through the kernel: the output, `latency()` behind, and the input delayed by the
@@ -789,15 +848,16 @@ impl Linear {
         };
         let mut sounding = false;
         for c in 0..C.min(self.channels) {
+            // The delay line keeps the input as it came, `f32`, so an empty EQ is bit-exact.
             let x = input[c] as f32;
             sounding |= x != 0.0;
             let late = self.delay[c][self.delay_at];
             self.delay[c][self.delay_at] = x;
             delayed[c] = f64::from(late);
-            self.window[c][b + at] = x;
+            self.window[c][b + at] = input[c];
             let through = |layout: Option<Layout>, slot: usize| match layout {
                 Some(Layout::Identity) | None => f64::from(late),
-                Some(_) => f64::from(self.outputs[slot][c][at]),
+                Some(_) => self.outputs[slot][c][at],
             };
             let now = through(current, 0);
             out[c] = if fading {

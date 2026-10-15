@@ -3749,3 +3749,39 @@ fn the_curve_follows_the_phase_in_force() {
     rig.press(Vec::new());
     assert_eq!(rig.app.range_reach_db(slot), None, "held in Linear phase");
 }
+
+/// **The phase hovers tell the delay in force** (plan §7.7): while a change waits for the host's
+/// restart, the sound is as late as the phase in force makes it, and the hover says what it then
+/// becomes. At 48 kHz Low is 2,304 frames, 48 ms, and High 8,448, 176 ms.
+#[test]
+fn the_phase_hover_tells_the_delay_in_force() {
+    use mxm_fx_eq_n_dsp::{Phase, Resolution};
+    let low = Phase::Linear(Resolution::Low);
+    let high = Phase::Linear(Resolution::High);
+    let hover = |asked, in_force| column::phase_hover(true, asked, in_force, 48_000.0);
+    let settled = hover(low, low);
+    assert!(
+        settled.contains("Now the sound is 48 ms late") && !settled.contains("restarts"),
+        "{settled}"
+    );
+    let finer = hover(high, low);
+    assert!(
+        finer.contains("Now the sound is 48 ms late") && finer.contains("Then it is 176 ms late"),
+        "{finer}"
+    );
+    let back = hover(Phase::ZeroLatency, low);
+    assert!(
+        back.contains("Now the sound is 48 ms late") && back.contains("Then the sound is on time"),
+        "{back}"
+    );
+    let on = hover(low, Phase::ZeroLatency);
+    assert!(
+        !on.contains("Now the sound") && on.contains("Then it is 48 ms late"),
+        "{on}"
+    );
+    let resolution = column::phase_hover(false, high, low, 48_000.0);
+    assert!(
+        resolution.contains("48 ms late") && resolution.contains("176 ms late"),
+        "{resolution}"
+    );
+}

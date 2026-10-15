@@ -832,3 +832,15 @@ fn linear_phase_through_the_shell() {
         "then free to sleep"
     );
 }
+
+/// **The asked phase is recorded as asked** (plan §7.7): activation in Linear phase reports no
+/// further change while the parameters stay put, whatever the engine could build, so a design
+/// thread that cannot start never loops the host's restarts.
+#[test]
+fn activation_records_the_phase_asked() {
+    let mut plugin = MxmFxEqN::default();
+    set_int(&plugin.params.phase, 1);
+    assert!(plugin.prepare(48_000.0, 2, false));
+    assert_eq!(plugin.phase_change(), None);
+    assert_eq!(plugin.asked_phase, plugin.params.phase_mode());
+}

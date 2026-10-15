@@ -1093,6 +1093,19 @@ impl Engine {
         if let Some(linear) = &mut self.linear {
             linear.clear();
         }
+        // Linear phase's kernel for the settings as they stand, asked for at once when the one
+        // heard is not theirs (plan §7.7): offline waited for, in realtime taken when it is ready.
+        let stale = self.linear.as_ref().is_some_and(|linear| {
+            self.linear_dirty || self.linear_wanted.is_some() || !linear.is_settled()
+        });
+        if stale {
+            let heard = self.linear_heard();
+            self.linear_dirty = false;
+            self.linear_wanted = None;
+            if let Some(linear) = &mut self.linear {
+                linear.restart(&heard);
+            }
+        }
     }
 
     /// Nothing to do: every band parked or dry with no fade, no audition, the output at exactly

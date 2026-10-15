@@ -539,12 +539,53 @@ pub fn output_tree(app: &EqApp) -> Node<Leaf> {
 const LINEAR_RESOLUTIONS: [&str; 3] = ["Low", "Medium", "High"];
 const PHASE_ZERO_DESCRIPTION: &str = "Zero latency keeps the sound on time, its phase turning near \
      each band as an analogue equaliser's does. Linear phase turns no phase, so a Mid or Side band \
-     moves nothing across and a steep cut keeps a hit's shape, at a delay; a narrow low cut then \
-     rings before the note as well as after.";
+     moves sound across only by its gain, never where it is flat, and a steep cut keeps a hit's \
+     shape, at a delay; a narrow low cut then rings before the note as well as after.";
 const RESOLUTION_DESCRIPTION: &str = "How finely Linear phase follows narrow bands: Low delays the \
      sound least, High holds a narrow low band best and delays most.";
 const PENDING_DESCRIPTION: &str =
     " The change is heard once the host restarts the equaliser, which most do at once.";
+
+/// The hover of Phase (`phase`) or Resolution (plan §7.7): the sound's delay in the phase in
+/// force, and while a change waits for the host's restart, what it then becomes.
+pub(super) fn phase_hover(
+    phase: bool,
+    asked: mxm_fx_eq_n_dsp::Phase,
+    in_force: mxm_fx_eq_n_dsp::Phase,
+    rate: f32,
+) -> String {
+    use mxm_fx_eq_n_dsp::Phase;
+    // Before activation no rate is known: the reference rate's.
+    let rate = if rate > 0.0 { rate } else { 48_000.0 };
+    let latency_ms = |phase: Phase| match phase {
+        Phase::ZeroLatency => 0.0,
+        Phase::Linear(resolution) => {
+            mxm_fx_eq_n_dsp::linear::Sizes::new(f64::from(rate), resolution).latency() as f32
+                * 1_000.0
+                / rate
+        }
+    };
+    let mut text = String::from(if phase {
+        PHASE_ZERO_DESCRIPTION
+    } else {
+        RESOLUTION_DESCRIPTION
+    });
+    if let Phase::Linear(_) = in_force {
+        text += &format!(
+            " Now the sound is {:.0} ms late; a mix plays it on time, but monitoring live \
+             through it does not.",
+            latency_ms(in_force)
+        );
+    }
+    if asked != in_force {
+        text += PENDING_DESCRIPTION;
+        text += &match asked {
+            Phase::ZeroLatency => " Then the sound is on time.".to_owned(),
+            Phase::Linear(_) => format!(" Then it is {:.0} ms late.", latency_ms(asked)),
+        };
+    }
+    text
+}
 
 const SHOW_OPTIONS: [&str; 3] = ["Pre", "Post", "Both"];
 const RESOLUTION_OPTIONS: [&str; 3] = ["Low", "Medium", "High"];
@@ -1255,19 +1296,6 @@ impl EqApp {
         let asked = self.phase_asked();
         let in_force = self.telemetry.phase();
         let rate = self.telemetry.sample_rate();
-        let latency_ms = |phase: Phase| match phase {
-            Phase::ZeroLatency => 0.0,
-            Phase::Linear(resolution) => {
-                mxm_fx_eq_n_dsp::linear::Sizes::new(f64::from(rate), resolution).latency() as f32
-                    * 1_000.0
-                    / rate
-            }
-        };
-        let pending = if asked != in_force {
-            PENDING_DESCRIPTION
-        } else {
-            ""
-        };
         let (index, key, label, names, mut current, enabled, description) = match leaf {
             Leaf::PhaseMode => (
                 crate::params::PHASE_INDEX,
@@ -1276,14 +1304,7 @@ impl EqApp {
                 &crate::params::PHASE_NAMES[..],
                 usize::from(matches!(asked, Phase::Linear(_))),
                 true,
-                match asked {
-                    Phase::ZeroLatency => format!("{PHASE_ZERO_DESCRIPTION}{pending}"),
-                    Phase::Linear(_) => format!(
-                        "{PHASE_ZERO_DESCRIPTION} Now the sound is {:.0} ms late; a mix plays it \
-                         on time, but monitoring live through it does not.{pending}",
-                        latency_ms(asked)
-                    ),
-                },
+                phase_hover(true, asked, in_force, rate),
             ),
             _ => {
                 let resolution = match asked {
@@ -1304,7 +1325,7 @@ impl EqApp {
                         .position(|other| *other == resolution)
                         .unwrap_or(1),
                     matches!(asked, Phase::Linear(_)),
-                    format!("{RESOLUTION_DESCRIPTION}{pending}"),
+                    phase_hover(false, asked, in_force, rate),
                 )
             }
         };

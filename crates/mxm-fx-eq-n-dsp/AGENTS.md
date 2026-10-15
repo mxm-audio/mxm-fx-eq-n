@@ -82,7 +82,8 @@ constants, because the DSP holds every value inside them whatever arrives.
 - **The output gain ramps from the sample it is set at**; **a solo audition fades in from the
   interval it is built in**.
 - **Reset** finishes every transition and clears every state, so a saved EQ is heard from its first
-  sample; it also ends solo.
+  sample (in Linear phase in realtime, once its kernel is designed: *Linear phase* below); it also
+  ends solo.
 - **Solo** is honoured only while the band is live and offers it; it runs on the dry input, follows
   the band, and fades in and out.
 
@@ -138,12 +139,17 @@ The design is plan §7.1, the signed values brief §C; `dynamics.rs` holds them 
 - **The kernel**: per bin the bands' static magnitude at their targets (the gain held to ±30 dB,
   under the gain scale's target; a dynamic band at its drawn gain; in mono only Stereo bands), one
   kernel, one per channel, or the stages' real 2×2 matrix; inverse-transformed, centred on N/2,
-  the periodic Hann window, its tap pairs mirrored — symmetric to the bit.
+  the periodic Hann window, its tap pairs mirrored — symmetric to the bit. **The convolution is
+  `f64`**: the gain range reaches +1,440 dB, past `f32`; the output's bound clips after.
 - **Changes**: a moved setting makes a request at the next control interval, asked for at the next
   update boundary (every 4 partitions); the design thread designs it into a free bank; the audio
   thread takes the newest finished one at a boundary and crossfades over one interval, both banks
   on the one frequency-domain delay line. **It never waits in realtime**; offline
   (`Engine::set_offline`) it waits at the boundary after asking, so bounces repeat.
+- **A reset** asks at once for the settings' kernel if the one heard is not theirs
+  (`Linear::restart`): offline it waits, so the first sample hears it; in realtime it is taken the
+  first partition it is ready, unfaded while only silence has been convolved since — then exactly
+  as if primed — else faded in at the next boundary.
 - An empty EQ is the delay line, bit-exact; solo plays on the input delayed by the latency; the
   tail is exact silence from `Sizes::tail()` after the input's last nonzero sample.
 

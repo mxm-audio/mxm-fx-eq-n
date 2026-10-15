@@ -5,7 +5,12 @@
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its
 other findings, all accepted and applied here. **Signed by the owner** (2026-10-15, decisions
-35–37 as proposed); F6.0 done. F6.1–F6.3 built (2026-10-15); their code review is next. **Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
+35–37 as proposed); F6.0 done. **F6.1–F6.3 built and reviewed** (2026-10-15; the agent-loop's
+code review READY in round 4: the convolution made `f64` for the whole gain range, the rate's
+sizes capped, a failed design thread no restart loop, the hovers' delay the one in force, a reset
+asking for its kernel at once); F6.4, Bitwig, is the owner's.
+
+**Revision 28 — F5, EQ match to a reference, designed for the owner's approval** (2026-10-15;
 §7.6, decisions 31–34). **Its design approved by the agent-loop in round 3** (2026-10-15): rounds
 1–2 filed five blockers — the level taken out after the Amount, the EQ counted through the source's
 covariance, shelves reachable at the eased ends, the tests aligned with the stopping rule and the
@@ -1457,7 +1462,10 @@ design (`write_the_factory_presets`), Init and every preset Zero latency and Med
 `realfft` beneath): the owner's decision 6 rules one shared FFT, never another in a crate. The
 convolver and the kernel design live in `crates/mxm-fx-eq-n-dsp/src/linear.rs`, allocated when
 activation builds the engine for Linear phase (`Engine::with_phase`), at its resolution, never on
-the audio thread; `Engine::new` stays Zero latency.
+the audio thread; `Engine::new` stays Zero latency. The convolution runs in `f64`, as the cascade
+does: the gain range reaches +1,440 dB, past `f32` (code review, 2026-10-15). A reset asks for
+the settings' kernel at once: offline it waits; in realtime, never waiting, it is taken the first
+partition it is ready, unfaded while only silence has been convolved since, else faded in.
 
 **In the editor**: **Phase** and **Resolution** selectors in the Output card, one row each (side
 by side they do not fit the column), Resolution enabled only in Linear phase; Phase's hover gives the latency in milliseconds. **The

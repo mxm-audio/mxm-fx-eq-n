@@ -143,13 +143,11 @@ transaction.
 - **Activation below the DSP's `MIN_SAMPLE_RATE`**, or at a rate that is not finite, is refused.
 - **Activation and `reset` seed the engine from the parameters at once** (`Engine::reset`), so a
   saved EQ is heard from its first sample rather than fading in from dry.
-- **One latency per activation** (plan §7.7; the kit's *Latency is fixed*): activation builds the
-  engine in the phase the parameters hold (`Engine::with_phase`, Linear phase's kernel primed
-  before the first sample) and reports its latency (`ActivateContext::set_latency_samples`); a
-  phase asked for while active is reported from `process`, which nice-plug turns into the host's
-  restart, the phase in force playing on until then (MXM Player's headless path never restarts,
-  so there it waits for the next activation). `Telemetry::phase` publishes the phase in force;
-  `deactivate` drops Linear phase's engine and its design thread.
+- **One latency per activation** (plan §7.7; the kit's *Latency is fixed*; NOTES, *Phase, the
+  latency and its restart*): activation builds and primes the phase the parameters hold and
+  reports its latency; one asked while active is reported from `process` and heard after the
+  host's restart. A reset in Linear phase hears its kernel once designed, in realtime never
+  waiting (the DSP's `AGENTS.md`).
 
 ## The editor (plan §5) — [NOTES.md § The editor in full](NOTES.md#the-editor-in-full)
 

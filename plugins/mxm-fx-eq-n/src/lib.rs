@@ -103,7 +103,8 @@ impl MxmFxEqN {
     }
 
     /// The engine as the parameters have it, at once: an activation or a reset is not an edit, so
-    /// a saved EQ is heard from its first sample rather than fading in from dry.
+    /// a saved EQ is heard from its first sample rather than fading in from dry. A reset in Linear
+    /// phase in realtime hears its kernel once designed, never waiting (`Engine::reset`).
     fn seed(&mut self) {
         self.sync();
         self.engine.reset();
@@ -126,7 +127,9 @@ impl MxmFxEqN {
         self.sync();
         self.engine.prime();
         self.engine.reset();
-        self.asked_phase = self.engine.phase();
+        // What was asked, not what was built: if Linear phase could not start its design thread
+        // the engine is Zero latency, and asking again would only restart into the same.
+        self.asked_phase = phase;
         self.telemetry.publish_phase(self.engine.phase());
         true
     }
