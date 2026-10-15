@@ -30,6 +30,10 @@ impl EqApp {
             self.spectrum = super::spectrum::Spectrum::new(rate);
             self.unfreeze();
         }
+        // A new rate starts a listen again, as it does the display's windows (plan §7.5).
+        if rate != self.finder.sample_rate() {
+            self.finder = super::finder::Finder::new(rate);
+        }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
         if settings.analyser && !self.analyser_on {
             self.spectrum.restart();
@@ -41,6 +45,9 @@ impl EqApp {
             while let Ok(block) = consumer.pop() {
                 if settings.analyser {
                     self.spectrum.ingest(&block);
+                    if self.find {
+                        self.finder.ingest(&block);
+                    }
                 }
             }
         }
@@ -80,8 +87,15 @@ impl EqApp {
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
         self.telemetry.set_side_chain_view(settings.side_chain);
-        self.drain_analyser(&settings, ctx.input(|input| input.time));
+        // Find needs the analyser: the analyser off ends a listen, and back on leaves it off
+        // (plan §7.5).
+        if !settings.analyser && self.find {
+            self.end_find();
+        }
+        let now = ctx.input(|input| input.time);
+        self.drain_analyser(&settings, now);
         self.end_stale_freeze(&settings);
+        self.update_find(now, &settings);
         self.pointer_solo = None;
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.
@@ -221,11 +235,11 @@ impl EqApp {
 
     fn surface(&mut self, ui: &mut Ui, tokens: &Tokens) {
         let available = ui.available_size();
-        let floor = super::GRAPH_FLOOR + SPACE_3 + METER_RAIL + SPACE_3 + super::COLUMN_WIDTH;
+        let floor = super::GRAPH_FLOOR + SPACE_3 + METER_RAIL + SPACE_3 + super::COLUMNS_WIDTH;
         let width = available.x.max(floor);
         if width > available.x + 0.5 {
-            // Narrower than graph, meter and column: the whole surface scrolls sideways, the column
-            // still beside the graph (plan §5.1).
+            // Narrower than graph, meter and columns: the whole surface scrolls sideways, the
+            // columns still beside the graph (plan §5.1, §7.5).
             let height = (available.y - ui.spacing().scroll.bar_width - SPACE_3).max(200.0);
             egui::ScrollArea::horizontal()
                 .id_salt("mxm-fx-eq-n-surface")
@@ -239,7 +253,7 @@ impl EqApp {
     fn surface_row(&mut self, ui: &mut Ui, tokens: &Tokens, width: f32, height: f32) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let graph_width = width - super::COLUMN_WIDTH - METER_RAIL - 2.0 * SPACE_3;
+            let graph_width = width - super::COLUMNS_WIDTH - METER_RAIL - 2.0 * SPACE_3;
             navigation::bar_card(ui, super::GRAPH_CARD, |ui| {
                 navigation::at(ui, super::GRAPH_KEY, |ui| {
                     self.graph(ui, tokens, vec2(graph_width, height));
@@ -250,17 +264,41 @@ impl EqApp {
             ui.add_space(SPACE_3);
             self.meter_rail(ui, tokens, height);
             ui.add_space(SPACE_3);
+            // Two columns of cards (decision 30): the Band card alone, then Output, Analyser and
+            // Resonances. They scroll vertically together.
             ui.allocate_ui_with_layout(
-                vec2(super::COLUMN_WIDTH, height),
+                vec2(super::COLUMNS_WIDTH, height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    ui.set_width(super::COLUMN_WIDTH);
+                    ui.set_width(super::COLUMNS_WIDTH);
                     egui::ScrollArea::vertical()
                         .id_salt("mxm-fx-eq-n-column")
                         .auto_shrink([false, false])
                         .max_height(height)
                         .show(ui, |ui| {
-                            self.column(ui, tokens);
+                            let column =
+                                (super::COLUMNS_WIDTH - ui.spacing().scroll.bar_width - SPACE_3)
+                                    / 2.0;
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                for first in [true, false] {
+                                    if !first {
+                                        ui.add_space(SPACE_3);
+                                    }
+                                    ui.allocate_ui_with_layout(
+                                        vec2(column, 0.0),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_width(column);
+                                            if first {
+                                                self.first_column(ui, tokens);
+                                            } else {
+                                                self.second_column(ui, tokens);
+                                            }
+                                        },
+                                    );
+                                }
+                            });
                             self.column_extent = (ui.min_rect().height(), height);
                             // A scroll area takes only the requests made inside it, both axes.
                             if let Some(rect) = self.scroll_to {

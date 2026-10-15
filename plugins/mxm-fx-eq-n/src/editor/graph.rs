@@ -89,7 +89,77 @@ pub struct Drag {
     pub pos: Pos2,
     /// A grab's drag (plan §7.4): the bell stays at its peak and only its gain follows.
     pub gain_only: bool,
+    /// A proposal's pair (plan §7.5): the other band, and how far its gain stands from this one's,
+    /// so the two move together.
+    pub partner: Option<(usize, f32)>,
 }
+
+/// Where a proposal's triangle points (plan §7.5): at the spectrum the finder listens to, the
+/// pre-EQ line where it is drawn (else the post-EQ one), held inside the graph; on the curve when
+/// neither is drawn.
+pub fn proposal_marker(axes: &Axes, curves: &Curves, spectrum: Option<&[f32]>, freq: f32) -> Pos2 {
+    let x = axes.x(freq);
+    let level = spectrum
+        .filter(|line| line.len() == curves.xs.len() && line.len() > 1)
+        .and_then(|line| {
+            let at = curves
+                .xs
+                .partition_point(|&other| other < x)
+                .clamp(1, curves.xs.len() - 1);
+            let (x0, x1) = (curves.xs[at - 1], curves.xs[at]);
+            let t = ((x - x0) / (x1 - x0).max(f32::MIN_POSITIVE)).clamp(0.0, 1.0);
+            let db = line[at - 1] + (line[at] - line[at - 1]) * t;
+            (db > FLOOR_DB).then_some(db)
+        });
+    let y = match level {
+        Some(db) => axes.spectrum_y(db),
+        None => axes.y(curves.composite_at(freq)),
+    };
+    let margin = TRIANGLE_HEIGHT + 2.0;
+    pos2(
+        x,
+        y.clamp(axes.rect.top() + margin, axes.rect.bottom() - 2.0),
+    )
+}
+
+/// A proposal's triangle, pointing down at `at`.
+pub fn proposal_triangle(at: Pos2) -> [Pos2; 3] {
+    [
+        at + vec2(-TRIANGLE_HEIGHT * 0.6, -TRIANGLE_HEIGHT),
+        at + vec2(TRIANGLE_HEIGHT * 0.6, -TRIANGLE_HEIGHT),
+        at,
+    ]
+}
+
+const TRIANGLE_HEIGHT: f32 = 10.0;
+
+/// A proposal's label: its frequency and the depth Apply all gives it, a pair's two.
+pub fn proposal_text(proposal: &super::finder::Proposal) -> String {
+    let freq = format_freq(proposal.freq);
+    match proposal.bands.as_slice() {
+        [one] => format!("{freq} {:+.1} dB", one.gain_db),
+        bands => {
+            let depths: Vec<String> = bands
+                .iter()
+                .map(|band| {
+                    let letter = match band.domain {
+                        super::finder::Domain::Left => "L",
+                        super::finder::Domain::Right => "R",
+                        super::finder::Domain::Mid => "M",
+                        super::finder::Domain::Side => "S",
+                        super::finder::Domain::Average => "",
+                    };
+                    format!("{letter} {:+.1}", band.gain_db)
+                })
+                .collect();
+            format!("{freq} {} dB", depths.join(" "))
+        }
+    }
+}
+
+/// The hover over a proposal (plan §7.5).
+const PROPOSAL_DESCRIPTION: &str =
+    "Click to make this cut as a band, or drag up or down to set its depth as you make it.";
 
 /// Where a frozen peak's marker is drawn and found: at its level, held inside the graph, so a peak
 /// louder than the top of the drawn range (a loud tone under Tilt) is still seen and grabbed.
@@ -489,6 +559,80 @@ impl EqApp {
         Some((band.gain_db + range).clamp(-limit, limit) * self.gain_scale_now())
     }
 
+    /// The spectrum line a proposal's triangle points at: the pre-EQ line where it is drawn, else
+    /// the post-EQ one.
+    pub(crate) fn proposal_spectrum(&self) -> Option<&[f32]> {
+        let settings = self.params.view.get();
+        if !settings.analyser {
+            return None;
+        }
+        let [pre, post, _] = self.shown_spectra();
+        match settings.show {
+            Show::Pre | Show::Both => Some(pre),
+            Show::Post => Some(post),
+        }
+    }
+
+    /// The proposal at `at` (plan §7.5): its drawn label, or the nearest triangle within the hit
+    /// radius.
+    pub(crate) fn proposal_at(&self, axes: &Axes, curves: &Curves, at: Pos2) -> Option<usize> {
+        if !self.find {
+            return None;
+        }
+        let labelled = self
+            .proposal_labels
+            .iter()
+            .find(|(index, rect)| rect.contains(at) && *index < self.proposals.len())
+            .map(|&(index, _)| index);
+        if labelled.is_some() {
+            return labelled;
+        }
+        let spectrum = self.proposal_spectrum();
+        self.proposals
+            .iter()
+            .enumerate()
+            .map(|(index, proposal)| {
+                let tip = proposal_marker(axes, curves, spectrum, proposal.freq);
+                let centre = tip - vec2(0.0, TRIANGLE_HEIGHT / 2.0);
+                (index, centre.distance(at))
+            })
+            .filter(|&(_, distance)| distance <= HIT_RADIUS)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(index, _)| index)
+    }
+
+    /// The lines the proposals would make (plan §7.5), over `curves`' frequencies: the one curve,
+    /// or with placed bands among the EQ and the proposals each channel's.
+    fn proposal_lines(&self, curves: &Curves) -> Vec<Vec<f32>> {
+        use super::finder::{Domain, domain_db, stages};
+        let heard = self.heard_eq();
+        let rate = heard.sample_rate;
+        let mut bands: Vec<(Cascade, Placement)> = heard.bands;
+        for proposal in &self.proposals {
+            for band in &proposal.bands {
+                bands.push((band.cascade(rate), band.domain.placement()));
+            }
+        }
+        let channels = bands
+            .iter()
+            .any(|(_, placement)| matches!(placement, Placement::Left | Placement::Right));
+        let mid_side = bands.iter().any(|(_, placement)| placement.is_mid_side());
+        let domains: Vec<Domain> = match (channels, mid_side) {
+            (false, false) => vec![Domain::Left],
+            (true, false) => vec![Domain::Left, Domain::Right],
+            (false, true) => vec![Domain::Mid, Domain::Side],
+            (true, true) => vec![Domain::Left, Domain::Right, Domain::Mid, Domain::Side],
+        };
+        let mut lines = vec![Vec::with_capacity(curves.freqs.len()); domains.len()];
+        for &freq in &curves.freqs {
+            let diagonal = stages(bands.iter().map(|(c, p)| (c, *p)), freq, rate);
+            for (line, &domain) in lines.iter_mut().zip(&domains) {
+                line.push(domain_db(domain, diagonal));
+            }
+        }
+        lines
+    }
+
     /// The frozen peak at `at`: its drawn label, or the nearest marker within the hit radius.
     pub(crate) fn peak_at(&self, axes: &Axes, at: Pos2) -> Option<grab::Peak> {
         let frozen = self.frozen.as_ref()?;
@@ -599,6 +743,15 @@ impl EqApp {
         let modifiers = ui.input(|input| input.modifiers);
         let pointer = response.interact_pointer_pos();
 
+        // A proposal under the pointer says what a click and a drag do (plan §7.5).
+        if let Some(at) = response.hover_pos()
+            && hit(at).is_none()
+            && self.proposal_at(axes, curves, at).is_some()
+        {
+            response
+                .clone()
+                .on_hover_text_at_pointer(PROPOSAL_DESCRIPTION);
+        }
         // A frozen peak under the pointer says what a drag from it does, or why it cannot.
         if let Some(at) = response.hover_pos()
             && hit(at).is_none()
@@ -654,9 +807,12 @@ impl EqApp {
         if response.clicked()
             && let Some(at) = self.press_at.or(pointer)
         {
-            // A click on a peak makes nothing (plan §7.4), even where its marker lies on the curve.
+            // A click on a proposal applies it (plan §7.5); a click on a peak makes nothing (plan
+            // §7.4), even where its marker lies on the curve.
             if let Some(slot) = hit(at) {
                 self.select(slot);
+            } else if let Some(index) = self.proposal_at(axes, curves, at) {
+                self.apply_proposals(&[index], false);
             } else if curves.distance(axes, at) <= LINE_HIT && self.peak_at(axes, at).is_none() {
                 self.insert_at(axes.freq(at.x));
             } else {
@@ -675,11 +831,22 @@ impl EqApp {
                 // From a frozen peak, the drag grabs it (plan §7.4); from the line, the new band
                 // is made inside the drag's gesture.
                 let point = hit(origin);
-                let peak = point
-                    .is_none()
+                // From a proposal, the drag applies it inside its gesture, its gain following
+                // (plan §7.5); a pair's two bands move together.
+                let applied: Vec<usize> = match point {
+                    None => self
+                        .proposal_at(axes, curves, origin)
+                        .map(|index| self.apply_proposals(&[index], true))
+                        .unwrap_or_default(),
+                    Some(_) => Vec::new(),
+                };
+                let peak = (point.is_none() && applied.is_empty())
                     .then(|| self.peak_at(axes, origin))
                     .flatten();
-                let grabbed = peak.and_then(|peak| self.insert_peak(peak, true));
+                let grabbed = applied
+                    .first()
+                    .copied()
+                    .or_else(|| peak.and_then(|peak| self.insert_peak(peak, true)));
                 let slot = point.or(grabbed).or_else(|| {
                     (curves.distance(axes, origin) <= LINE_HIT)
                         .then(|| self.insert_opened(axes.freq(origin.x)))
@@ -688,10 +855,14 @@ impl EqApp {
                 if let Some(slot) = slot {
                     self.select(slot);
                     let band = self.band_now(slot);
+                    let partner = applied
+                        .get(1)
+                        .map(|&other| (other, self.band_now(other).gain_db - band.gain_db));
                     self.drag = Some(Drag {
                         slot,
                         pos: self.point_position(axes, &band),
                         gain_only: grabbed.is_some(),
+                        partner,
                     });
                 }
             }
@@ -702,7 +873,8 @@ impl EqApp {
         {
             let fine = if modifiers.shift { 0.1 } else { 1.0 };
             drag.pos += response.drag_delta() * fine;
-            let (slot, pos, gain_only) = (drag.slot, drag.pos, drag.gain_only);
+            let (slot, pos, gain_only, partner) =
+                (drag.slot, drag.pos, drag.gain_only, drag.partner);
             if !gain_only {
                 let freq = axes.freq(pos.x).clamp(FREQ_MIN as f32, self.high());
                 let freq_index = band_index(slot, Field::Freq);
@@ -719,6 +891,11 @@ impl EqApp {
                 let gain = (axes.db(pos.y) / scale).clamp(-range, range);
                 let gain_index = band_index(slot, Field::Gain);
                 self.send(gain_index, self.normalised(gain_index, gain));
+                if let Some((other, offset)) = partner {
+                    let other_index = band_index(other, Field::Gain);
+                    let other_gain = (gain + offset).clamp(-range, range);
+                    self.send(other_index, self.normalised(other_index, other_gain));
+                }
             }
         }
         if response.drag_stopped() && self.drag.take().is_some() {
@@ -893,7 +1070,7 @@ impl EqApp {
             // a reset under it ends it. On the same changes the hold restarts and the display
             // starts from its new readings, so neither keeps levels of before.
             let basis = grab::Basis {
-                view: settings,
+                view: settings.display(),
                 generation: self.spectrum.generation(),
             };
             if self
@@ -1161,6 +1338,83 @@ impl EqApp {
                     );
                 }
             }
+        }
+
+        // Find's proposals (plan §7.5): the curve they would make, dashed over the EQ's, and a
+        // downward triangle at each candidate with its frequency and depth, told apart by shape
+        // and text; a label that would overlap a stronger one's is not drawn, the keyboard's
+        // always is.
+        if self.find && !self.proposals.is_empty() {
+            let current = self
+                .proposal_curve
+                .as_ref()
+                .is_some_and(|(version, freqs, _)| {
+                    *version == self.proposals_version && *freqs == curves.freqs
+                });
+            if !current {
+                let lines = self.proposal_lines(curves);
+                self.proposal_curve = Some((self.proposals_version, curves.freqs.clone(), lines));
+            }
+            if let Some((_, _, lines)) = &self.proposal_curve {
+                for dbs in lines {
+                    painter.extend(Painted::dashed_line(
+                        &line(dbs),
+                        Stroke::new(1.5, tokens.text_primary.gamma_multiply(0.8)),
+                        4.0,
+                        3.0,
+                    ));
+                }
+            }
+            let font = egui::FontId::proportional(11.0);
+            let spectrum = self.proposal_spectrum();
+            let marks: Vec<(Pos2, String, Rect)> = self
+                .proposals
+                .iter()
+                .map(|proposal| {
+                    let tip = proposal_marker(axes, curves, spectrum, proposal.freq);
+                    let text = proposal_text(proposal);
+                    let size = painter
+                        .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
+                        .size();
+                    let top = tip - vec2(0.0, TRIANGLE_HEIGHT);
+                    (tip, text, peak_label(axes, top, size))
+                })
+                .collect();
+            let rects: Vec<Rect> = marks.iter().map(|(_, _, rect)| *rect).collect();
+            let focused = self.focus_proposal.filter(|_| self.selected.is_none());
+            let drawn = grab::unobstructed(&rects, focused);
+            self.proposal_labels = drawn
+                .iter()
+                .zip(&rects)
+                .enumerate()
+                .filter(|(_, (drawn, _))| **drawn)
+                .map(|(index, (_, rect))| (index, *rect))
+                .collect();
+            for (index, ((tip, text, rect), drawn)) in marks.into_iter().zip(drawn).enumerate() {
+                painter.add(Painted::convex_polygon(
+                    proposal_triangle(tip).to_vec(),
+                    tokens.surface_1,
+                    Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
+                ));
+                if focused == Some(index) {
+                    painter.circle_stroke(
+                        tip - vec2(0.0, TRIANGLE_HEIGHT / 2.0),
+                        TRIANGLE_HEIGHT,
+                        Stroke::new(EMPHASIS_STROKE, tokens.focus),
+                    );
+                }
+                if drawn {
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        font.clone(),
+                        tokens.text_primary,
+                    );
+                }
+            }
+        } else {
+            self.proposal_labels.clear();
         }
 
         // The edges, once MICRO + ← → took one for MOVE.

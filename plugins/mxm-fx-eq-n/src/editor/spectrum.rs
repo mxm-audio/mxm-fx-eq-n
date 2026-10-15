@@ -36,10 +36,10 @@ const STALE_SECONDS: f64 = 0.3;
 
 /// The decimated rate the long window aims at.
 const LONG_RATE: f32 = 3_000.0;
-/// The anti-alias low pass, as a share of the decimated rate.
-const LONG_CUTOFF: f64 = 0.4;
+/// The anti-alias low pass, as a share of the decimated rate; the finder's too.
+pub(crate) const LONG_CUTOFF: f64 = 0.4;
 /// An eighth-order Butterworth as four sections: their Q values.
-const BUTTERWORTH_8: [f64; 4] = [0.509_795_6, 0.601_344_9, 0.899_976_2, 2.562_915_4];
+pub(crate) const BUTTERWORTH_8: [f64; 4] = [0.509_795_6, 0.601_344_9, 0.899_976_2, 2.562_915_4];
 
 /// Pre left, pre right, post left, post right, key left, key right.
 const STREAMS: usize = 6;
@@ -186,9 +186,10 @@ impl Window {
     }
 }
 
-/// A biquad low pass in `f64`: the decimator's anti-alias sections.
+/// A biquad low pass in `f64`: the decimators' anti-alias sections, the display's and the
+/// finder's.
 #[derive(Clone, Copy, Default)]
-struct LowPass {
+pub(crate) struct LowPass {
     b0: f64,
     b1: f64,
     b2: f64,
@@ -199,7 +200,7 @@ struct LowPass {
 }
 
 impl LowPass {
-    fn new(cutoff: f64, rate: f64, q: f64) -> Self {
+    pub(crate) fn new(cutoff: f64, rate: f64, q: f64) -> Self {
         let w = std::f64::consts::TAU * cutoff / rate;
         let alpha = w.sin() / (2.0 * q);
         let cos = w.cos();
@@ -215,7 +216,12 @@ impl LowPass {
         }
     }
 
-    fn tick(&mut self, x: f64) -> f64 {
+    pub(crate) fn clear(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
+    }
+
+    pub(crate) fn tick(&mut self, x: f64) -> f64 {
         // A non-finite sample is silence here, and a state gone non-finite starts again: one bad
         // sample costs the long window a window, not the low bands for good.
         let x = if x.is_finite() { x } else { 0.0 };
@@ -269,8 +275,7 @@ impl Long {
         self.phase = 0;
         for stream in &mut self.filters {
             for section in stream {
-                section.z1 = 0.0;
-                section.z2 = 0.0;
+                section.clear();
             }
         }
     }

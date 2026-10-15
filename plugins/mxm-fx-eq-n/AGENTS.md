@@ -10,9 +10,9 @@ over [`crates/mxm-fx-eq-n-dsp`](../../crates/mxm-fx-eq-n-dsp/AGENTS.md). The pro
 [`docs/briefs/mxm-fx-eq-n.md`](../../docs/briefs/mxm-fx-eq-n.md). **Built through E4**: the host
 surface, the preset seam, solo's command path, the analyser and the meter (E2), the editor (E3),
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
-and two presets (F1.1–F1.4), their side chain (plan §7.2), and F2's per-band stereo placement
-(plan §7.3). DAW and listening checks are E5's,
-F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand bands.
+and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's per-band stereo placement
+(plan §7.3), F3's freeze and grab (plan §7.4) and F4's resonance finder (plan §7.5). DAW and
+listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's and F4.3's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -26,7 +26,8 @@ F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand 
 - `src/view.rs`: the analyser's settings, persisted view state.
 - `src/editor/`: the editor. `mod.rs` its state, writes and keyboard commands; `panel.rs` the frame;
   `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs` the
-  analyser's editor half; `tests.rs` its tests.
+  analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
+  finder and its worker, its tests in `finder/tests.rs`; `tests.rs` the editor's tests.
 - `src/tests.rs`: the shell's tests.
 - `host-tests/`: the slow tier, the release bundle through MXM Player.
 
@@ -141,9 +142,11 @@ transaction.
 ## The editor (plan §5) — [NOTES.md § The editor in full](NOTES.md#the-editor-in-full)
 
 - **Layout**, the named exception to paged cards: the graph takes every spare point, the Out meter
-  beside it, a fixed-width column of Band, Output and Analyser cards to its right, never under it;
-  it opens at `REFERENCE`, narrows to `MINIMUM`, and every card is a tree passing the tree checks
-  in every Band state, the Band card reserved to its tallest shape (the opening-size tests).
+  beside it, then **two fixed-width columns** of cards to its right, never under it (decision 30):
+  the Band card alone, then Output, Analyser and Resonances, scrolling together; it opens at
+  `REFERENCE`, hugged to the taller column, narrows to `MINIMUM`, and every card is a tree passing
+  the tree checks in every Band state, the Band card reserved to its tallest shape (the
+  opening-size tests).
 - **The graph**: clicking the line adds a 0 dB bell in the lowest Off slot, every field written; a
   point is drawn at its own gain; a drag is one gesture, BACK puts it back; the wheel turns Q only
   over a point with focus or Alt; identity never rests on hue; every point has a name and value.
@@ -177,6 +180,16 @@ transaction.
   chain** view (plan §7.4), offered only on a layout with the port (`Telemetry::side_chain_port`),
   draws the key's spectrum dashed and lettered "SC"; the audio thread copies the key only then.
   **Freeze** holds two seconds' highest levels and marks peaks a drag grabs (NOTES, *Freeze*).
+- **Find** (plan §7.5, decisions 27–30; NOTES, *Find*): the Resonances card's toggle, offered only
+  with the analyser on; Find and Freeze each end the other, the analyser off or the editor closed
+  ends it, and it is never saved. It listens to the pre-EQ input (`finder.rs`) and proposes static
+  cut bells, never a continuous curve: dashed curve and labelled downward triangles on the graph;
+  a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
+  all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
+  **Amount** (whole percent, 20 % by default) is view state, saved, a change marking the project
+  dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
+  the GUI thread pays only for listening and a copy of the evidence, inside
+  `spectrum::BUDGET_MS` (`finder_cost`).
 
 ## The host tests (`host-tests/`)
 

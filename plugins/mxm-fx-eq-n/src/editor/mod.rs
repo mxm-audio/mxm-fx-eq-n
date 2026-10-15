@@ -13,8 +13,11 @@
 //!   or the patch is replaced; a Ctrl/Cmd press on a point solos that point while held. It crosses
 //!   `crate::audition`, so the DSP reads no editor state; the shell ends it on reset, deactivation
 //!   and restore, and the editor ends it on close.
+//! - **Find** (plan §7.5) listens to the input for resonances while it is on, and its proposals are
+//!   applied as ordinary bands, each one undo step ([`EqApp::apply_proposals`]).
 
 pub mod column;
+pub mod finder;
 pub mod grab;
 pub mod graph;
 pub mod history;
@@ -40,13 +43,15 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_204, 1_048);
+pub const REFERENCE: (u32, u32) = (1_532, 692);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
 pub const MINIMUM: (u32, u32) = (420, 480);
-/// The column's fixed width.
+/// Each column's fixed width.
 pub const COLUMN_WIDTH: f32 = 320.0;
+/// The two columns of cards beside each other (decision 30), and the gap between them.
+pub const COLUMNS_WIDTH: f32 = 2.0 * COLUMN_WIDTH + mxm_ui::space::SPACE_3;
 /// Below this the graph stops shrinking and the surface scrolls sideways instead (plan §5.1).
 pub const GRAPH_FLOOR: f32 = 320.0;
 /// The Out meter's rail: two channels and the gap between them.
@@ -58,7 +63,14 @@ pub const GRAPH_CARD: u64 = 1;
 pub const BAND_CARD: u64 = 2;
 pub const OUTPUT_CARD: u64 = 3;
 pub const ANALYSER_CARD: u64 = 4;
-pub const CARDS: [u64; 4] = [GRAPH_CARD, BAND_CARD, OUTPUT_CARD, ANALYSER_CARD];
+pub const RESONANCES_CARD: u64 = 5;
+pub const CARDS: [u64; 5] = [
+    GRAPH_CARD,
+    BAND_CARD,
+    OUTPUT_CARD,
+    ANALYSER_CARD,
+    RESONANCES_CARD,
+];
 /// The graph's key in the cursor's registry.
 pub const GRAPH_KEY: &str = "graph";
 /// The Solo button's key: OPEN on it presses it.
@@ -95,6 +107,13 @@ pub enum Field {
 /// A host parameter's place in [`EqParams::pointers`] and the history's indices.
 pub fn band_index(slot: usize, field: Field) -> usize {
     slot * BAND_FIELDS.len() + field as usize
+}
+
+/// Why Find proposes nothing (plan §7.5), each with its hover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FindRefusal {
+    Full,
+    NoGain,
 }
 
 /// Why Split cannot act (plan §7.3), each with its hover.
@@ -224,6 +243,32 @@ pub struct EqApp {
     /// The peak labels drawn last frame, by their place in `frozen.peaks`: a label is part of its
     /// peak for the pointer (plan §7.4).
     pub(crate) peak_labels: Vec<(usize, egui::Rect)>,
+    /// Find (plan §7.5): on or off, the editor's moment, never saved; what it has heard; the
+    /// candidates found last and when; the proposals shown, what they were made on and when.
+    pub(crate) find: bool,
+    pub(crate) finder: finder::Finder,
+    candidates: Vec<finder::Candidate>,
+    found_at: Option<f64>,
+    /// The finder's revision the candidates were found at.
+    found_revision: u64,
+    pub(crate) proposals: Vec<finder::Proposal>,
+    proposed_on: Vec<u32>,
+    proposed_at: f64,
+    /// An apply happened: the next frame proposes again at once.
+    proposals_stale: bool,
+    /// The thread searches run on, while Find is on; and whether they run here instead, as a test
+    /// has them, so what they find is there the same frame.
+    worker: Option<finder::Worker>,
+    pub(crate) inline_search: bool,
+    /// Counts each new set of proposals, so the graph's dashed curve is computed again only then.
+    pub(crate) proposals_version: u64,
+    /// The keyboard's proposal while Find has some and no band is selected, and the labels drawn
+    /// last frame, by their place in `proposals`.
+    pub(crate) focus_proposal: Option<usize>,
+    pub(crate) proposal_labels: Vec<(usize, egui::Rect)>,
+    /// The dashed curve the proposals would make: the proposals' version and the frequencies it
+    /// was computed at, and its lines.
+    pub(crate) proposal_curve: Option<(u64, Vec<f32>, Vec<Vec<f32>>)>,
     /// Where the primary button last went down on the graph: a click is judged there, not where it
     /// was let go (egui forgets the press's origin in the release's pass).
     pub(crate) press_at: Option<egui::Pos2>,
@@ -260,6 +305,7 @@ impl EqApp {
         let presets = mxm_preset::PresetUi::new(handles.params.as_ref());
         let pointers = handles.params.pointers();
         let spectrum = spectrum::Spectrum::new(handles.telemetry.sample_rate());
+        let finder = finder::Finder::new(handles.telemetry.sample_rate());
         Self {
             params: handles.params,
             telemetry: handles.telemetry,
@@ -285,6 +331,21 @@ impl EqApp {
             freeze_asked: false,
             focus_peak: None,
             peak_labels: Vec::new(),
+            find: false,
+            finder,
+            candidates: Vec::new(),
+            found_at: None,
+            found_revision: u64::MAX,
+            proposals: Vec::new(),
+            proposed_on: Vec::new(),
+            proposed_at: f64::NEG_INFINITY,
+            proposals_stale: false,
+            worker: None,
+            inline_search: false,
+            proposals_version: 0,
+            focus_proposal: None,
+            proposal_labels: Vec::new(),
+            proposal_curve: None,
             press_at: None,
             pointer_solo: None,
             latched: None,
@@ -339,8 +400,10 @@ impl EqApp {
         self.copy = None;
         self.end_solo();
         self.drag = None;
-        // A freeze is the editor's moment: closing ends it (plan §7.4).
+        // A freeze is the editor's moment, and so is a listen: closing ends them (plan §7.4,
+        // §7.5).
         self.unfreeze();
+        self.end_find();
         self.telemetry.connect(false);
         self.gui = None;
         self.host = None;
@@ -579,7 +642,12 @@ impl EqApp {
 
     /// The lowest Off slot, where a new band goes (plan §2.1).
     fn free_slot(&self) -> Option<usize> {
-        (0..SLOTS).find(|&slot| {
+        self.free_slots().next()
+    }
+
+    /// The Off slots, lowest first.
+    fn free_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..SLOTS).filter(|&slot| {
             !self.band_in_use(slot) && !self.open.holds(band_index(slot, Field::Type))
         })
     }
@@ -754,7 +822,7 @@ impl EqApp {
     /// no input grabs a peak the frame's audio has already made stale; painting checks again.
     pub(crate) fn end_stale_freeze(&mut self, settings: &crate::view::ViewSettings) {
         let basis = grab::Basis {
-            view: *settings,
+            view: settings.display(),
             generation: self.spectrum.generation(),
         };
         let stale = !settings.analyser
@@ -777,6 +845,238 @@ impl EqApp {
                 &self.spectrum.key_db,
             ],
         }
+    }
+
+    /// Freeze turned on (plan §7.4): made where the spectrum is drawn next. It ends a listen, as
+    /// Find ends a freeze (plan §7.5).
+    pub(crate) fn ask_freeze(&mut self) {
+        self.end_find();
+        self.freeze_asked = true;
+    }
+
+    // ---- Find (plan §7.5) -----------------------------------------------------------------
+
+    /// Turns Find on, ending a freeze (the two exclude each other), with a listen from nothing;
+    /// or off.
+    pub(crate) fn set_find(&mut self, on: bool) {
+        if on {
+            if !self.find {
+                self.unfreeze();
+                self.finder.restart();
+                self.find = true;
+            }
+        } else {
+            self.end_find();
+        }
+    }
+
+    /// Ends a listen: what it heard and proposed goes with it.
+    pub(crate) fn end_find(&mut self) {
+        self.find = false;
+        self.finder.restart();
+        self.candidates.clear();
+        self.found_at = None;
+        self.found_revision = u64::MAX;
+        self.proposals.clear();
+        self.proposed_on.clear();
+        self.proposals_stale = false;
+        self.proposals_version += 1;
+        self.focus_proposal = None;
+        self.proposal_labels.clear();
+        // Its thread ends with it, once any search running has.
+        self.worker = None;
+    }
+
+    /// The EQ as heard (plan §7.5): every band in the sound, at its drawn gain under the gain
+    /// scale, with its placement; a bypassed band and a placed band in mono are not in it.
+    pub(crate) fn heard_eq(&self) -> finder::HeardEq {
+        let sample_rate = self.sample_rate();
+        let scale = self.gain_scale_now();
+        let bands = (0..SLOTS)
+            .filter_map(|slot| {
+                let band = self.band_now(slot);
+                let shape = band
+                    .shape
+                    .filter(|_| !band.bypass && self.placement_heard(slot))?;
+                let cascade = mxm_fx_eq_n_dsp::design(
+                    mxm_fx_eq_n_dsp::Design {
+                        shape,
+                        slope: band.slope,
+                        freq: f64::from(band.freq),
+                        gain_db: f64::from(band.gain_db * scale),
+                        q: f64::from(band.q),
+                    },
+                    sample_rate,
+                );
+                Some((cascade, self.placement_now(slot)))
+            })
+            .collect();
+        finder::HeardEq { bands, sample_rate }
+    }
+
+    /// Why Find proposes nothing although it listens: every slot in use, or the gain scale at 0 %,
+    /// where a bell is flat.
+    pub(crate) fn find_refusal(&self) -> Option<FindRefusal> {
+        if self.free_slots().next().is_none() {
+            Some(FindRefusal::Full)
+        } else if self.gain_scale_now() <= f32::EPSILON {
+            Some(FindRefusal::NoGain)
+        } else {
+            None
+        }
+    }
+
+    /// What proposals depend on besides the candidates: every parameter as this editor last set
+    /// it, Amount and the layout.
+    fn proposal_basis(&self, amount: u8) -> Vec<u32> {
+        let mut basis: Vec<u32> = (0..self.pointers.len())
+            .map(|index| self.normalised_now(index).to_bits())
+            .collect();
+        basis.push(u32::from(amount));
+        basis.push(u32::from(self.telemetry.mono()));
+        basis
+    }
+
+    /// Finds the candidates again every [`finder::UPDATE_SECONDS`] when the finder has heard
+    /// something since, and proposes again when they or the EQ changed: at once after an apply,
+    /// else at most ten times a second while a band moves. The search runs on the finder's
+    /// worker, on a copy of what it has heard, so its fits never cost a frame; what it found is
+    /// taken when it is done, and one search runs at a time.
+    pub(crate) fn update_find(&mut self, now: f64, settings: &ViewSettings) {
+        if !self.find {
+            return;
+        }
+        if let Some(found) = self.worker.as_mut().and_then(finder::Worker::take) {
+            self.accept(found);
+        }
+        if self.worker.as_ref().is_some_and(finder::Worker::busy) {
+            return;
+        }
+        let due = self
+            .found_at
+            .is_none_or(|at| now - at >= finder::UPDATE_SECONDS || now < at);
+        let heard_new = due && self.finder.revision() != self.found_revision;
+        if due {
+            self.found_at = Some(now);
+        }
+        let basis = self.proposal_basis(settings.amount);
+        let eq_moved = basis != self.proposed_on && now - self.proposed_at >= 0.1;
+        if !(heard_new || self.proposals_stale || eq_moved) {
+            return;
+        }
+        if heard_new {
+            self.found_revision = self.finder.revision();
+        }
+        self.proposed_on = basis;
+        self.proposed_at = now;
+        self.proposals_stale = false;
+        if self.find_refusal().is_some() {
+            self.proposals.clear();
+            self.proposals_version += 1;
+            self.focus_proposal = None;
+            return;
+        }
+        let search = finder::Search {
+            evidence: self.finder.evidence().clone(),
+            candidates: (!heard_new).then(|| self.candidates.clone()),
+            heard: self.heard_eq(),
+            amount: settings.amount_share(),
+            free_slots: self.free_slots().count(),
+            shown: self.proposals.clone(),
+        };
+        if self.inline_search {
+            self.accept(search.run());
+            return;
+        }
+        if self.worker.is_none() {
+            self.worker = finder::Worker::new();
+        }
+        // Without a thread to run it on, it runs here.
+        let refused = match self.worker.as_mut() {
+            Some(worker) => worker.start(search).err(),
+            None => Some(Box::new(search)),
+        };
+        if let Some(search) = refused {
+            self.accept(search.run());
+        }
+    }
+
+    /// What a search found, shown.
+    fn accept(&mut self, found: finder::Found) {
+        self.candidates = found.candidates;
+        self.proposals = found.proposals;
+        self.proposals_version += 1;
+        if self
+            .focus_proposal
+            .is_some_and(|index| index >= self.proposals.len())
+        {
+            self.focus_proposal = None;
+        }
+    }
+
+    /// Applies proposals (plan §7.5): each band a static, unkeyed bell at its placement in the
+    /// lowest Off slots, every field written, its gain the depth heard under the gain scale. One
+    /// undo step; `opened` keeps the fields in the drag's gesture that follows. Returns the slots,
+    /// empty when they do not fit.
+    pub(crate) fn apply_proposals(&mut self, which: &[usize], opened: bool) -> Vec<usize> {
+        let scale = self.gain_scale_now();
+        let bands: Vec<finder::ProposedBand> = which
+            .iter()
+            .filter_map(|&index| self.proposals.get(index))
+            .flat_map(|proposal| proposal.bands.iter().copied())
+            .collect();
+        let slots: Vec<usize> = self.free_slots().take(bands.len()).collect();
+        if bands.is_empty() || slots.len() < bands.len() || scale <= f32::EPSILON {
+            return Vec::new();
+        }
+        let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+        let mono = self.telemetry.mono();
+        let mut writes: Vec<(usize, f32)> = Vec::new();
+        for (&slot, band) in slots.iter().zip(&bands) {
+            let placement = if mono {
+                mxm_fx_eq_n_dsp::Placement::Stereo
+            } else {
+                band.domain.placement()
+            };
+            writes.extend(self.slot_writes(
+                slot,
+                mxm_fx_eq_n_dsp::Band {
+                    shape: Some(Shape::Bell),
+                    bypass: false,
+                    freq: self.clamp_freq(band.freq),
+                    gain_db: (band.gain_db / scale).clamp(-range, range),
+                    q: band.q,
+                    slope: DEFAULT_SLOPE,
+                },
+                mxm_fx_eq_n_dsp::Dynamics::STATIC,
+                false,
+                placement,
+            ));
+        }
+        self.close_open();
+        if opened {
+            for (index, value) in writes {
+                self.send(index, value);
+            }
+        } else {
+            self.instant(&writes);
+        }
+        self.selected = slots.first().copied();
+        self.edge = None;
+        if let Some(band) = bands.first() {
+            self.focus_freq = self.clamp_freq(band.freq);
+        }
+        // What was applied leaves the proposals at once, so it cannot be applied twice before the
+        // next search shows what is left.
+        let mut index = 0;
+        self.proposals.retain(|_| {
+            index += 1;
+            !which.contains(&(index - 1))
+        });
+        self.proposals_version += 1;
+        self.focus_proposal = None;
+        self.proposals_stale = true;
+        slots
     }
 
     /// Whether a band can still be made: an Off slot is free.
@@ -1001,6 +1301,19 @@ impl EqApp {
             Output::Cancel => self.end_gesture(false),
             Output::Action(Action::Add) => {
                 self.end_gesture(true);
+                // On a proposal, ADD applies it (plan §7.5).
+                let proposal = self
+                    .focus_proposal
+                    .filter(|_| self.find && self.selected.is_none())
+                    .filter(|&index| {
+                        self.proposals.get(index).is_some_and(|proposal| {
+                            (proposal.freq - self.focus_freq).abs() < 1.0e-3
+                        })
+                    });
+                if let Some(index) = proposal {
+                    self.apply_proposals(&[index], false);
+                    return;
+                }
                 // On a frozen peak, ADD grabs it: its bell, its Q (plan §7.4).
                 let peak = self
                     .focus_peak
@@ -1104,6 +1417,30 @@ impl EqApp {
             Direction::Left => false,
             Direction::Up | Direction::Down => return,
         };
+        // With Find's proposals and no band selected, ← → walk the proposals (§7.5).
+        if self.selected.is_none() && !coarse && self.find && !self.proposals.is_empty() {
+            let mut by_freq: Vec<(f32, usize)> = self
+                .proposals
+                .iter()
+                .enumerate()
+                .map(|(index, proposal)| (proposal.freq, index))
+                .collect();
+            by_freq.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let from = self.focus_freq;
+            let next = if right {
+                by_freq.iter().find(|&&(freq, _)| freq > from * 1.0001)
+            } else {
+                by_freq
+                    .iter()
+                    .rev()
+                    .find(|&&(freq, _)| freq < from / 1.0001)
+            };
+            if let Some(&(freq, index)) = next {
+                self.focus_proposal = Some(index);
+                self.focus_freq = freq;
+            }
+            return;
+        }
         // Frozen with no band selected, ← → walk the labelled peaks instead of the line (§7.4).
         if self.selected.is_none()
             && !coarse

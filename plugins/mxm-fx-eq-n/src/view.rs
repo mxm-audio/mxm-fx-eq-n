@@ -142,6 +142,26 @@ pub struct ViewSettings {
     /// The side chain's spectrum as a third line, the reference overlay (plan §7.4): offered only
     /// on a layout with the port.
     pub side_chain: bool,
+    /// The resonance finder's Amount (plan §7.5), in whole percent: the share of each resonance's
+    /// prominence a proposed cut takes. Not part of what the display shows, so a change ends no
+    /// freeze ([`ViewSettings::display`]).
+    pub amount: u8,
+}
+
+impl ViewSettings {
+    /// The settings that decide what the display shows: every one but Amount. A freeze is held on
+    /// these (plan §7.4).
+    pub fn display(self) -> ViewSettings {
+        ViewSettings {
+            amount: crate::editor::finder::DEFAULT_AMOUNT,
+            ..self
+        }
+    }
+
+    /// Amount as a share, 0 to 1.
+    pub fn amount_share(self) -> f32 {
+        f32::from(self.amount.min(100)) / 100.0
+    }
 }
 
 impl Default for ViewSettings {
@@ -153,6 +173,7 @@ impl Default for ViewSettings {
             speed: Speed::default(),
             tilt: Tilt::default(),
             side_chain: false,
+            amount: crate::editor::finder::DEFAULT_AMOUNT,
         }
     }
 }
@@ -230,6 +251,11 @@ mod tests {
                 ..ViewSettings::default()
             }
         );
+        // F4's Amount (plan §7.5): a project from before it loads at 20 %.
+        let before_f4: ViewSettings =
+            serde_json::from_str(r#"{"analyser":true,"show":"Both","side_chain":true}"#).unwrap();
+        assert_eq!(before_f4.amount, 20);
+        assert!(before_f4.side_chain);
         let round: ViewSettings =
             serde_json::from_str(&serde_json::to_string(&ViewSettings::default()).unwrap())
                 .unwrap();

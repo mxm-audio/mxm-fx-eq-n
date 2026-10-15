@@ -94,6 +94,8 @@ impl Rig {
         });
         let host = Arc::new(Host::default());
         app.attach(GuiContext::new(host.clone()));
+        // Find's searches run in the frame that asks, so a test sees what they found.
+        app.inline_search = true;
         let ctx = tree_checks::context(&|_| {});
         Rig {
             app,
@@ -540,6 +542,9 @@ fn the_cursor_reaches_and_operates_every_control() {
             "resolution",
             "speed",
             "tilt",
+            "find",
+            "apply all",
+            "amount",
         ];
         ids.extend(extra);
         mxm_plugin_test::keyboard_checks::the_cursor_reaches_and_operates_from(
@@ -1749,9 +1754,10 @@ fn every_card_passes_the_tree_checks_in_every_state_and_fits_the_column() {
     }
     let (build, mut paint) = pair(None);
     type Tree = fn(&EqApp) -> mxm_ui::tree::Node<column::Leaf>;
-    let cards: [(&str, Tree); 2] = [
+    let cards: [(&str, Tree); 3] = [
         (column::OUTPUT_TITLE, column::output_tree),
         (column::ANALYSER_TITLE, |_| column::analyser_tree(true)),
+        (column::RESONANCES_TITLE, |_| column::resonances_tree()),
     ];
     for (title, tree) in cards {
         let floor = settled(|ui| mxm_ui::tree::card_floor(ui, title, &tree(&build)));
@@ -3051,4 +3057,294 @@ fn a_loud_key_s_label_stays_on_the_graph() {
         "{at:?} under {:?}",
         axes.rect.top()
     );
+}
+
+// ---- Find (plan §7.5) ----------------------------------------------------------------------
+
+/// A candidate as the finder would have measured it.
+fn candidate(freq: f32, bands: &[(finder::Domain, f32, f32)]) -> finder::Candidate {
+    let bands: Vec<finder::Measured> = bands
+        .iter()
+        .map(|&(domain, prominence, q)| finder::Measured {
+            domain,
+            rung: 0,
+            freq,
+            db: -30.0,
+            prominence,
+            q,
+        })
+        .collect();
+    finder::Candidate {
+        freq,
+        audibility: bands
+            .iter()
+            .map(finder::Measured::audibility)
+            .reduce(f32::max)
+            .unwrap(),
+        bands,
+    }
+}
+
+/// A rig with Find on and `candidates` as if the finder had found them, its search run.
+fn finding_rig(candidates: Vec<finder::Candidate>) -> Rig {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    finding(&mut rig, candidates);
+    rig
+}
+
+/// Find on in `rig`, with `candidates` found and proposed on a frame.
+fn finding(rig: &mut Rig, candidates: Vec<finder::Candidate>) {
+    rig.app.set_find(true);
+    rig.app.candidates = candidates;
+    rig.app.found_revision = rig.app.finder.revision();
+    rig.app.found_at = Some(rig.time);
+    rig.app.proposals_stale = true;
+    rig.press(Vec::new());
+}
+
+/// Where a proposal's triangle is, for the pointer.
+fn triangle(rig: &Rig, index: usize) -> egui::Pos2 {
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let curves = graph::Curves::compute(&rig.app, &axes);
+    let freq = rig.app.proposals[index].freq;
+    graph::proposal_marker(&axes, &curves, rig.app.proposal_spectrum(), freq) - egui::vec2(0.0, 5.0)
+}
+
+/// **Every apply writes a band's every field** (plan §7.5): a static, unkeyed bell at its
+/// placement, whatever the Off slot held, as one undo step; what was applied leaves the proposals.
+#[test]
+fn applying_a_proposal_writes_every_field_over_a_stale_slot_as_one_step() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    // Slot 1 left stale: a bypassed, keyed, dynamic Left low cut, then turned Off.
+    let stale = rig.app.slot_writes(
+        0,
+        mxm_fx_eq_n_dsp::Band {
+            shape: Some(Shape::LowCut),
+            bypass: true,
+            freq: 300.0,
+            gain_db: 5.0,
+            q: 3.0,
+            slope: Slope::Db48,
+        },
+        mxm_fx_eq_n_dsp::Dynamics {
+            range_db: -9.0,
+            ..mxm_fx_eq_n_dsp::Dynamics::STATIC
+        },
+        true,
+        mxm_fx_eq_n_dsp::Placement::Left,
+    );
+    rig.app.instant(&stale);
+    rig.app.delete(0);
+    rig.press(Vec::new());
+    finding(
+        &mut rig,
+        vec![candidate(2_000.0, &[(finder::Domain::Mid, 10.0, 6.0)])],
+    );
+    assert_eq!(rig.app.proposals.len(), 1);
+    let proposed = rig.app.proposals[0].bands[0];
+    let depth = rig.depth();
+    assert_eq!(rig.app.apply_proposals(&[0], false), [0]);
+    assert!(
+        rig.app.proposals.is_empty(),
+        "applied, it leaves the proposals at once"
+    );
+    rig.press(Vec::new());
+    let band = rig.band(0);
+    assert_eq!(band.shape, Some(Shape::Bell));
+    assert!(!band.bypass);
+    assert!((band.freq - 2_000.0).abs() < 1.0, "{}", band.freq);
+    assert!(
+        (band.gain_db - proposed.gain_db).abs() < 0.05,
+        "{}",
+        band.gain_db
+    );
+    assert!((band.q - 6.0).abs() < 1.0e-3);
+    assert_eq!(band.slope, crate::params::DEFAULT_SLOPE);
+    assert_eq!(rig.app.dynamics_now(0).range_db, 0.0, "static");
+    assert!(!rig.app.key_now(0));
+    assert_eq!(rig.app.placement_now(0), mxm_fx_eq_n_dsp::Placement::Mid);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **Apply all, a click and a drag are each one undo step, and BACK during the drag leaves
+/// nothing** (plan §7.5); a pair is applied as its two bands and dragged together.
+#[test]
+fn apply_all_a_click_and_a_drag_are_each_one_step_and_back_leaves_nothing() {
+    let found = || {
+        vec![
+            candidate(
+                500.0,
+                &[
+                    (finder::Domain::Left, 14.0, 6.0),
+                    (finder::Domain::Right, 8.0, 6.0),
+                ],
+            ),
+            candidate(3_000.0, &[(finder::Domain::Average, 10.0, 8.0)]),
+        ]
+    };
+    let mut rig = finding_rig(found());
+    assert_eq!(rig.app.proposals.len(), 2);
+    let depth = rig.depth();
+    let all: Vec<usize> = (0..rig.app.proposals.len()).collect();
+    assert_eq!(rig.app.apply_proposals(&all, false), [0, 1, 2]);
+    rig.press(Vec::new());
+    assert_eq!(rig.depth(), depth + 1, "Apply all is one step");
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert!(
+        (0..3).all(|slot| !rig.app.band_in_use(slot)),
+        "and one undo takes all back"
+    );
+
+    // A click on a triangle.
+    let mut rig = finding_rig(found());
+    let depth = rig.depth();
+    let at = triangle(&rig, 1);
+    rig.press(pointer(at, Some(true)));
+    rig.press(pointer(at, Some(false)));
+    rig.press(Vec::new());
+    assert_eq!(rig.band(0).shape, Some(Shape::Bell), "the click applied it");
+    assert!((rig.band(0).freq - 3_000.0).abs() < 1.0);
+    assert_eq!(rig.depth(), depth + 1);
+
+    // A drag from the pair's triangle: both bands, their gains moving together.
+    let mut rig = finding_rig(found());
+    let proposal = rig.app.proposals[0].clone();
+    let depth = rig.depth();
+    let from = triangle(&rig, 0);
+    let to = from + egui::vec2(0.0, 60.0);
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=6 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 6.0), None));
+    }
+    rig.press(pointer(to, Some(false)));
+    rig.press(Vec::new());
+    let (left, right) = (rig.band(0), rig.band(1));
+    assert!(
+        left.gain_db < proposal.bands[0].gain_db - 1.0,
+        "dragged deeper"
+    );
+    let apart = proposal.bands[1].gain_db - proposal.bands[0].gain_db;
+    assert!(
+        ((right.gain_db - left.gain_db) - apart).abs() < 0.05,
+        "the pair moves together"
+    );
+    assert_eq!(rig.depth(), depth + 1, "the drag is one step");
+
+    // BACK during the drag: nothing is left.
+    let mut rig = finding_rig(found());
+    let depth = rig.depth();
+    let from = triangle(&rig, 1);
+    let to = from + egui::vec2(0.0, 60.0);
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=6 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 6.0), None));
+    }
+    rig.press(vec![
+        key(Key::Escape, true, NONE),
+        key(Key::Escape, false, NONE),
+    ]);
+    rig.press(pointer(to, Some(false)));
+    rig.press(Vec::new());
+    assert!(!rig.app.band_in_use(0), "BACK took the band away");
+    assert_eq!(rig.depth(), depth, "and left no step");
+    assert!(rig.gestures_balanced());
+}
+
+/// **The keyboard walks the proposals and ADD applies one** (plan §7.5).
+#[test]
+fn the_keyboard_walks_the_proposals_and_add_applies_one() {
+    let mut rig = finding_rig(vec![
+        candidate(400.0, &[(finder::Domain::Average, 10.0, 8.0)]),
+        candidate(2_500.0, &[(finder::Domain::Average, 12.0, 8.0)]),
+    ]);
+    rig.app.selected = None;
+    rig.app.focus_freq = 1_000.0;
+    rig.app.on_surface(mxm_keys::Output::Navigate {
+        direction: mxm_keys::Direction::Right,
+        coarse: false,
+    });
+    let index = rig.app.focus_proposal.expect("a proposal focused");
+    assert_eq!(rig.app.proposals[index].freq, 2_500.0);
+    rig.app
+        .on_surface(mxm_keys::Output::Action(mxm_keys::Action::Add));
+    rig.press(Vec::new());
+    let band = rig.band(0);
+    assert_eq!(band.shape, Some(Shape::Bell));
+    assert!((band.freq - 2_500.0).abs() < 1.0);
+}
+
+/// **Find and Freeze exclude each other; Find needs the analyser; closing the editor ends it; it
+/// is never saved** (plan §7.5). Amount is saved, an edit marks the project dirty, and it ends no
+/// freeze.
+#[test]
+fn find_s_toggles_follow_their_rules_and_amount_is_view_state() {
+    let mut rig = frozen_rig(1_000.0);
+    assert!(rig.app.frozen.is_some());
+    let saved = rig.app.params.view.get();
+    rig.app.set_find(true);
+    rig.press(Vec::new());
+    assert!(
+        rig.app.find && rig.app.frozen.is_none(),
+        "Find ends a freeze"
+    );
+    rig.app.ask_freeze();
+    rig.press(Vec::new());
+    assert!(!rig.app.find, "Freeze ends Find");
+    assert_eq!(rig.app.params.view.get(), saved, "neither is saved");
+
+    let mut rig = finding_rig(Vec::new());
+    let mut off = rig.app.params.view.get();
+    off.analyser = false;
+    rig.app.set_view(off);
+    rig.press(Vec::new());
+    assert!(!rig.app.find, "the analyser off ends Find");
+    off.analyser = true;
+    rig.app.set_view(off);
+    rig.press(Vec::new());
+    assert!(!rig.app.find, "and back on leaves it off");
+
+    let mut rig = finding_rig(Vec::new());
+    rig.app.detach();
+    assert!(!rig.app.find, "closing the editor ends it");
+
+    let mut rig = frozen_rig(1_000.0);
+    let states = *rig.host.states.lock().unwrap();
+    let mut settings = rig.app.params.view.get();
+    settings.amount = 50;
+    rig.app.set_view(settings);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.params.view.get().amount, 50);
+    assert_eq!(*rig.host.states.lock().unwrap(), states + 1, "marked dirty");
+    assert!(rig.app.frozen.is_some(), "an Amount edit ends no freeze");
+}
+
+/// **A larger Amount proposes deeper, and with every slot in use nothing is proposed** (plan
+/// §7.5).
+#[test]
+fn amount_sets_the_depth_and_a_full_set_proposes_nothing() {
+    let found = || vec![candidate(1_000.0, &[(finder::Domain::Average, 10.0, 8.0)])];
+    let mut rig = finding_rig(found());
+    let shallow = rig.app.proposals[0].bands[0].gain_db;
+    assert!((shallow + 2.0).abs() < 0.05, "20 % of 10 dB: {shallow}");
+    let mut settings = rig.app.params.view.get();
+    settings.amount = 60;
+    rig.app.set_view(settings);
+    for _ in 0..8 {
+        rig.press(Vec::new());
+    }
+    let deep = rig.app.proposals[0].bands[0].gain_db;
+    assert!((deep + 6.0).abs() < 0.05, "60 %: {deep}");
+
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    for slot in 0..SLOTS {
+        rig.app.insert_at(30.0 * 1.3f32.powi(slot as i32));
+    }
+    rig.press(Vec::new());
+    finding(&mut rig, found());
+    assert!(rig.app.proposals.is_empty());
+    assert_eq!(rig.app.find_refusal(), Some(FindRefusal::Full));
 }

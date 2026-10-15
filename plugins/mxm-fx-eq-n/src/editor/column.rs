@@ -1,5 +1,6 @@
-//! The column to the graph's right (plan §5.1): the Band card for the selected band, then Output
-//! and Analyser. Each body is a `mxm_ui::tree`, measured and drawn from one description, and every
+//! The columns to the graph's right (plan §5.1, decision 30): the Band card for the selected band
+//! alone in the first, then Output, Analyser and Resonances (plan §7.5) in the second. Each body is
+//! a `mxm_ui::tree`, measured and drawn from one description, and every
 //! control is the collection's own, through the shared binding where it edits one host value.
 //! Every card is one of the cursor's (`navigation::bar_card`), and every control joins it.
 //!
@@ -18,13 +19,16 @@ use mxm_ui::theme::Tokens;
 use mxm_ui::tree::{self, Kind, Node, leaf, row_gap, stack};
 use nice_plug::prelude::Param;
 
-use super::{ANALYSER_CARD, BAND_CARD, EqApp, Field, OUTPUT_CARD, SOLO_KEY};
+use super::{
+    ANALYSER_CARD, BAND_CARD, EqApp, Field, FindRefusal, OUTPUT_CARD, RESONANCES_CARD, SOLO_KEY,
+};
 use crate::params::{EqParams, SHAPES, band_ids, shape_name};
 use crate::view::{Resolution, Show, Speed, Tilt};
 
-/// The cards' titles, top to bottom.
+/// The second column's titles, top to bottom.
 pub const OUTPUT_TITLE: &str = "Output";
 pub const ANALYSER_TITLE: &str = "Analyser";
+pub const RESONANCES_TITLE: &str = "Resonances";
 
 /// A slider in the column.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -73,6 +77,12 @@ pub enum Leaf {
     SideChainView,
     /// Holds the spectrum so its peaks can be grabbed (plan §7.4).
     Freeze,
+    /// Listens for resonances and proposes cuts (plan §7.5).
+    Find,
+    /// The share of each resonance a proposed cut takes.
+    Amount,
+    /// Makes every proposed cut as a band.
+    ApplyAll,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -114,6 +124,17 @@ const SPLIT_DESCRIPTION: &str = "Splits the band into a left and a right copy, t
 const SPLIT_PLACED_DESCRIPTION: &str =
     "This band already works on one channel. Only a Stereo band splits.";
 const SPLIT_FULL_DESCRIPTION: &str = "Every band slot is in use, so there is no room for a copy.";
+const FIND_DESCRIPTION: &str = "Listens to the sound coming in for resonances, peaks that stay put \
+     while the notes move, and proposes a cut for each. Below about 200 Hz a fast bass line can \
+     look like one. Needs the analyser.";
+const FIND_FULL_DESCRIPTION: &str =
+    "Every band slot is in use, so no cut can be proposed. Delete a band to make room.";
+const FIND_NO_GAIN_DESCRIPTION: &str =
+    "The gain scale is at 0 %, where a bell does nothing, so no cut is proposed.";
+const AMOUNT_DESCRIPTION: &str = "How much of each resonance a proposed cut takes away.";
+const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in one step Undo takes back.";
+/// The Amount slider's key in the cursor's registry and its held value's.
+const AMOUNT_KEY: &str = "amount";
 
 /// What the Band card offers of placement (plan §7.3): the choice and Split in a stereo layout;
 /// in mono nothing for a Stereo band, and the way back to Stereo for a placed one.
@@ -393,6 +414,35 @@ pub fn analyser_tree(side_chain_port: bool) -> Node<Leaf> {
     ])
 }
 
+/// The Resonances card (plan §7.5): Find and Apply all on a row, Amount under them.
+pub fn resonances_tree() -> Node<Leaf> {
+    stack(vec![
+        tree::row(vec![
+            leaf(
+                Leaf::Find,
+                Kind::Toggle {
+                    label: "Find".to_owned(),
+                },
+            ),
+            button_leaf(Leaf::ApplyAll, "Apply all"),
+        ]),
+        leaf(
+            Leaf::Amount,
+            Kind::Slider {
+                label: "Amount".to_owned(),
+                quiet: false,
+                widest: "100 %".to_owned(),
+            },
+        ),
+    ])
+}
+
+/// A typed Amount, `35`, `35%` or `35 %`, as a share; `None` for anything else.
+fn parse_percent(typed: &str) -> Option<f64> {
+    let number: f64 = typed.trim().trim_end_matches('%').trim().parse().ok()?;
+    number.is_finite().then(|| (number / 100.0).clamp(0.0, 1.0))
+}
+
 const METER_PEAK_HOLD_SECONDS: f64 = 0.450;
 const METER_RELEASE_SECONDS: f64 = 0.300;
 
@@ -434,8 +484,8 @@ impl MeterDisplay {
 }
 
 impl EqApp {
-    /// The column's three cards, top to bottom, each one of the cursor's.
-    pub(crate) fn column(&mut self, ui: &mut Ui, tokens: &Tokens) {
+    /// The first column: the Band card alone (decision 30).
+    pub(crate) fn first_column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         let title = band_title(self);
         // With no band selected the Band card has no controls, so it is no stop of the cursor's:
         // VIEW from the graph would land on nothing and fall back to the graph.
@@ -449,7 +499,11 @@ impl EqApp {
             true,
             absent,
         );
-        ui.add_space(SPACE_3);
+    }
+
+    /// The second column: Output, Analyser and Resonances, top to bottom, each one of the
+    /// cursor's.
+    pub(crate) fn second_column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         self.card(
             ui,
             tokens,
@@ -466,6 +520,16 @@ impl EqApp {
             ANALYSER_CARD,
             ANALYSER_TITLE,
             |app, _| analyser_tree(app.telemetry.side_chain_port()),
+            false,
+            None,
+        );
+        ui.add_space(SPACE_3);
+        self.card(
+            ui,
+            tokens,
+            RESONANCES_CARD,
+            RESONANCES_TITLE,
+            |_, _| resonances_tree(),
             false,
             None,
         );
@@ -814,12 +878,59 @@ impl EqApp {
                 });
                 if changed {
                     if on {
-                        self.freeze_asked = true;
+                        self.ask_freeze();
                     } else {
                         self.unfreeze();
                     }
                 }
             }
+            Leaf::Find => {
+                let analyser = self.params.view.get().analyser;
+                let mut on = self.find;
+                let description = match self.find_refusal() {
+                    Some(FindRefusal::Full) if self.find => FIND_FULL_DESCRIPTION,
+                    Some(FindRefusal::NoGain) if self.find => FIND_NO_GAIN_DESCRIPTION,
+                    _ => FIND_DESCRIPTION,
+                };
+                let changed = navigation::at(ui, "find", |ui| {
+                    ui.add_enabled_ui(analyser, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Find",
+                            "Find resonances",
+                            &mut on,
+                            false,
+                            description,
+                            0.0,
+                        )
+                    })
+                    .inner
+                });
+                if changed {
+                    self.set_find(on);
+                }
+            }
+            Leaf::ApplyAll => {
+                let any = !self.proposals.is_empty();
+                let clicked = navigation::at(ui, "apply all", |ui| {
+                    let response = ui
+                        .add_enabled(
+                            any,
+                            egui::Button::new("Apply all")
+                                .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
+                        )
+                        .on_hover_text(APPLY_ALL_DESCRIPTION)
+                        .on_disabled_hover_text(APPLY_ALL_DESCRIPTION);
+                    navigation::mark_unclaimed(ui, response.id, response.rect);
+                    response.clicked()
+                });
+                if clicked {
+                    let all: Vec<usize> = (0..self.proposals.len()).collect();
+                    self.apply_proposals(&all, false);
+                }
+            }
+            Leaf::Amount => self.paint_amount(ui, tokens, rect),
             Leaf::SideChainView => {
                 let mut settings = self.params.view.get();
                 let changed = navigation::at(ui, "side chain view", |ui| {
@@ -847,6 +958,59 @@ impl EqApp {
             Leaf::Show | Leaf::Resolution | Leaf::Speed | Leaf::Tilt => {
                 self.paint_setting(ui, tokens, leaf);
             }
+        }
+    }
+
+    /// Amount (plan §7.5): view state, not a parameter, so the kit's slider with its value held
+    /// here while it is dragged, and the settings written — the project marked dirty — once, when
+    /// it is let go. A typed value, a step key or a double-click is a gesture that ends at once.
+    fn paint_amount(&mut self, ui: &mut Ui, tokens: &Tokens, rect: Rect) {
+        let mut settings = self.params.view.get();
+        let id = egui::Id::new(("mxm-fx-eq-n", AMOUNT_KEY));
+        let mut normalised = ui
+            .data(|data| data.get_temp::<f64>(id))
+            .unwrap_or(f64::from(settings.amount.min(100)) / 100.0);
+        let text = format!("{} %", (normalised * 100.0).round() as u32);
+        let view = mxm_ui::control::ParamView {
+            default: f64::from(super::finder::DEFAULT_AMOUNT) / 100.0,
+            widest: "100 %",
+            ..mxm_ui::control::ParamView::new("Amount", &text, AMOUNT_DESCRIPTION)
+        };
+        let entry = self.text.entry(AMOUNT_KEY).or_default();
+        // `Escape` abandons an open entry, as on every bound control.
+        if entry.is_some()
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            *entry = None;
+        }
+        let outcome = navigation::at(ui, AMOUNT_KEY, |ui| {
+            mxm_ui::control::slider(
+                ui,
+                tokens,
+                &view,
+                &mut normalised,
+                rect.width(),
+                entry,
+                mxm_ui::control::Wheel::Off,
+            )
+        });
+        let submitted = if outcome.changed && entry.is_some() {
+            // A committed text entry, parsed here because this editor wrote the reading.
+            let parsed = entry.as_deref().and_then(parse_percent);
+            *entry = None;
+            parsed
+        } else {
+            if outcome.changed {
+                ui.data_mut(|data| data.insert_temp(id, normalised));
+            }
+            outcome.gesture_ended.then_some(normalised)
+        };
+        if outcome.gesture_ended || submitted.is_some() {
+            ui.data_mut(|data| data.remove_temp::<f64>(id));
+        }
+        if let Some(share) = submitted {
+            settings.amount = (share * 100.0).round().clamp(0.0, 100.0) as u8;
+            self.set_view(settings);
         }
     }
 

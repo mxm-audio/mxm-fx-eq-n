@@ -189,6 +189,47 @@ and `audition.rs`'s tests hold the lifecycle.
   stays inside the graph (`graph::peak_marker`), so a peak above 0 dB under Tilt is still grabbed. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
+- **Find, the resonance finder** (plan §7.5, `editor/finder.rs`), in the order the work goes:
+  - *Listening.* The analyser's pre-EQ blocks, while Find is on, into three rungs: the input
+    decimated to at most 64 kHz, then a quarter and a sixteenth of that, each a frequency's only
+    home (from 1.6 kHz, from 400 Hz, below), the display's anti-alias low pass on left and right.
+    8,192-point frames for width, 2,048 for movement (1,024 in the lowest rung's top octave, the
+    shortest that tells a semitone apart there), Hann, a hop of half a frame; a frame under
+    −60 dBFS counts for nothing. Five spectra, mid and side formed from the channels' spectra.
+  - *The long-term spectrum* is the heard width frames' level averaged **in dB**, each bin clipped
+    at its running mean + `CLIP_DB` (3 dB). Under mean power each note's harmonic lines tower over
+    the resonance's bump: a candidate near 1 kHz measures Q 47 against a built 10. A clip of 1.5 dB
+    biases every measurement; 6 dB leaves lines 2–3 dB high. No morphological opening for the
+    lines: on noise it widens bumps (a Q-10 bell fits at 8.6 with one, 10.0 without). The
+    consequence, stated in Find's hover: a resonance is measured where broadband sound reaches it.
+  - *Candidates* are its peaks by F3's rule, then **fitted**: Levenberg–Marquardt of the cookbook
+    bell on a sloping floor over a third of an octave either side, Huber-weighted (1.5 dB) and run
+    three times, 64 points. One-point measures — a parabola's top, the half-height crossings —
+    follow whichever line rides highest on the bump; the fit reads it whole and is the shape the
+    cut inverts. Exact on a noiseless bell (`the_fit_finds_a_cookbook_bell_exactly`); on noise
+    alone Q within about 10 %. Only the final bands are fitted, and left and right when both have
+    the peak (the pair rule needs their true heights).
+  - *Persistence* per 1/48-octave cell. A cell stands out in a movement frame when its highest
+    level within half a semitone stands 6 dB (F3's prominence) over the **median** of the cells a
+    twelfth to a third of an octave away: against the lowest of them, as F3 measures, one frame's
+    noise put a "peak" within half a semitone of anything. The excitation is the loudest of the
+    rung's other frequencies, outside the cell's third, by semitone, and "two excitations" means
+    the commonest accounts for at most two thirds of the frames it stood out in: the plan's
+    strongest other peak *in that third* sees only "none" where broadband sound excites a
+    resonance (an 8 kHz resonance lost its verdict), and one odd frame flipped a yes/no flag.
+    Only persisting peaks enter the placement rule, so a note's line on the other channel does
+    not make a one-channel resonance a pair.
+  - *What the EQ takes* is the difference of two fits from the same guess, without and with the EQ
+    as heard on that spectrum: two fits from different starts settle up to 0.5 dB apart with no EQ
+    at all.
+  - *Cost.* Listening and a copy of the evidence on the GUI thread; the search (candidates and
+    proposals) on a worker thread (`finder::Worker`), one at a time, so its fits never cost a
+    frame. At 192 kHz in release (`finder_cost`, 2026-10-15): 0.23 ms a frame on average and
+    0.95 ms at worst on the GUI thread, the copy 0.23 ms; a search 4.4 ms, too long for a frame.
+  - *Test scenes.* A melody's notes need played edges (20 ms raised cosine) and untempered pitches:
+    hard-edged notes smear lines tens of hertz wide, and a tempered scale shares harmonics between
+    half its notes, which no persistence test can tell from a resonance (research §8.2). Under the
+    melody a broadband bed at −10 dB; at −30 dB the bump is mostly seen through lines.
 
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.
@@ -224,7 +265,7 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
 ## The slower checks
 
 - The analyser's cost: `cargo test -p mxm-fx-eq-n --release --lib analyser_cost -- --ignored
-  --nocapture`.
+  --nocapture`; the finder's, `finder_cost` the same way.
 - The pictures: `cargo test -p mxm-fx-eq-n --lib pictures`, into `target/layout-tree/mxm-fx-eq-n/`.
 - The factory set: `cargo test -p mxm-fx-eq-n --lib write_the_factory_presets -- --ignored`.
 - The validator's random parameter fuzz once found a subnormal output, now flushed in the DSP.
