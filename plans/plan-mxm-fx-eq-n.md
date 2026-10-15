@@ -2,7 +2,8 @@
 
 **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
-all accepted). **Waiting for the owner's approval.** **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
+all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
+proposed); F3.0 done, F3.1–F3.3 in progress. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
 §7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
@@ -92,10 +93,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 19 | **In mono, a placed band is disabled** and keeps its placement (Pro-Q's way); the alternative plays it as Stereo (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 20 | **A placed dynamic band detects the channel it works on**, a Stereo band F1's linked peak; a Left/Right pair then moves independently, Wise's phase intermodulation; the alternative links every band to the stereo peak, so a Left band also reacts to the right (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 21 | **No new presets for F2**; the proposal was two Side presets, *Mono bass* and *Wider air* (§7.3) | **Settled** (owner, 2026-10-15: the alternative) | — |
-| 23 | **Freeze is an explicit toggle**, holding each band's highest level of the last two seconds; no hover entry; the alternative is Pro-Q's hover-and-wait entry (§7.4) | **Proposed** | F3.2 |
-| 24 | **Peaks**: at least 6 dB of prominence within a third of an octave, within 40 dB of the loudest band, a sixth of an octave apart, at most eight; the alternative is a looser or tighter rule (§7.4) | **Proposed** | F3.1 |
-| 25 | **A grab makes a static bell**, Q from the peak's 3 dB width; the alternative makes a dynamic band directly (§7.4) | **Proposed** | F3.2 |
-| 26 | **The reference overlay is the side-chain input's spectrum**; the alternative is a captured snapshot of the EQ's own (§7.4) | **Proposed** | F3.3 |
+| 23 | **Freeze is an explicit toggle**, holding each band's highest level of the last two seconds; no hover entry; the alternative is Pro-Q's hover-and-wait entry (§7.4) | **Settled** (owner, 2026-10-15) | F3.2 |
+| 24 | **Peaks**: at least 6 dB of prominence within a third of an octave, within 40 dB of the loudest band, a sixth of an octave apart, at most eight; the alternative is a looser or tighter rule (§7.4) | **Settled** (owner, 2026-10-15) | F3.1 |
+| 25 | **A grab makes a static bell**, Q from the peak's 3 dB width; the alternative makes a dynamic band directly (§7.4) | **Settled** (owner, 2026-10-15) | F3.2 |
+| 26 | **The reference overlay is the side-chain input's spectrum**; the alternative is a captured snapshot of the EQ's own (§7.4) | **Settled** (owner, 2026-10-15) | F3.3 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
 
@@ -959,7 +960,7 @@ inside its 2 ms budget (§4); the opening size with the new toggles.
 
 | Step | Delivers | Gate |
 |---|---|---|
-| **F3.0** | Decisions 23–26, signed | Owner |
+| **F3.0** | Decisions 23–26, signed. **Done** (2026-10-15) | Owner |
 | **F3.1** | The hold, the peak picker and Q from width, in the analyser's editor half | Unit tests at the end |
 | **F3.2** | Grab, mouse and keyboard; Freeze and Side chain in the Analyser card | Editor tests at the end |
 | **F3.3** | The side-chain line: the audio thread's copy and its analysis | Realtime and cost tests at the end; one agent-loop review of F3.1–F3.3 |
