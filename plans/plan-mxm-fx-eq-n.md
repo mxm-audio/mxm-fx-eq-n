@@ -908,7 +908,9 @@ change to Show, Resolution, Speed, Tilt or the Side chain view ends the freeze**
 off and the display runs again), as do a reset (seen with the first audio after it) and a change of
 rate, so held levels are never shown as another source or under another transform; the two-second
 hold starts again on the same changes, so it never mixes them either. The side-chain line holds
-with the rest. **Freeze is the editor's moment, not a setting**: unlike the analyser's
+with the rest. A width change ends it too, since it moves the graph's frequency grid and the held
+lines were read on the old one; the peaks (frequency, level, Q) stay true, so a grab or ADD in that
+frame makes the same bell, and a height change, which moves no frequency, leaves it standing. **Freeze is the editor's moment, not a setting**: unlike the analyser's
 view state (§4) it is not saved with the project; turning the analyser off, closing the editor or a
 restored state or preset ends it, and its hold goes with it, so a reopened editor always shows the
 live spectrum.
@@ -939,7 +941,8 @@ gesture and one undo step, BACK takes it away, and it takes the lowest Off slot 
 with every slot in use no peak is grabbable and the hover says why. A click on a label without a
 drag makes nothing. A band's point under the pointer comes first, before a peak's marker or label:
 a freeze never hides a band from the pointer. **The keyboard** reaches it in the graph's own language: while frozen, with no
-band selected, ← → walk the labelled peaks instead of the line, and ADD on one makes its bell, then
+band selected, ← → walk the marked peaks instead of the line (the focused one's label always
+drawn), and ADD on one makes its bell, then
 VALUE sets its gain as for any band.
 
 **The reference overlay** (decision 26): **the side-chain input's spectrum** (§7.2), a third line

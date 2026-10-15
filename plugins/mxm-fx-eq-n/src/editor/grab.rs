@@ -116,19 +116,23 @@ impl Frozen {
 }
 
 /// Which labels are drawn (plan §7.4): `rects` strongest first, each kept unless it overlaps a
-/// stronger one that was kept.
-pub fn unobstructed(rects: &[egui::Rect]) -> Vec<bool> {
+/// stronger one that was kept; `first`, the keyboard's peak, is placed before them all, so the
+/// stop the keyboard is on always shows its frequency.
+pub fn unobstructed(rects: &[egui::Rect], first: Option<usize>) -> Vec<bool> {
+    let first = first.filter(|&index| index < rects.len());
+    let order = first
+        .into_iter()
+        .chain((0..rects.len()).filter(|&index| Some(index) != first));
     let mut kept: Vec<egui::Rect> = Vec::new();
-    rects
-        .iter()
-        .map(|rect| {
-            let free = kept.iter().all(|other| !other.intersects(*rect));
-            if free {
-                kept.push(*rect);
-            }
-            free
-        })
-        .collect()
+    let mut drawn = vec![false; rects.len()];
+    for index in order {
+        let rect = rects[index];
+        if kept.iter().all(|other| !other.intersects(rect)) {
+            kept.push(rect);
+            drawn[index] = true;
+        }
+    }
+    drawn
 }
 
 /// One labelled peak of a frozen spectrum.
@@ -418,9 +422,14 @@ mod tests {
     fn a_label_overlapping_a_stronger_one_is_dropped() {
         let at = |x: f32| egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(40.0, 12.0));
         assert_eq!(
-            unobstructed(&[at(100.0), at(120.0), at(150.0), at(130.0)]),
+            unobstructed(&[at(100.0), at(120.0), at(150.0), at(130.0)], None),
             [true, false, true, false],
             "the second overlaps the first, the fourth the third"
+        );
+        assert_eq!(
+            unobstructed(&[at(100.0), at(120.0), at(150.0)], Some(1)),
+            [false, true, false],
+            "the keyboard's peak first: the ones it overlaps give way"
         );
     }
 

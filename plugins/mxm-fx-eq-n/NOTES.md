@@ -181,7 +181,7 @@ and `audition.rs`'s tests hold the lifecycle.
   holds that line, the other line's last frame, the side-chain line, and the peaks `grab::peaks`
   finds in it. Both the hold and a freeze carry a `grab::Basis` (the view settings and the audio's
   generation): a change of any view setting, a reset (seen with the first block after it) or a
-  new rate restarts the hold and ends a freeze, as do the analyser off, a size change, a restore
+  new rate restarts the hold and ends a freeze, as do the analyser off, a width change (it moves the frequency grid), a restore
   or preset load, and closing the editor (`Frozen::holds`, `unfreeze`); it is never saved. A peak
   near the display's edge counts once it has fallen 6 dB before the edge. On a basis change the
   display starts from its new readings (`Spectrum::snap`), not a fall from the old levels, so the

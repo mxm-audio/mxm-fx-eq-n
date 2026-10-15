@@ -1007,7 +1007,8 @@ impl EqApp {
                     })
                     .collect();
                 let rects: Vec<Rect> = labels.iter().map(|(_, _, rect)| *rect).collect();
-                let drawn = grab::unobstructed(&rects);
+                let focused = self.focus_peak.filter(|_| self.selected.is_none());
+                let drawn = grab::unobstructed(&rects, focused);
                 self.peak_labels = drawn
                     .iter()
                     .zip(&rects)
