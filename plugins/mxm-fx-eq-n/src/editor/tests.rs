@@ -2352,3 +2352,48 @@ fn the_point_reading_names_the_placement() {
         rig.app.point_text(0)
     );
 }
+
+/// **Split copies every field** (plan §7.3): the dynamics and the side chain too, the copy Right.
+#[test]
+fn split_copies_every_field() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    let dynamics = &rig.app.params.dynamics[0];
+    set_plain(&dynamics.range, -9.0);
+    set_plain(&dynamics.threshold, -33.0);
+    set_plain(&dynamics.attack, 4.0);
+    set_plain(&dynamics.release, 300.0);
+    set_plain_bool(&rig.app.params.keys[0].side_chain, true);
+    rig.press(Vec::new());
+    rig.app.split(0, false);
+    rig.press(Vec::new());
+    let (original, copy) = (rig.app.dynamics_now(0), rig.app.dynamics_now(1));
+    for (a, b) in [
+        (copy.range_db, original.range_db),
+        (copy.threshold_db, original.threshold_db),
+        (copy.attack_ms, original.attack_ms),
+        (copy.release_ms, original.release_ms),
+    ] {
+        assert!((a - b).abs() < 1e-2, "{copy:?} {original:?}");
+    }
+    assert!(rig.app.key_now(1), "the side chain");
+    assert_eq!(rig.app.placement_now(1), mxm_fx_eq_n_dsp::Placement::Right);
+}
+
+/// **An unheard band shows no range** (plan §7.3): a dynamic Left band with Range has its reach in
+/// stereo and none in mono, where it moves nothing.
+#[test]
+fn an_unheard_band_has_no_range_line() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    set_plain(&rig.app.params.dynamics[0].range, -9.0);
+    set_plain_int(&rig.app.params.places[0].placement, 1);
+    rig.press(Vec::new());
+    assert!(rig.app.range_reach_db(0).is_some());
+    rig.app.telemetry.publish_channels(1);
+    assert_eq!(rig.app.range_reach_db(0), None);
+}

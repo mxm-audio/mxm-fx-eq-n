@@ -349,7 +349,9 @@ impl BandEngine {
     /// The placement the audio is at or heading to: what the detector and solo follow, so a change
     /// set while another fade runs waits with the band's own transition (plan §7.3).
     fn effective_placement(&self) -> Placement {
+        // With no destination the band is fading out: its outgoing arm is what is heard.
         self.destination
+            .or(self.current.map(|running| running.structure))
             .map_or(Placement::Stereo, |structure| structure.placement)
     }
 
@@ -587,6 +589,18 @@ impl BandEngine {
                     }
                     mixed
                 }
+            }
+        }
+    }
+
+    /// `frames` of the fade in progress at once, for frames no stage ran: a placed band in mono.
+    fn advance_by(&mut self, frames: usize) {
+        if self.fade != Fade::None {
+            self.left = self
+                .left
+                .saturating_sub(u32::try_from(frames).unwrap_or(u32::MAX));
+            if self.left == 0 {
+                self.finish();
             }
         }
     }
@@ -1034,7 +1048,8 @@ impl Engine {
         })
     }
 
-    /// Processes a stereo block in place, both channels identically, with no side chain: a keyed
+    /// Processes a stereo block in place — a Stereo band alike on both channels, a placed band on
+    /// its own channel or the mid or side (plan §7.3) — with no side chain: a keyed
     /// band hears silence.
     pub fn process_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
         self.process_stereo_keyed(left, right, None);
@@ -1078,6 +1093,12 @@ impl Engine {
             let end = (start + self.countdown).min(frames);
             if !self.dry {
                 self.render::<C>(&mut channels, key, start, end);
+            } else if self.mono {
+                // A placed band in mono is not heard, but its fades still run their length, or a
+                // change waiting on them would never start (plan §7.3).
+                for band in &mut self.bands {
+                    band.advance_by(end - start);
+                }
             }
             self.countdown -= end - start;
             start = end;

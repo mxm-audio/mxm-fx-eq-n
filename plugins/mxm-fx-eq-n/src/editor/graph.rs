@@ -432,7 +432,11 @@ impl EqApp {
     pub(crate) fn range_reach_db(&self, slot: usize) -> Option<f32> {
         let band = self.band_now(slot);
         let range = self.dynamics_now(slot).range_db;
-        if !band.shape.is_some_and(|shape| shape.is_dynamic()) || range == 0.0 {
+        // A band the layout does not hear moves nothing, so it has no range to show (plan §7.3).
+        if !band.shape.is_some_and(|shape| shape.is_dynamic())
+            || range == 0.0
+            || !self.placement_heard(slot)
+        {
             return None;
         }
         let limit = GAIN_RANGE as f32;
@@ -943,6 +947,15 @@ impl EqApp {
         let number_font = egui::FontId::proportional(11.0);
         for (slot, at) in self.positions(axes) {
             let band = self.band_now(slot);
+            // A placed band in mono is not heard (plan §7.3): every part of its point is faint.
+            let heard = self.placement_heard(slot);
+            let faint = |colour: Color32| {
+                if heard {
+                    colour
+                } else {
+                    colour.gamma_multiply(0.35)
+                }
+            };
             if let Some(reach_db) = self.range_reach_db(slot) {
                 let reach = pos2(at.x, axes.y(reach_db));
                 if (reach.y - at.y).abs() >= 1.0 {
@@ -954,7 +967,7 @@ impl EqApp {
                     );
                 }
                 // Dashed for a band that listens to the side chain (plan §7.2).
-                let ring = Stroke::new(AXIS_STROKE, tokens.accent);
+                let ring = Stroke::new(AXIS_STROKE, faint(tokens.accent));
                 if self.listens_to_key(slot) {
                     let radius = POINT_RADIUS + 2.5;
                     let points: Vec<Pos2> = (0..=48)
@@ -972,20 +985,16 @@ impl EqApp {
                 painter.circle_stroke(
                     at,
                     POINT_RADIUS + 4.0,
-                    Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
+                    Stroke::new(EMPHASIS_STROKE, faint(tokens.text_primary)),
                 );
             }
-            // A placed band in mono is not heard (plan §7.3): drawn faint, as a bypassed one is
-            // hollow.
-            let heard = self.placement_heard(slot);
-            let accent = if heard {
-                tokens.accent
-            } else {
-                tokens.accent.gamma_multiply(0.35)
-            };
             let text_color = if band.bypass || !heard {
-                painter.circle_stroke(at, POINT_RADIUS, Stroke::new(EMPHASIS_STROKE, accent));
-                tokens.text_primary
+                painter.circle_stroke(
+                    at,
+                    POINT_RADIUS,
+                    Stroke::new(EMPHASIS_STROKE, faint(tokens.accent)),
+                );
+                faint(tokens.text_primary)
             } else {
                 painter.circle_filled(at, POINT_RADIUS, tokens.accent);
                 tokens.canvas
@@ -1011,7 +1020,7 @@ impl EqApp {
                     egui::Align2::LEFT_BOTTOM,
                     letter,
                     number_font.clone(),
-                    tokens.text_primary,
+                    faint(tokens.text_primary),
                 );
             }
         }

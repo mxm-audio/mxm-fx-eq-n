@@ -326,3 +326,123 @@ fn a_queued_placement_change_keeps_the_old_channel_until_it_starts() {
         "on the loud right once its own transition ran"
     );
 }
+
+const CUT: Dynamics = Dynamics {
+    range_db: -12.0,
+    threshold_db: -40.0,
+    attack_ms: 0.5,
+    release_ms: 50.0,
+};
+
+/// **In mono a placed band's fades still run their length**: a Left band that changes shape and is
+/// then set to Stereo is heard once both transitions have run.
+#[test]
+fn in_mono_a_placed_band_s_fades_run_out_and_stereo_returns() {
+    let mut engine = placed(Placement::Left, bell(1_000.0, 12.0));
+    let fade = engine.fade_frames();
+    let mut buffer = sine(4_800, 1_000.0, 0.25);
+    engine.process_mono(&mut buffer);
+    engine.set_band(
+        0,
+        Band {
+            shape: Some(Shape::HighShelf),
+            ..bell(1_000.0, 12.0)
+        },
+    );
+    let mut buffer = sine(fade / 2, 1_000.0, 0.25);
+    engine.process_mono(&mut buffer);
+    engine.set_placement(0, Placement::Stereo);
+    let mut buffer = sine(48_000, 1_000.0, 0.25);
+    engine.process_mono(&mut buffer);
+    assert!(
+        tone_db(&buffer, 1_000.0, 0.25, 24_000) > 5.0,
+        "the band came back as Stereo and is heard"
+    );
+}
+
+/// **A bypassed placed band keeps its channel through its exit**: a dynamic Left band on a quiet
+/// left and a loud right does not move while it fades out.
+#[test]
+fn an_exiting_placed_band_keeps_listening_to_its_channel() {
+    let mut engine = placed(Placement::Left, bell(1_000.0, 0.0));
+    engine.set_dynamics(0, CUT);
+    let interval = engine.control_interval();
+    let run = |engine: &mut Engine| {
+        let mut left = sine(interval, 1_000.0, 0.001);
+        let mut right = sine(interval, 1_000.0, 0.5);
+        engine.process_stereo(&mut left, &mut right);
+    };
+    for _ in 0..200 {
+        run(&mut engine);
+    }
+    engine.set_band(
+        0,
+        Band {
+            bypass: true,
+            ..bell(1_000.0, 0.0)
+        },
+    );
+    for _ in 0..engine.fade_frames() / interval + 2 {
+        run(&mut engine);
+        let heard = engine.gains_db(0).unwrap().1;
+        assert_eq!(heard, 0.0, "the exit heard the right: {heard}");
+    }
+}
+
+/// **A split pair renders its Stereo band** (plan §7.3): a static bell and its Left/Right pair bit
+/// for bit, its Mid/Side pair within rounding.
+#[test]
+fn a_static_split_pair_renders_its_stereo_band() {
+    let render = |placements: &[Placement]| {
+        let mut engine = Engine::new(RATE);
+        for (slot, placement) in placements.iter().enumerate() {
+            engine.set_band(slot, bell(1_000.0, 9.0));
+            engine.set_placement(slot, *placement);
+        }
+        engine.reset();
+        let mut left = sine(9_600, 700.0, 0.25);
+        let mut right = sine(9_600, 1_300.0, 0.2);
+        engine.process_stereo(&mut left, &mut right);
+        (left, right)
+    };
+    let stereo = render(&[Placement::Stereo]);
+    assert_eq!(render(&[Placement::Left, Placement::Right]), stereo);
+    let (left, right) = render(&[Placement::Mid, Placement::Side]);
+    for (a, b) in left
+        .iter()
+        .chain(&right)
+        .zip(stereo.0.iter().chain(&stereo.1))
+    {
+        assert!((a - b).abs() < 1.0e-6, "{a} against {b}");
+    }
+}
+
+/// **A dynamic split pair moves by its channels** (decision 20): a Left/Right pair as one on equal
+/// channels and apart on a louder left; a Mid/Side pair on equal channels with only Mid moving.
+#[test]
+fn a_dynamic_split_pair_moves_by_its_channels() {
+    let pair = |placements: [Placement; 2], left_amplitude: f64| {
+        let mut engine = Engine::new(RATE);
+        for (slot, placement) in placements.into_iter().enumerate() {
+            engine.set_band(slot, bell(1_000.0, 0.0));
+            engine.set_dynamics(slot, CUT);
+            engine.set_placement(slot, placement);
+        }
+        let mut left = sine(24_000, 1_000.0, left_amplitude);
+        let mut right = sine(24_000, 1_000.0, 0.05);
+        engine.process_stereo(&mut left, &mut right);
+        (engine.gains_db(0).unwrap().1, engine.gains_db(1).unwrap().1)
+    };
+    let (left, right) = pair([Placement::Left, Placement::Right], 0.05);
+    assert_eq!(left, right, "equal channels move a Left/Right pair as one");
+    let (left, right) = pair([Placement::Left, Placement::Right], 0.5);
+    assert!(
+        left < right - 1.0,
+        "a louder left moves the left further: {left} {right}"
+    );
+    let (mid, side) = pair([Placement::Mid, Placement::Side], 0.05);
+    assert!(
+        mid < -3.0 && side == 0.0,
+        "equal channels have no side: {mid} {side}"
+    );
+}
