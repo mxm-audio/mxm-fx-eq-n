@@ -2444,6 +2444,7 @@ dependencies = [
 name = "mxm-fx-eq-n-dsp"
 version = "0.1.0"
 dependencies = [
+ "mxm-fft",
  "mxm-measure",
 ]
 
