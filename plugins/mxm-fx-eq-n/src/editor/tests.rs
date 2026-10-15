@@ -2296,3 +2296,59 @@ fn each_channel_line_is_what_its_channel_renders() {
         assert!(!curves.channels.is_empty(), "{bands:?}");
     }
 }
+
+/// **A placed band's Solo is drawn disabled in mono**, as it offers none (plan §7.3), and enabled
+/// again in stereo.
+#[test]
+fn a_placed_band_s_solo_is_disabled_in_mono() {
+    let solo_disabled = |mono: bool| {
+        let mut rig = Rig::new();
+        rig.ctx.enable_accesskit();
+        rig.press(Vec::new());
+        rig.app.insert_at(1_000.0);
+        rig.press(Vec::new());
+        set_plain_int(&rig.app.params.places[0].placement, 1);
+        rig.app.telemetry.publish_channels(if mono { 1 } else { 2 });
+        rig.press(Vec::new());
+        let output = rig.frame(Rig::opening(), Vec::new());
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("an accessibility tree");
+        let (_, node) = update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label().is_some_and(|label| label.starts_with("Solo")))
+            .expect("the Solo toggle");
+        node.is_disabled()
+    };
+    assert!(solo_disabled(true), "disabled in mono");
+    assert!(!solo_disabled(false), "enabled in stereo");
+}
+
+/// **The point's reading names its placement**: always in a stereo layout, Stereo included; in
+/// mono only a placed band's, with why it is not heard.
+#[test]
+fn the_point_reading_names_the_placement() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    rig.press(Vec::new());
+    assert!(
+        rig.app.point_text(0).ends_with("Stereo"),
+        "{}",
+        rig.app.point_text(0)
+    );
+    set_plain_int(&rig.app.params.places[0].placement, 1);
+    rig.press(Vec::new());
+    assert!(rig.app.point_text(0).ends_with("Left"));
+    rig.app.telemetry.publish_channels(1);
+    assert!(rig.app.point_text(0).ends_with("Left, not heard in mono"));
+    set_plain_int(&rig.app.params.places[0].placement, 0);
+    rig.press(Vec::new());
+    assert!(
+        !rig.app.point_text(0).contains("Stereo"),
+        "{}",
+        rig.app.point_text(0)
+    );
+}

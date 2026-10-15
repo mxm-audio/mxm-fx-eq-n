@@ -264,3 +264,65 @@ fn the_complex_response_has_the_shipped_magnitude() {
         }
     }
 }
+
+/// **In mono a placed band does no work**: an engine whose one band is placed is dry, and passes
+/// ordinary samples, NaN and subnormals bit for bit (the wet path would zero the last two).
+#[test]
+fn in_mono_a_placed_band_leaves_the_engine_dry() {
+    let mut engine = placed(Placement::Left, bell(1_000.0, 12.0));
+    let mut settle = sine(4_800, 1_000.0, 0.25);
+    engine.process_mono(&mut settle);
+    let input = [0.25f32, f32::NAN, f32::from_bits(1), -1.0e-40, 0.0, -0.5];
+    let mut buffer = input.repeat(64);
+    engine.process_mono(&mut buffer);
+    assert!(engine.is_dry(), "a mono engine of placed bands is dry");
+    let bits = |samples: &[f32]| samples.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&buffer), bits(&input.repeat(64)));
+}
+
+/// **A placement change waits with the band's own transition**: set while another fade runs, the
+/// detector keeps the old channel until that fade ends and the placement's own begins.
+#[test]
+fn a_queued_placement_change_keeps_the_old_channel_until_it_starts() {
+    let mut engine = Engine::new(RATE);
+    engine.set_band(0, bell(1_000.0, 0.0));
+    engine.set_dynamics(
+        0,
+        Dynamics {
+            range_db: -12.0,
+            threshold_db: -40.0,
+            attack_ms: 0.5,
+            release_ms: 50.0,
+        },
+    );
+    engine.set_placement(0, Placement::Left);
+    engine.reset();
+    let interval = engine.control_interval();
+    let quiet_left_loud_right = |engine: &mut Engine, frames: usize| {
+        let mut left = sine(frames, 1_000.0, 0.001);
+        let mut right = sine(frames, 1_000.0, 0.5);
+        engine.process_stereo(&mut left, &mut right);
+    };
+    // A structural fade in progress: the shape changes, and its fade takes over a control step.
+    engine.set_band(
+        0,
+        Band {
+            shape: Some(Shape::LowShelf),
+            ..bell(1_000.0, 0.0)
+        },
+    );
+    quiet_left_loud_right(&mut engine, interval);
+    engine.set_placement(0, Placement::Right);
+    let fade = engine.fade_frames();
+    quiet_left_loud_right(&mut engine, fade.saturating_sub(2 * interval));
+    assert_eq!(
+        engine.gains_db(0).unwrap().1,
+        0.0,
+        "still listening to the quiet left during the shape's fade"
+    );
+    quiet_left_loud_right(&mut engine, 4 * fade + 4_800);
+    assert!(
+        engine.gains_db(0).unwrap().1 < -6.0,
+        "on the loud right once its own transition ran"
+    );
+}

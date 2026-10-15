@@ -412,12 +412,13 @@ impl EqApp {
                 text += &format!("   {} dB/oct", band.slope.db_per_octave());
             }
         }
+        // Its placement, always in a stereo layout; in mono only a placed band's (plan §7.3).
         let placement = self.placement_now(slot);
-        if placement != Placement::Stereo {
+        if !self.telemetry.mono() || placement != Placement::Stereo {
             text += &format!("   {}", crate::params::placement_name(placement));
-            if !self.placement_heard(slot) {
-                text += ", not heard in mono";
-            }
+        }
+        if !self.placement_heard(slot) {
+            text += ", not heard in mono";
         }
         if band.bypass {
             text += "   bypassed";

@@ -38,8 +38,9 @@ F1.5's and SC.4's. No control map (plan §6): no collection role fits on-demand 
   `-n` is descriptive (*n* bands), not a box number (root `AGENTS.md`, *Naming*).
 - **Layouts** (brief A1; plan §7.2), four and their order permanent, a configuration's id being
   its index: stereo and mono each with a **"Side chain"** input of the main's channel count, then
-  plain stereo and mono, which MXM Player selects. The two channels are processed identically. No
-  note port, so no developer channel (`plugins/AGENTS.md`, *A developer channel*).
+  plain stereo and mono, which MXM Player selects. A Stereo band treats both channels alike; a
+  placed band works on its own channel (plan §7.3). No note port, so no developer channel
+  (`plugins/AGENTS.md`, *A developer channel*).
 - **290 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7

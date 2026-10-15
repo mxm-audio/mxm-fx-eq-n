@@ -346,6 +346,23 @@ impl BandEngine {
         })
     }
 
+    /// The placement the audio is at or heading to: what the detector and solo follow, so a change
+    /// set while another fade runs waits with the band's own transition (plan §7.3).
+    fn effective_placement(&self) -> Placement {
+        self.destination
+            .map_or(Placement::Stereo, |structure| structure.placement)
+    }
+
+    /// Whether an arm of the band is Stereo: in mono only those are heard.
+    fn has_stereo_arm(&self) -> bool {
+        let stereo = |running: &Option<Running>| {
+            running
+                .as_ref()
+                .is_some_and(|running| running.structure.placement == Placement::Stereo)
+        };
+        stereo(&self.current) || stereo(&self.previous)
+    }
+
     /// Whether an arm of the band runs on the mid or the side, so the mid/side stage must run.
     fn has_mid_side_arm(&self) -> bool {
         let mid_side = |running: &Option<Running>| {
@@ -360,7 +377,7 @@ impl BandEngine {
     /// the linked peak of both (F1), a placed band its own channel (decision 20), a placed band in
     /// mono nothing.
     fn detect<const C: usize>(&mut self, source: [f64; C]) {
-        let peak = match self.placement {
+        let peak = match self.effective_placement() {
             Placement::Stereo => self
                 .detector
                 .process(source)
@@ -444,6 +461,12 @@ impl BandEngine {
         let old = self.current.take();
         let old_parked = self.parked;
         self.parked = false;
+        let placement = |structure: Option<Structure>| structure.map(|s| s.placement);
+        if placement(wanted) != placement(self.destination) {
+            // The detector moves to its new channel with the band's own transition.
+            self.detector_for = None;
+            self.peak = 0.0;
+        }
         self.destination = wanted;
         if old.is_none() {
             // Out of silence the band starts where it is drawn, not gliding from the values the
@@ -693,6 +716,9 @@ pub struct Engine {
     dry: bool,
     /// Whether the interval in progress has heard a nonzero input sample.
     heard_input: bool,
+    /// The layout the block calls run, mono or stereo: an engine is built for one, so this is
+    /// known from the first call. In mono a band placed off Stereo is not in the sound (§7.3).
+    mono: bool,
 }
 
 impl Engine {
@@ -722,6 +748,7 @@ impl Engine {
             countdown: 0,
             dry: true,
             heard_input: false,
+            mono: false,
         }
     }
 
@@ -793,14 +820,10 @@ impl Engine {
     }
 
     /// Where a slot works in the stereo image (plan §7.3). A change is a change of structure,
-    /// faded as one; the detector starts fresh on its new channel.
+    /// faded as one; the detector and solo move to the new channel when that transition starts.
     pub fn set_placement(&mut self, slot: usize, placement: Placement) {
         if let Some(band) = self.bands.get_mut(slot) {
-            if band.placement != placement {
-                band.placement = placement;
-                band.detector_for = None;
-                band.peak = 0.0;
-            }
+            band.placement = placement;
         }
     }
 
@@ -931,7 +954,10 @@ impl Engine {
     /// Nothing to do: every band parked or dry with no fade, no audition, the output at exactly
     /// 0 dB. The buffer is then left untouched.
     pub fn is_dry(&self) -> bool {
-        self.bands.iter().all(|band| !band.active())
+        // In mono a band with no Stereo arm is not in the sound, so it renders nothing (§7.3).
+        self.bands
+            .iter()
+            .all(|band| !band.active() || (self.mono && !band.has_stereo_arm()))
             && self.solo.slot.is_none()
             && self.solo.mix == 0.0
             && self.output_left == 0
@@ -1001,9 +1027,10 @@ impl Engine {
     /// The band whose audition should be built: the one asked for, if it is live and offers solo.
     fn solo_wanted(&self) -> Option<usize> {
         self.solo.wanted.filter(|&slot| {
-            self.bands[slot]
-                .destination
-                .is_some_and(|structure| structure.shape.offers_solo())
+            self.bands[slot].destination.is_some_and(|structure| {
+                structure.shape.offers_solo()
+                    && (!self.mono || structure.placement == Placement::Stereo)
+            })
         })
     }
 
@@ -1038,6 +1065,7 @@ impl Engine {
 
     /// Runs the block, starting a control interval wherever the one in progress ends.
     fn run<const C: usize>(&mut self, mut channels: [&mut [f32]; C], key: Option<[&[f32]; C]>) {
+        self.mono = C == 1;
         let frames = channels[0].len();
         let mut start = 0;
         while start < frames {
@@ -1213,7 +1241,7 @@ impl Engine {
         let matches = |slot: usize, solo: &Solo| {
             bands[slot].destination == solo.structure
                 && keyed(&bands[slot], solo.structure) == solo.keyed
-                && bands[slot].placement == solo.placement
+                && bands[slot].effective_placement() == solo.placement
         };
         let current = solo.slot.is_some()
             && solo.slot == valid
@@ -1233,7 +1261,7 @@ impl Engine {
                         solo.slot = Some(slot);
                         solo.structure = Some(structure);
                         solo.keyed = keyed(band, Some(structure));
-                        solo.placement = band.placement;
+                        solo.placement = band.effective_placement();
                         solo.filter = Filter::fresh(&cascade);
                     }
                 }

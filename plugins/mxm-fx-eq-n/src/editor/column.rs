@@ -80,6 +80,8 @@ const MOVING_DESCRIPTION: &str =
 const MOVING_HEIGHT: f32 = 10.0;
 const MOVING_SPAN_DB: f32 = 30.0;
 const SOLO_DESCRIPTION: &str = "Plays only what this band works on, until it is pressed again.";
+const SOLO_MONO_DESCRIPTION: &str = "This band works on one part of a stereo image, which a mono track does not have, so there is \
+     nothing of it to play.";
 const SOLO_KEYED_DESCRIPTION: &str =
     "Plays the side chain as this band hears it, until it is pressed again.";
 const SIDE_CHAIN_DESCRIPTION: &str = "The band moves with the side-chain input, heard through the \
@@ -710,7 +712,9 @@ impl EqApp {
                     // played), drawn as every toggle is, the Analyser's beside it (the owner: "Is
                     // there no standard for that?"). OPEN presses it as a click does.
                     let pressed = navigation::at(ui, SOLO_KEY, |ui| {
-                        ui.add_enabled_ui(!bypassed, |ui| {
+                        // Disabled whenever the band offers none: bypassed, or placed in mono
+                        // (plan §7.3), the hover saying which.
+                        ui.add_enabled_ui(self.offers_solo(slot), |ui| {
                             mxm_ui::control::toggle_sized(
                                 ui,
                                 tokens,
@@ -718,7 +722,9 @@ impl EqApp {
                                 "Solo",
                                 &mut on,
                                 false,
-                                if self.listens_to_key(slot) {
+                                if !self.placement_heard(slot) {
+                                    SOLO_MONO_DESCRIPTION
+                                } else if self.listens_to_key(slot) {
                                     SOLO_KEYED_DESCRIPTION
                                 } else {
                                     SOLO_DESCRIPTION
