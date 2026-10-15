@@ -207,6 +207,9 @@ pub struct EqApp {
     /// When the wheel last turned Q, which ends its gesture after a pause.
     pub(crate) wheel_until: Option<f64>,
     pub(crate) context_slot: Option<usize>,
+    /// MENU asked for the selected band's menu (mxm-keys' MENU, the right-click menu of what the
+    /// cursor is on); the graph opens it at the band's point.
+    pub(crate) menu_asked: bool,
     /// A held solo this frame: Ctrl/Cmd held on a point.
     pub(crate) pointer_solo: Option<usize>,
     /// The band the Solo button latched, until it is pressed again, another band is selected,
@@ -260,6 +263,7 @@ impl EqApp {
             open: Open::default(),
             wheel_until: None,
             context_slot: None,
+            menu_asked: false,
             pointer_solo: None,
             latched: None,
             solo_endings: 0,
@@ -914,6 +918,14 @@ impl EqApp {
             Output::Action(Action::Add) => {
                 self.end_gesture(true);
                 self.insert_at(self.focus_freq);
+            }
+            // The selected band's right-click menu; on the line, with no band, there is none.
+            Output::Action(Action::Menu) => {
+                self.end_gesture(true);
+                if let Some(slot) = self.selected {
+                    self.context_slot = Some(slot);
+                    self.menu_asked = true;
+                }
             }
             Output::Action(Action::Remove | Action::Delete | Action::Ripple) => {
                 self.end_gesture(true);

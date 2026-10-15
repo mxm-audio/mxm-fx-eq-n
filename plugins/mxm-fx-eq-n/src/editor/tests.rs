@@ -243,6 +243,7 @@ const MICRO: Job = Job::Step(mxm_keys::Step::Micro);
 const ADD: Job = Job::Action(mxm_keys::Action::Add);
 const DELETE: Job = Job::Action(mxm_keys::Action::Delete);
 const OUT: Job = Job::Out;
+const MENU: Job = Job::Action(mxm_keys::Action::Menu);
 const BACK: Job = Job::Back;
 const VIEW: Job = Job::View;
 
@@ -2396,4 +2397,34 @@ fn an_unheard_band_has_no_range_line() {
     assert!(rig.app.range_reach_db(0).is_some());
     rig.app.telemetry.publish_channels(1);
     assert_eq!(rig.app.range_reach_db(0), None);
+}
+
+/// **MENU on the graph opens the selected band's menu** (mxm-keys' MENU: the right-click menu of
+/// what the cursor is on), the one a right-click opens; with no band selected it opens none.
+#[test]
+fn menu_on_the_graph_opens_the_selected_band_s_menu() {
+    let menu_shown = |rig: &mut Rig| {
+        let output = rig.frame(Rig::opening(), Vec::new());
+        output
+            .platform_output
+            .accesskit_update
+            .is_some_and(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.label().is_some_and(|label| label == "Delete"))
+            })
+    };
+    let mut rig = Rig::new();
+    rig.ctx.enable_accesskit();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    rig.type_keys(&[job_key(MENU)]);
+    assert!(!menu_shown(&mut rig), "no band, no menu");
+    rig.type_keys(&[job_key(ADD)]);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.selected, Some(0));
+    rig.type_keys(&[job_key(MENU)]);
+    assert!(menu_shown(&mut rig), "the band's menu");
+    assert_eq!(rig.app.context_slot, Some(0));
 }

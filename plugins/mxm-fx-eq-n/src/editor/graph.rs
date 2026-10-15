@@ -531,7 +531,17 @@ impl EqApp {
                 self.select(slot);
             }
         }
-        response.context_menu(|ui| self.context_menu(ui));
+        // MENU opens the same menu a right-click does, at the selected band's point.
+        let keys = std::mem::take(&mut self.menu_asked)
+            .then(|| {
+                let slot = self.selected?;
+                positions
+                    .iter()
+                    .find(|(other, _)| *other == slot)
+                    .map(|(_, at)| Rect::from_center_size(*at, Vec2::splat(2.0 * POINT_RADIUS)))
+            })
+            .flatten();
+        mxm_ui::reach::context_menu(response, keys, |ui| self.context_menu(ui));
 
         // Ctrl/Cmd held on a point solos it, from the press to the release.
         if modifiers.command
