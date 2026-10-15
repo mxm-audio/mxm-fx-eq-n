@@ -261,7 +261,7 @@ fn pictures() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/layout-tree/mxm-fx-eq-n")
         .join(tag);
-    for (sub, bands) in [("empty", 0usize), ("bands", 4)] {
+    for (sub, bands) in [("empty", 0usize), ("bands", 4), ("frozen", 1)] {
         let mut rig = Rig::new();
         rig.frame(Rig::opening(), Vec::new());
         for (index, (freq, shape)) in [
@@ -281,6 +281,25 @@ fn pictures() {
                 let value = if index == 1 { 6.0 } else { -4.5 };
                 rig.app.instant(&[(gain, rig.app.normalised(gain, value))]);
             }
+        }
+        if sub == "frozen" {
+            // Two resonances held over a sloping floor, frozen: the markers and their labels.
+            let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+            let freqs = graph::Curves::compute(&rig.app, &axes).freqs;
+            let levels: Vec<f32> = freqs
+                .iter()
+                .map(|&f| {
+                    let bell = |centre: f32, height: f32| {
+                        let detune = 8.0 * (f / centre - centre / f);
+                        height / (1.0 + detune * detune)
+                    };
+                    let floor = 1.0e-5 * (100.0 / f).min(10.0);
+                    10.0 * (floor + bell(320.0, 1.0e-3) + bell(3_100.0, 2.0e-4)).log10()
+                })
+                .collect();
+            rig.app.hold.push(0.0, &levels);
+            rig.app.hold_post = Some(true);
+            rig.app.freeze_asked = true;
         }
         let mut app = rig.app;
         tree_checks::pictures(&|_| {}, Rig::opening(), &dir.join(sub), &mut |ui| {
@@ -476,9 +495,13 @@ fn the_cursor_reaches_and_operates_every_control() {
                 "key_1",
                 "place_1",
                 "split",
+                "freeze",
             ][..],
         ),
-        (Shape::LowCut, &["q_1", "slope_1", "place_1", "split"][..]),
+        (
+            Shape::LowCut,
+            &["q_1", "slope_1", "place_1", "split", "freeze"][..],
+        ),
     ] {
         let params = Arc::new(EqParams::default());
         let recorder = Arc::new(mxm_plugin_test::keyboard_checks::Recorder::default());
@@ -2455,4 +2478,134 @@ fn the_side_chain_view_is_offered_only_with_the_port() {
         rig.app.telemetry.side_chain_wanted(),
         "the view reaches the audio thread"
     );
+}
+
+/// A rig whose analyser holds a resonance at `centre` over a floor, frozen: the hold is fed that
+/// spectrum, then Freeze is asked for and a frame makes it.
+fn frozen_rig(centre: f32) -> Rig {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let freqs = graph::Curves::compute(&rig.app, &axes).freqs;
+    let levels: Vec<f32> = freqs
+        .iter()
+        .map(|&f| {
+            let detune = 8.0 * (f / centre - centre / f);
+            10.0 * (1.0e-6 + 1.0e-3 / (1.0 + detune * detune)).log10()
+        })
+        .collect();
+    let now = rig.ctx.input(|input| input.time);
+    rig.app.hold.push(now, &levels);
+    rig.app.hold_post = Some(true);
+    rig.app.freeze_asked = true;
+    rig.press(Vec::new());
+    rig
+}
+
+/// **Freeze holds the last two seconds and marks its peaks** (plan §7.4); a change of an analyser
+/// setting, the analyser off, the editor closed and a restore each end it.
+#[test]
+fn freeze_holds_marks_its_peaks_and_ends_on_any_change_under_it() {
+    let rig = frozen_rig(1_000.0);
+    let frozen = rig.app.frozen.as_ref().expect("frozen");
+    assert!(frozen.source_post, "post, as it is shown");
+    assert_eq!(frozen.peaks.len(), 1);
+    assert!((frozen.peaks[0].freq / 1_000.0).log2().abs() < 0.05);
+    let held = frozen.post.clone();
+    let mut rig = rig;
+    for _ in 0..30 {
+        rig.press(Vec::new());
+    }
+    assert_eq!(
+        rig.app.frozen.as_ref().unwrap().post,
+        held,
+        "nothing moves while frozen"
+    );
+
+    let mut settings = rig.app.params.view.get();
+    settings.tilt = crate::view::Tilt::Three;
+    rig.app.set_view(settings);
+    rig.press(Vec::new());
+    assert!(rig.app.frozen.is_none(), "a setting change ends it");
+
+    let mut rig = frozen_rig(1_000.0);
+    let mut off = rig.app.params.view.get();
+    off.analyser = false;
+    rig.app.set_view(off);
+    rig.press(Vec::new());
+    assert!(!rig.app.freezing(), "the analyser off ends it");
+
+    let mut rig = frozen_rig(1_000.0);
+    rig.app.detach();
+    assert!(rig.app.frozen.is_none(), "closing the editor ends it");
+
+    let mut rig = frozen_rig(1_000.0);
+    nice_plug::params::persist::PersistentField::set(
+        &rig.app.params.view,
+        rig.app.params.view.get(),
+    );
+    rig.press(Vec::new());
+    assert!(rig.app.frozen.is_none(), "a restore ends it");
+}
+
+/// **A grab makes a bell at the peak, its Q from the width, its gain from the drag** (plan §7.4),
+/// as one undo step; the frequency stays at the peak.
+#[test]
+fn a_drag_from_a_peak_makes_its_bell_as_one_step() {
+    let mut rig = frozen_rig(1_000.0);
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let from = egui::pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+    let depth = rig.depth();
+    let to = from + egui::vec2(40.0, 60.0);
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=8 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 8.0), None));
+    }
+    rig.press(pointer(to, Some(false)));
+    let band = rig.band(0);
+    assert_eq!(band.shape, Some(Shape::Bell));
+    assert!(
+        (band.freq / peak.freq - 1.0).abs() < 1.0e-3,
+        "at the peak: {}",
+        band.freq
+    );
+    assert!((band.q - peak.q).abs() < 1.0e-3, "its width's Q");
+    assert!(band.gain_db < -1.0, "down cuts: {}", band.gain_db);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **The keyboard grabs too**: frozen with no band selected, → walks the peaks and ADD makes the
+/// focused one's bell.
+#[test]
+fn the_keyboard_walks_the_peaks_and_add_grabs_one() {
+    let mut rig = frozen_rig(2_000.0);
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    rig.app.focus_freq = 100.0;
+    rig.app.on_surface(mxm_keys::Output::Navigate {
+        direction: mxm_keys::Direction::Right,
+        coarse: false,
+    });
+    assert_eq!(rig.app.focus_peak, Some(0));
+    assert_eq!(rig.app.focus_freq, peak.freq);
+    rig.app
+        .on_surface(mxm_keys::Output::Action(mxm_keys::Action::Add));
+    rig.press(Vec::new());
+    let band = rig.band(0);
+    assert!((band.freq / peak.freq - 1.0).abs() < 1.0e-3);
+    assert!((band.q - peak.q).abs() < 1.0e-3);
+}
+
+/// **With every slot in use a peak makes nothing.**
+#[test]
+fn a_full_set_grabs_nothing() {
+    let mut rig = frozen_rig(1_000.0);
+    for slot in 0..SLOTS {
+        rig.app.insert_at(30.0 * 1.3f32.powi(slot as i32));
+    }
+    rig.press(Vec::new());
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    assert!(!rig.app.free_slot_exists());
+    assert_eq!(rig.app.insert_peak(peak, false), None);
 }

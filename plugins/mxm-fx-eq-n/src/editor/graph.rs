@@ -27,7 +27,7 @@ use mxm_ui::visual::{AXIS_STROKE, CANVAS_RADIUS, EMPHASIS_STROKE};
 use nice_plug::prelude::Param;
 
 use super::spectrum::FLOOR_DB;
-use super::{Edge, EqApp, Field, band_index, graph_id};
+use super::{Edge, EqApp, Field, band_index, grab, graph_id};
 use crate::params::shape_name;
 use crate::view::Show;
 
@@ -76,7 +76,7 @@ impl Axes {
         (self.inner.center().y - y) / (self.inner.height() * 0.5).max(1.0) * GAIN_RANGE as f32
     }
 
-    fn spectrum_y(&self, db: f32) -> f32 {
+    pub fn spectrum_y(&self, db: f32) -> f32 {
         let t = ((db - SPECTRUM_BOTTOM_DB) / -SPECTRUM_BOTTOM_DB).clamp(0.0, 1.05);
         self.inner.bottom() - t * self.inner.height()
     }
@@ -87,7 +87,14 @@ impl Axes {
 pub struct Drag {
     pub slot: usize,
     pub pos: Pos2,
+    /// A grab's drag (plan §7.4): the bell stays at its peak and only its gain follows.
+    pub gain_only: bool,
 }
+
+/// The hover over a frozen peak (plan §7.4).
+const PEAK_DESCRIPTION: &str =
+    "Drag up or down to make a bell at this peak, its width set from the peak's.";
+const PEAK_FULL_DESCRIPTION: &str = "Every band slot is in use, so a peak cannot make a bell.";
 
 /// What the graph draws this frame, from the bands' designs.
 pub struct Curves {
@@ -443,6 +450,23 @@ impl EqApp {
         Some((band.gain_db + range).clamp(-limit, limit) * self.gain_scale_now())
     }
 
+    /// The frozen peak whose marker is at `at`, the nearest within the hit radius.
+    pub(crate) fn peak_at(&self, axes: &Axes, at: Pos2) -> Option<grab::Peak> {
+        let frozen = self.frozen.as_ref()?;
+        frozen
+            .peaks
+            .iter()
+            .map(|peak| {
+                (
+                    *peak,
+                    pos2(axes.x(peak.freq), axes.spectrum_y(peak.db)).distance(at),
+                )
+            })
+            .filter(|&(_, distance)| distance <= HIT_RADIUS)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(peak, _)| peak)
+    }
+
     pub(crate) fn point_position(&self, axes: &Axes, band: &Band) -> Pos2 {
         let scale = self.gain_scale_now();
         let db = match band.shape {
@@ -525,6 +549,19 @@ impl EqApp {
         let modifiers = ui.input(|input| input.modifiers);
         let pointer = response.interact_pointer_pos();
 
+        // A frozen peak under the pointer says what a drag from it does, or why it cannot.
+        if let Some(at) = response.hover_pos()
+            && hit(at).is_none()
+            && self.peak_at(axes, at).is_some()
+        {
+            let text = if self.free_slot_exists() {
+                PEAK_DESCRIPTION
+            } else {
+                PEAK_FULL_DESCRIPTION
+            };
+            response.clone().on_hover_text_at_pointer(text);
+        }
+
         if response.secondary_clicked() {
             self.context_slot = pointer.and_then(hit);
             if let Some(slot) = self.context_slot {
@@ -571,8 +608,15 @@ impl EqApp {
                 .or(pointer);
             if let Some(origin) = origin {
                 self.close_open();
-                // From the line, the new band is made inside the drag's gesture.
-                let slot = hit(origin).or_else(|| {
+                // From a frozen peak, the drag grabs it (plan §7.4); from the line, the new band
+                // is made inside the drag's gesture.
+                let point = hit(origin);
+                let peak = point
+                    .is_none()
+                    .then(|| self.peak_at(axes, origin))
+                    .flatten();
+                let grabbed = peak.and_then(|peak| self.insert_peak(peak, true));
+                let slot = point.or(grabbed).or_else(|| {
                     (curves.distance(axes, origin) <= LINE_HIT)
                         .then(|| self.insert_opened(axes.freq(origin.x)))
                         .flatten()
@@ -583,6 +627,7 @@ impl EqApp {
                     self.drag = Some(Drag {
                         slot,
                         pos: self.point_position(axes, &band),
+                        gain_only: grabbed.is_some(),
                     });
                 }
             }
@@ -593,11 +638,13 @@ impl EqApp {
         {
             let fine = if modifiers.shift { 0.1 } else { 1.0 };
             drag.pos += response.drag_delta() * fine;
-            let (slot, pos) = (drag.slot, drag.pos);
-            let freq = axes.freq(pos.x).clamp(FREQ_MIN as f32, self.high());
-            let freq_index = band_index(slot, Field::Freq);
-            self.send(freq_index, self.normalised(freq_index, freq));
-            self.focus_freq = freq;
+            let (slot, pos, gain_only) = (drag.slot, drag.pos, drag.gain_only);
+            if !gain_only {
+                let freq = axes.freq(pos.x).clamp(FREQ_MIN as f32, self.high());
+                let freq_index = band_index(slot, Field::Freq);
+                self.send(freq_index, self.normalised(freq_index, freq));
+                self.focus_freq = freq;
+            }
             let band = self.band_now(slot);
             let scale = self
                 .params
@@ -756,9 +803,62 @@ impl EqApp {
 
         // The spectra, behind everything: post as a fill, pre as an outline.
         let settings = self.params.view.get();
+        if !settings.analyser && self.freezing() {
+            self.unfreeze();
+        }
         if settings.analyser {
-            self.spectrum
-                .analyse(&curves.freqs, ui.input(|input| input.time), &settings);
+            let now = ui.input(|input| input.time);
+            self.spectrum.analyse(&curves.freqs, now, &settings);
+            // A freeze holds one source and one representation (plan §7.4): a setting, the size or
+            // a reset under it ends it.
+            let generation = self.spectrum.generation();
+            if self
+                .frozen
+                .as_ref()
+                .is_some_and(|frozen| !frozen.holds(&settings, generation, curves.xs.len()))
+            {
+                self.unfreeze();
+            }
+            let post_shown = matches!(settings.show, Show::Post | Show::Both);
+            if self.frozen.is_none() {
+                if self.hold_post != Some(post_shown) {
+                    self.hold.clear();
+                    self.hold_post = Some(post_shown);
+                }
+                let source = if post_shown {
+                    &self.spectrum.post_db
+                } else {
+                    &self.spectrum.pre_db
+                };
+                self.hold.push(now, source);
+            }
+            if std::mem::take(&mut self.freeze_asked) && self.frozen.is_none() {
+                let held = self.hold.highest();
+                if held.len() == curves.xs.len() {
+                    let peaks = grab::peaks(&curves.freqs, &held, SPECTRUM_BOTTOM_DB);
+                    let (post, pre) = if post_shown {
+                        let pre = if settings.show == Show::Both {
+                            self.spectrum.pre_db.clone()
+                        } else {
+                            Vec::new()
+                        };
+                        (held, pre)
+                    } else {
+                        (Vec::new(), held)
+                    };
+                    self.frozen = Some(grab::Frozen {
+                        view: settings,
+                        generation,
+                        source_post: post_shown,
+                        post,
+                        pre,
+                        peaks,
+                    });
+                }
+            }
+            let frozen = self.frozen.as_ref();
+            let post_db: &[f32] = frozen.map_or(&self.spectrum.post_db, |f| &f.post);
+            let pre_db: &[f32] = frozen.map_or(&self.spectrum.pre_db, |f| &f.pre);
             let points = |values: &[f32]| -> Vec<Pos2> {
                 curves
                     .xs
@@ -768,10 +868,10 @@ impl EqApp {
                     .collect()
             };
             if matches!(settings.show, Show::Post | Show::Both)
-                && self.spectrum.post_db.len() == curves.xs.len()
-                && self.spectrum.post_db.iter().any(|db| *db > FLOOR_DB)
+                && post_db.len() == curves.xs.len()
+                && post_db.iter().any(|db| *db > FLOOR_DB)
             {
-                let line = points(&self.spectrum.post_db);
+                let line = points(post_db);
                 let fill = tokens.accent.gamma_multiply(0.16);
                 let mut mesh = egui::Mesh::default();
                 let bottom = axes.inner.bottom();
@@ -791,11 +891,11 @@ impl EqApp {
                 ));
             }
             if matches!(settings.show, Show::Pre | Show::Both)
-                && self.spectrum.pre_db.len() == curves.xs.len()
-                && self.spectrum.pre_db.iter().any(|db| *db > FLOOR_DB)
+                && pre_db.len() == curves.xs.len()
+                && pre_db.iter().any(|db| *db > FLOOR_DB)
             {
                 painter.add(Painted::line(
-                    points(&self.spectrum.pre_db),
+                    points(pre_db),
                     Stroke::new(AXIS_STROKE, tokens.text_secondary.gamma_multiply(0.8)),
                 ));
             }
@@ -821,6 +921,40 @@ impl EqApp {
                         egui::FontId::proportional(11.0),
                         tokens.text_primary,
                     );
+                }
+            }
+            // A freeze's peaks (plan §7.4): a marker and its frequency, strongest first, a label
+            // that would overlap a stronger one's not drawn; the keyboard's peak ringed.
+            if let Some(frozen) = &self.frozen {
+                let font = egui::FontId::proportional(11.0);
+                let mut taken: Vec<Rect> = Vec::new();
+                for (index, peak) in frozen.peaks.iter().enumerate() {
+                    let at = pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+                    painter.circle_stroke(
+                        at,
+                        4.0,
+                        Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
+                    );
+                    if self.focus_peak == Some(index) && self.selected.is_none() {
+                        painter.circle_stroke(at, 8.0, Stroke::new(EMPHASIS_STROKE, tokens.focus));
+                    }
+                    let text = format_freq(peak.freq);
+                    let galley =
+                        painter.layout_no_wrap(text.clone(), font.clone(), tokens.text_primary);
+                    let rect = Rect::from_center_size(
+                        at - vec2(0.0, 8.0 + galley.size().y / 2.0),
+                        galley.size() + vec2(4.0, 2.0),
+                    );
+                    if taken.iter().all(|other| !other.intersects(rect)) {
+                        painter.text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            font.clone(),
+                            tokens.text_primary,
+                        );
+                        taken.push(rect);
+                    }
                 }
             }
         }

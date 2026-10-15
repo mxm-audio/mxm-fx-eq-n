@@ -213,6 +213,14 @@ pub struct EqApp {
     pub(crate) menu_asked: bool,
     /// A held solo this frame: Ctrl/Cmd held on a point.
     pub(crate) pointer_solo: Option<usize>,
+    /// The display's last two seconds, for a freeze (plan §7.4), and which source it holds.
+    pub(crate) hold: grab::Hold,
+    pub(crate) hold_post: Option<bool>,
+    /// The freeze in force, and a Freeze asked for this frame (made where the spectrum is drawn).
+    pub(crate) frozen: Option<grab::Frozen>,
+    pub(crate) freeze_asked: bool,
+    /// The keyboard's peak while frozen with no band selected: its place in `frozen.peaks`.
+    pub(crate) focus_peak: Option<usize>,
     /// The band the Solo button latched, until it is pressed again, another band is selected,
     /// the band leaves the sound or the patch is replaced.
     pub(crate) latched: Option<usize>,
@@ -265,6 +273,11 @@ impl EqApp {
             wheel_until: None,
             context_slot: None,
             menu_asked: false,
+            hold: grab::Hold::default(),
+            hold_post: None,
+            frozen: None,
+            freeze_asked: false,
+            focus_peak: None,
             pointer_solo: None,
             latched: None,
             solo_endings: 0,
@@ -318,6 +331,8 @@ impl EqApp {
         self.copy = None;
         self.end_solo();
         self.drag = None;
+        // A freeze is the editor's moment: closing ends it (plan §7.4).
+        self.unfreeze();
         self.telemetry.connect(false);
         self.gui = None;
         self.host = None;
@@ -716,6 +731,30 @@ impl EqApp {
         self.insert(freq, false)
     }
 
+    /// Ends a freeze, its hold and its peaks with it.
+    pub(crate) fn unfreeze(&mut self) {
+        self.frozen = None;
+        self.freeze_asked = false;
+        self.focus_peak = None;
+        self.hold.clear();
+    }
+
+    /// Whether a band can still be made: an Off slot is free.
+    pub(crate) fn free_slot_exists(&self) -> bool {
+        self.free_slot().is_some()
+    }
+
+    /// Whether Freeze is on or asked for, as its toggle shows.
+    pub(crate) fn freezing(&self) -> bool {
+        self.frozen.is_some() || self.freeze_asked
+    }
+
+    /// A grab (plan §7.4): a static bell at a peak, its Q from the peak's width, in the lowest Off
+    /// slot; `opened` keeps its fields in the drag's gesture.
+    pub(crate) fn insert_peak(&mut self, peak: grab::Peak, opened: bool) -> Option<usize> {
+        self.insert_with(peak.freq, peak.q, opened)
+    }
+
     /// The same bell, its fields opened in the gesture that follows — a drag from the line — so
     /// making it and moving it are one action, and BACK takes it away leaving nothing to undo.
     pub(crate) fn insert_opened(&mut self, freq: f32) -> Option<usize> {
@@ -723,6 +762,10 @@ impl EqApp {
     }
 
     fn insert(&mut self, freq: f32, opened: bool) -> Option<usize> {
+        self.insert_with(freq, 1.0, opened)
+    }
+
+    fn insert_with(&mut self, freq: f32, q: f32, opened: bool) -> Option<usize> {
         let slot = self.free_slot()?;
         let freq = self.clamp_freq(freq);
         let writes = self.slot_writes(
@@ -732,7 +775,7 @@ impl EqApp {
                 bypass: false,
                 freq,
                 gain_db: 0.0,
-                q: 1.0,
+                q,
                 slope: DEFAULT_SLOPE,
             },
             // A new band is static and hears its own input, whatever an earlier band in the slot
@@ -918,7 +961,20 @@ impl EqApp {
             Output::Cancel => self.end_gesture(false),
             Output::Action(Action::Add) => {
                 self.end_gesture(true);
-                self.insert_at(self.focus_freq);
+                // On a frozen peak, ADD grabs it: its bell, its Q (plan §7.4).
+                let peak = self
+                    .focus_peak
+                    .filter(|_| self.selected.is_none())
+                    .and_then(|index| self.frozen.as_ref()?.peaks.get(index).copied())
+                    .filter(|peak| (peak.freq - self.focus_freq).abs() < 1.0e-3);
+                match peak {
+                    Some(peak) => {
+                        self.insert_peak(peak, false);
+                    }
+                    None => {
+                        self.insert_at(self.focus_freq);
+                    }
+                }
             }
             // The selected band's right-click menu; on the line, with no band, there is none.
             Output::Action(Action::Menu) => {
@@ -1008,6 +1064,34 @@ impl EqApp {
             Direction::Left => false,
             Direction::Up | Direction::Down => return,
         };
+        // Frozen with no band selected, ← → walk the labelled peaks instead of the line (§7.4).
+        if self.selected.is_none()
+            && !coarse
+            && let Some(frozen) = &self.frozen
+            && !frozen.peaks.is_empty()
+        {
+            let mut by_freq: Vec<(f32, usize)> = frozen
+                .peaks
+                .iter()
+                .enumerate()
+                .map(|(index, peak)| (peak.freq, index))
+                .collect();
+            by_freq.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let from = self.focus_freq;
+            let next = if right {
+                by_freq.iter().find(|&&(freq, _)| freq > from * 1.0001)
+            } else {
+                by_freq
+                    .iter()
+                    .rev()
+                    .find(|&&(freq, _)| freq < from / 1.0001)
+            };
+            if let Some(&(freq, index)) = next {
+                self.focus_peak = Some(index);
+                self.focus_freq = freq;
+            }
+            return;
+        }
         let bands = self.by_frequency();
         let index = self
             .selected

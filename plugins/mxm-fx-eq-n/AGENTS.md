@@ -176,6 +176,7 @@ transaction.
   persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`). The **Side
   chain** view (plan §7.4), offered only on a layout with the port (`Telemetry::side_chain_port`),
   draws the key's spectrum dashed and lettered "SC"; the audio thread copies the key only then.
+  **Freeze** holds two seconds' highest levels and marks peaks a drag grabs (NOTES, *Freeze*).
 
 ## The host tests (`host-tests/`)
 

@@ -71,6 +71,8 @@ pub enum Leaf {
     Split,
     /// The side chain's spectrum as a reference line (plan §7.4).
     SideChainView,
+    /// Holds the spectrum so its peaks can be grabbed (plan §7.4).
+    Freeze,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -98,6 +100,8 @@ const GAIN_SCALE_UNHEARD: &str = concat!(
     "changes nothing now; cuts, notches and band passes stay as drawn."
 );
 const DELETE_DESCRIPTION: &str = "Removes the band. Undo brings it back.";
+const FREEZE_DESCRIPTION: &str = "Holds the spectrum's highest levels of the last two seconds and \
+     marks its peaks. Drag a peak to make a bell there. Any analyser change lets it run again.";
 const SIDE_CHAIN_VIEW_DESCRIPTION: &str = "Shows the side-chain input's spectrum as a dashed line, \
      to compare with the sound. With nothing routed to the side chain, the line stays flat.";
 const PLACEMENT_DESCRIPTION: &str = "Where the band works: on both channels, on the left or the \
@@ -373,7 +377,10 @@ pub fn analyser_tree(side_chain_port: bool) -> Node<Leaf> {
             },
         )
     };
-    let mut toggles = vec![toggle(Leaf::Analyser, "Analyser")];
+    let mut toggles = vec![
+        toggle(Leaf::Analyser, "Analyser"),
+        toggle(Leaf::Freeze, "Freeze"),
+    ];
     if side_chain_port {
         toggles.push(toggle(Leaf::SideChainView, "Side chain"));
     }
@@ -785,6 +792,32 @@ impl EqApp {
                 });
                 if changed {
                     self.set_view(settings);
+                }
+            }
+            Leaf::Freeze => {
+                let analyser = self.params.view.get().analyser;
+                let mut on = self.freezing();
+                let changed = navigation::at(ui, "freeze", |ui| {
+                    ui.add_enabled_ui(analyser, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Freeze",
+                            "Freeze",
+                            &mut on,
+                            false,
+                            FREEZE_DESCRIPTION,
+                            0.0,
+                        )
+                    })
+                    .inner
+                });
+                if changed {
+                    if on {
+                        self.freeze_asked = true;
+                    } else {
+                        self.unfreeze();
+                    }
                 }
             }
             Leaf::SideChainView => {

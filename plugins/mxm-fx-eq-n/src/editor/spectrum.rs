@@ -348,6 +348,11 @@ impl Spectrum {
         }
     }
 
+    /// The generation of the audio analysed last: a reset or a break starts another.
+    pub fn generation(&self) -> Option<u32> {
+        self.generation
+    }
+
     pub fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
@@ -512,7 +517,8 @@ mod tests {
     use super::*;
     use crate::view::{Speed, Tilt};
 
-    /// **The analyser's cost, every resolution × pre/post/both × rate** (plan §4 and §8), on the GUI
+    /// **The analyser's cost, every resolution × pre/post/both × side chain × rate** (plan §4, §7.4
+    /// and §8), on the GUI
     /// thread: one 60 Hz frame of blocks ingested and the curves analysed at 450 points, a graph
     /// about 900 points wide. Release only; the figures are in the plugin's `AGENTS.md`.
     ///
@@ -526,10 +532,14 @@ mod tests {
         let mut worst = 0.0f64;
         for rate in [44_100.0f32, 48_000.0, 96_000.0, 192_000.0] {
             for resolution in Resolution::ALL {
-                for show in Show::ALL {
+                for (show, side_chain) in Show::ALL
+                    .into_iter()
+                    .flat_map(|show| [(show, false), (show, true)])
+                {
                     let settings = ViewSettings {
                         resolution,
                         show,
+                        side_chain,
                         ..ViewSettings::default()
                     };
                     let mut spectrum = Spectrum::new(rate);
@@ -554,6 +564,8 @@ mod tests {
                                 block.pre[1][index] = -value;
                                 block.post[0][index] = value * 0.5;
                                 block.post[1][index] = value * 0.25;
+                                block.key[0][index] = value * 0.75;
+                                block.key[1][index] = -value * 0.75;
                             }
                             spectrum.ingest(&block);
                             seq += 1;
@@ -571,7 +583,10 @@ mod tests {
                     }
                     let ms = start.elapsed().as_secs_f64() * 1_000.0 / f64::from(frames);
                     worst = worst.max(ms);
-                    println!("{rate:>7} Hz  {resolution:<6?} {show:<4?}  {ms:.3} ms a frame");
+                    let key = if side_chain { "+SC" } else { "" };
+                    println!(
+                        "{rate:>7} Hz  {resolution:<6?} {show:<4?}{key:<3}  {ms:.3} ms a frame"
+                    );
                 }
             }
         }

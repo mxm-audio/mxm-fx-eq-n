@@ -75,6 +75,50 @@ impl Hold {
     }
 }
 
+/// A freeze (plan §7.4): one source and one representation, held until a setting, the size, a
+/// reset or a restore moves under it. The editor's moment, never saved.
+pub struct Frozen {
+    /// The analyser's settings it was frozen under; any change ends it.
+    pub view: crate::view::ViewSettings,
+    /// The generation of the audio it was frozen from; a reset or a new rate ends it.
+    pub generation: Option<u32>,
+    /// Whether the grabbed source is the post-EQ spectrum (else the pre-EQ one).
+    pub source_post: bool,
+    /// Each line as drawn while frozen: the source's two-second hold, and the other line's last
+    /// frame when it was shown (empty otherwise).
+    pub post: Vec<f32>,
+    pub pre: Vec<f32>,
+    /// The source's peaks, strongest first.
+    pub peaks: Vec<Peak>,
+}
+
+impl Frozen {
+    /// Whether `view` and `generation` still describe it, its lines `len` long.
+    pub fn holds(
+        &self,
+        view: &crate::view::ViewSettings,
+        generation: Option<u32>,
+        len: usize,
+    ) -> bool {
+        let same = |a: &crate::view::ViewSettings, b: &crate::view::ViewSettings| {
+            a.analyser == b.analyser
+                && a.show == b.show
+                && a.resolution == b.resolution
+                && a.speed == b.speed
+                && a.tilt == b.tilt
+        };
+        same(&self.view, view)
+            && self.generation == generation
+            && (if self.source_post {
+                &self.post
+            } else {
+                &self.pre
+            })
+            .len()
+                == len
+    }
+}
+
 /// One labelled peak of a frozen spectrum.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Peak {

@@ -171,9 +171,18 @@ and `audition.rs`'s tests hold the lifecycle.
   starts from silence. A stream Show reveals is analysed at once, without waiting for new audio. A
   settled frame allocates nothing (`a_settled_frame_allocates_nothing`).
 - **The analyser has a budget on the GUI thread**, `spectrum::BUDGET_MS` of a 60 Hz frame.
-  Measured on the Threadripper 3970X in release (`analyser_cost`, 450 points): 0.05–0.11 ms at
-  44.1 kHz, 0.07–0.16 ms at 48, 0.08–0.19 ms at 96 and 0.13–0.35 ms at 192, the long window adding
-  about 0.1 ms. Both FFT crates are optimised in dev builds, so a debug bundle animates too.
+  Measured on the Threadripper 3970X in release (`analyser_cost`, 450 points, 2026-10-15):
+  0.04–0.12 ms at 44.1 kHz, 0.06–0.19 ms at 48, 0.07–0.22 ms at 96 and 0.12–0.40 ms at 192; the
+  side-chain line adds about 0.1 ms (worst 0.49 ms, 192 kHz, Both). Both FFT crates are optimised
+  in dev builds, so a debug bundle animates too.
+- **Freeze and grab** (plan §7.4, `editor/grab.rs`): while running, the editor keeps the shown
+  source's highest level per point over two seconds (`Hold`; post when shown, else pre). Freeze
+  holds that line, the other line's last frame, and the peaks `grab::peaks` finds in it. A change
+  of Show, Resolution, Speed or Tilt, the analyser off, a size change, a reset or new rate, a
+  restore or preset load, and closing the editor each end it (`Frozen::holds`, `unfreeze`); it is
+  never saved. A drag from a peak makes a static bell at its frequency with its Q, only the gain
+  following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
+  makes the focused one's bell. With every slot in use nothing is made and the hover says why.
 
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.

@@ -28,6 +28,7 @@ impl EqApp {
         // Any change, the rule `ingest` keeps: a block at another rate is never analysed.
         if rate != self.spectrum.sample_rate() {
             self.spectrum = super::spectrum::Spectrum::new(rate);
+            self.unfreeze();
         }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
         if settings.analyser && !self.analyser_on {
@@ -73,6 +74,8 @@ impl EqApp {
         let restored = history::lock(&self.history).observe_restores(self.params.view.restores());
         if restored {
             self.abandon_gesture(&ctx);
+            // A restore ends a freeze (plan §7.4).
+            self.unfreeze();
         }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
@@ -211,6 +214,7 @@ impl EqApp {
         let replaced = history::lock(&self.history).finish_replacing();
         if replaced {
             self.abandon_gesture(ctx);
+            self.unfreeze();
         }
     }
 
