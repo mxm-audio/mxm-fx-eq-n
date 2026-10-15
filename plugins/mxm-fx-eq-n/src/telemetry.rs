@@ -22,6 +22,11 @@ pub struct Telemetry {
     sample_rate: AtomicU32,
     /// The layout's channel count, 1 or 2: in mono a placed band is disabled (plan §7.3).
     channels: AtomicU32,
+    /// Whether the layout has the side-chain port (plan §7.4): all the plugin can observe of a
+    /// route, so the Side chain view is offered only then.
+    side_chain_port: AtomicBool,
+    /// The editor's Side chain view, so the audio thread copies the key only when it is drawn.
+    side_chain_view: AtomicBool,
     /// The Out meter, post output gain: left, right.
     pub output: [PeakMeter; 2],
     /// Each slot's drawn and heard gains in dB, as `f32` bits.
@@ -37,6 +42,8 @@ impl Default for Telemetry {
             analyser_on: AtomicBool::new(true),
             sample_rate: AtomicU32::new(48_000f32.to_bits()),
             channels: AtomicU32::new(2),
+            side_chain_port: AtomicBool::new(false),
+            side_chain_view: AtomicBool::new(false),
             output: [PeakMeter::new(), PeakMeter::new()],
             gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
             heard_scale: AtomicU32::new(1f32.to_bits()),
@@ -101,6 +108,25 @@ impl Telemetry {
     /// Whether the audio thread should hand blocks to the analyser at all.
     pub fn analyser_wanted(&self) -> bool {
         self.connected() && self.analyser_on.load(Ordering::Relaxed)
+    }
+
+    pub fn publish_side_chain_port(&self, present: bool) {
+        self.side_chain_port.store(present, Ordering::Relaxed);
+    }
+
+    pub fn side_chain_port(&self) -> bool {
+        self.side_chain_port.load(Ordering::Relaxed)
+    }
+
+    pub fn set_side_chain_view(&self, on: bool) {
+        self.side_chain_view.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether the audio thread should copy the key into the analyser's blocks.
+    pub fn side_chain_wanted(&self) -> bool {
+        self.analyser_wanted()
+            && self.side_chain_port()
+            && self.side_chain_view.load(Ordering::Relaxed)
     }
 
     pub fn publish_channels(&self, channels: usize) {

@@ -1,5 +1,5 @@
-//! The analyser's audio half: blocks of pre-EQ and post-EQ audio from the audio thread to the
-//! editor (plan §4). The editor's half, the history, FFT and display, is E3's and lives with the
+//! The analyser's audio half: blocks of pre-EQ and post-EQ audio, and the side chain's key while
+//! the editor's Side chain view wants it (plan §7.4), from the audio thread to the editor (plan §4). The editor's half, the history, FFT and display, is E3's and lives with the
 //! editor; the FFT will be the shared `crates/mxm-fft`.
 //!
 //! **The handoff meets plan §4's requirements:**
@@ -32,6 +32,9 @@ pub struct Block {
     pub channels: u8,
     pub pre: [[f32; BLOCK_FRAMES]; 2],
     pub post: [[f32; BLOCK_FRAMES]; 2],
+    /// The side-chain input, while the editor's Side chain view wants it (plan §7.4); silence
+    /// otherwise.
+    pub key: [[f32; BLOCK_FRAMES]; 2],
 }
 
 impl Block {
@@ -42,6 +45,7 @@ impl Block {
         channels: 2,
         pre: [[0.0; BLOCK_FRAMES]; 2],
         post: [[0.0; BLOCK_FRAMES]; 2],
+        key: [[0.0; BLOCK_FRAMES]; 2],
     };
 }
 
@@ -97,8 +101,15 @@ impl Tap {
         self.sample_rate = sample_rate;
     }
 
-    /// Appends frames. Each slice is the same length; mono passes its channel twice.
-    pub fn capture(&mut self, channels: u8, pre: [&[f32]; 2], post: [&[f32]; 2]) {
+    /// Appends frames. Each slice is the same length; mono passes its channel twice. `key` is the
+    /// side chain's, or none, which is silence.
+    pub fn capture(
+        &mut self,
+        channels: u8,
+        pre: [&[f32]; 2],
+        post: [&[f32]; 2],
+        key: Option<[&[f32]; 2]>,
+    ) {
         if !self.wanted {
             return;
         }
@@ -106,6 +117,9 @@ impl Tap {
             for channel in 0..2 {
                 self.block.pre[channel][self.fill] = pre[channel][index];
                 self.block.post[channel][self.fill] = post[channel][index];
+                self.block.key[channel][self.fill] = key
+                    .and_then(|key| key[channel].get(index).copied())
+                    .unwrap_or(0.0);
             }
             self.fill += 1;
             if self.fill == BLOCK_FRAMES {
@@ -140,7 +154,7 @@ mod tests {
         let (mut tap, mut consumer) = ring();
         let frames = [0.5f32; BLOCK_FRAMES];
         for _ in 0..10 {
-            tap.capture(2, [&frames, &frames], [&frames, &frames]);
+            tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         }
         assert!(drain(&mut consumer).is_empty());
     }
@@ -159,6 +173,7 @@ mod tests {
                 1,
                 [&pre[at..end], &pre[at..end]],
                 [&post[at..end], &post[at..end]],
+                None,
             );
             at = end;
         }
@@ -181,14 +196,15 @@ mod tests {
         tap.discontinuity(48_000.0);
         tap.set_wanted(true);
         let frames = [0.25f32; BLOCK_FRAMES];
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         tap.capture(
             2,
             [&frames[..100], &frames[..100]],
             [&frames[..100], &frames[..100]],
+            None,
         );
         tap.discontinuity(44_100.0);
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         let blocks = drain(&mut consumer);
         assert_eq!(
             blocks.len(),
@@ -212,11 +228,11 @@ mod tests {
         tap.set_wanted(true);
         let frames = [0.25f32; BLOCK_FRAMES];
         for _ in 0..RING_BLOCKS + 3 {
-            tap.capture(2, [&frames, &frames], [&frames, &frames]);
+            tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         }
         let seqs: Vec<u64> = drain(&mut consumer).iter().map(|block| block.seq).collect();
         assert_eq!(seqs.len(), RING_BLOCKS);
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         let next = consumer.pop().unwrap().seq;
         assert!(
             next > *seqs.last().unwrap() + 1,
@@ -229,13 +245,32 @@ mod tests {
         let (mut tap, mut consumer) = ring();
         tap.set_wanted(true);
         let frames = [0.25f32; BLOCK_FRAMES];
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         tap.set_wanted(false);
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         tap.set_wanted(true);
-        tap.capture(2, [&frames, &frames], [&frames, &frames]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
         let blocks = drain(&mut consumer);
         assert_eq!(blocks.len(), 2);
         assert!(blocks[1].seq > blocks[0].seq + 1);
+    }
+    /// **The key rides with pre and post** (plan §7.4); none is silence.
+    #[test]
+    fn a_block_carries_the_key_or_silence() {
+        let (mut tap, mut consumer) = ring();
+        tap.set_wanted(true);
+        let frames = vec![0.25f32; BLOCK_FRAMES];
+        let key = vec![-0.5f32; BLOCK_FRAMES];
+        tap.capture(
+            2,
+            [&frames, &frames],
+            [&frames, &frames],
+            Some([&key, &key]),
+        );
+        let block = consumer.pop().expect("a block");
+        assert_eq!(block.key[0], [-0.5; BLOCK_FRAMES]);
+        tap.capture(2, [&frames, &frames], [&frames, &frames], None);
+        let block = consumer.pop().expect("a block");
+        assert_eq!(block.key[1], [0.0; BLOCK_FRAMES]);
     }
 }

@@ -3,7 +3,7 @@
 **Revision 26 — F3, spectrum grab and analyser extras, designed for the owner's approval**
 (2026-10-15; §7.4, decisions 23–26; its design approved by the agent-loop in round 3: 5 findings over two rounds,
 all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*, decisions 23–26 as
-proposed); F3.0 and F3.1 done; F3.2–F3.3 in progress. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
+proposed); F3.0, F3.1 and F3.3 done; F3.2 in progress. **Revision 25 — F2, per-band stereo placement, designed for the owner's approval** (2026-10-14;
 §7.3, decisions 18–22; its design approved by the agent-loop in round 3, 2026-10-14: 5 findings over
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
@@ -966,7 +966,7 @@ inside its 2 ms budget (§4); the opening size with the new toggles.
 | **F3.0** | Decisions 23–26, signed. **Done** (2026-10-15) | Owner |
 | **F3.1** | The hold, the peak picker and Q from width, in the analyser's editor half. **Built** (2026-10-15): `editor/grab.rs`, 7 tests | Unit tests at the end |
 | **F3.2** | Grab, mouse and keyboard; Freeze and Side chain in the Analyser card | Editor tests at the end |
-| **F3.3** | The side-chain line: the audio thread's copy and its analysis | Realtime and cost tests at the end; one agent-loop review of F3.1–F3.3 |
+| **F3.3** | The side-chain line: the audio thread's copy and its analysis. **Built** (2026-10-15) | Realtime and cost tests at the end; one agent-loop review of F3.1–F3.3 |
 | **F3.4** | The owner by eye and ear | Owner sign-off |
 
 ## 8. What must not break

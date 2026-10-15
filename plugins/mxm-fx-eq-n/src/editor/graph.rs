@@ -799,6 +799,30 @@ impl EqApp {
                     Stroke::new(AXIS_STROKE, tokens.text_secondary.gamma_multiply(0.8)),
                 ));
             }
+            // The side chain's spectrum, the reference line (plan §7.4): dashed and lettered, never
+            // told apart by hue; at the floor while nothing comes in.
+            if settings.side_chain
+                && self.telemetry.side_chain_port()
+                && self.spectrum.key_db.len() == curves.xs.len()
+            {
+                let line = points(&self.spectrum.key_db);
+                let end = line.last().copied();
+                painter.extend(Painted::dashed_line(
+                    &line,
+                    Stroke::new(AXIS_STROKE, tokens.text_primary.gamma_multiply(0.7)),
+                    5.0,
+                    3.0,
+                ));
+                if let Some(end) = end {
+                    painter.text(
+                        end + vec2(-4.0, -4.0),
+                        egui::Align2::RIGHT_BOTTOM,
+                        "SC",
+                        egui::FontId::proportional(11.0),
+                        tokens.text_primary,
+                    );
+                }
+            }
         }
 
         // The soloed band's region.

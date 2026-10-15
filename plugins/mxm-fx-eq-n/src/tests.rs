@@ -630,3 +630,44 @@ fn a_placement_set_through_its_parameter_is_heard_on_its_channel() {
     let mono = prepared(1);
     assert!(mono.telemetry.mono(), "a mono activation is published");
 }
+
+/// **The shell copies the side chain only while the editor shows it** (plan §7.4): an editor, the
+/// analyser on, a layout with the port and the Side chain view on; otherwise the block's key is
+/// silence.
+#[test]
+fn the_side_chain_is_copied_only_while_its_view_wants_it() {
+    let mut plugin = prepared(2);
+    let mut consumer = plugin.analyser.take().unwrap();
+    plugin.telemetry.connect(true);
+    let input = vec![0.1f32; 512];
+    let mut key = [vec![0.5f32; 512], vec![0.5f32; 512]];
+    let mut keyed = |plugin: &mut MxmFxEqN| {
+        let mut channels = [input.clone(), input.clone()];
+        let mut views: Vec<&mut [f32]> = channels.iter_mut().map(|c| c.as_mut_slice()).collect();
+        let keys: Vec<&mut [f32]> = key.iter_mut().map(|c| c.as_mut_slice()).collect();
+        plugin.process_keyed(&mut views, Some(&keys));
+    };
+    keyed(&mut plugin);
+    let block = consumer.pop().expect("a block");
+    assert_eq!(
+        block.key[0],
+        [0.0; analyser::BLOCK_FRAMES],
+        "no port, no view: silence"
+    );
+    while consumer.pop().is_ok() {}
+    plugin.telemetry.publish_side_chain_port(true);
+    plugin.telemetry.set_side_chain_view(true);
+    assert!(plugin.telemetry.side_chain_wanted());
+    keyed(&mut plugin);
+    let block = consumer.pop().expect("a block");
+    assert_eq!(
+        block.key[0],
+        [0.5; analyser::BLOCK_FRAMES],
+        "the key while it is shown"
+    );
+    plugin.telemetry.set_analyser_on(false);
+    assert!(
+        !plugin.telemetry.side_chain_wanted(),
+        "the analyser off wants none"
+    );
+}

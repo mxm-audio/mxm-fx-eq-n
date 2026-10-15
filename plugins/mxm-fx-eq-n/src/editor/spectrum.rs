@@ -41,8 +41,10 @@ const LONG_CUTOFF: f64 = 0.4;
 /// An eighth-order Butterworth as four sections: their Q values.
 const BUTTERWORTH_8: [f64; 4] = [0.509_795_6, 0.601_344_9, 0.899_976_2, 2.562_915_4];
 
-/// Pre left, pre right, post left, post right.
-const STREAMS: usize = 4;
+/// Pre left, pre right, post left, post right, key left, key right.
+const STREAMS: usize = 6;
+/// Pre, post and the side chain's key (plan §7.4).
+const OUTPUTS: usize = 3;
 
 /// One window: a ring of each stream, its plan and its working buffers, and the power per bin of
 /// pre and post.
@@ -61,10 +63,10 @@ struct Window {
     input: Vec<f32>,
     output: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
-    /// Prefix sums of the power per bin, pre and post: `sums[s][k]` is bins `0..k`.
-    sums: [Vec<f64>; 2],
-    /// Per stream, pre and post: whether its sums are current.
-    analysed: [bool; 2],
+    /// Prefix sums of the power per bin, pre, post and key: `sums[s][k]` is bins `0..k`.
+    sums: [Vec<f64>; OUTPUTS],
+    /// Per output: whether its sums are current.
+    analysed: [bool; OUTPUTS],
     /// One transform's power per bin, kept so a frame allocates nothing.
     power: Vec<f64>,
     bin_hz: f32,
@@ -93,7 +95,7 @@ impl Window {
             fft,
             window,
             scale: 4.0 / (len as f32 * energy),
-            analysed: [false; 2],
+            analysed: [false; OUTPUTS],
             power: vec![0.0; bins],
             bin_hz: rate / len as f32,
         }
@@ -102,7 +104,7 @@ impl Window {
     fn restart(&mut self) {
         self.contiguous = 0;
         self.since = 0;
-        self.analysed = [false; 2];
+        self.analysed = [false; OUTPUTS];
     }
 
     fn push(&mut self, frame: [f32; STREAMS]) {
@@ -120,22 +122,23 @@ impl Window {
 
     /// Recomputes the power per bin of the shown streams, when enough is new, or at once for a
     /// stream Show has just revealed. A hidden stream's sums fall behind, so it is not current.
-    fn analyse(&mut self, channels: usize, show: Show) {
+    fn analyse(&mut self, channels: usize, show: Show, key: bool) {
         let shown = [
             matches!(show, Show::Pre | Show::Both),
             matches!(show, Show::Post | Show::Both),
+            key,
         ];
         for (analysed, shown) in self.analysed.iter_mut().zip(shown) {
             if !shown {
                 *analysed = false;
             }
         }
-        let revealed = (0..2).any(|out| shown[out] && !self.analysed[out]);
+        let revealed = (0..OUTPUTS).any(|out| shown[out] && !self.analysed[out]);
         if !self.ready() || (!revealed && self.since < self.hop) {
             return;
         }
         self.since = 0;
-        for (out, first) in [(0, 0), (1, 2)] {
+        for (out, first) in [(0, 0), (1, 2), (2, 4)] {
             if !shown[out] {
                 self.analysed[out] = false;
                 continue;
@@ -302,6 +305,8 @@ pub struct Spectrum {
     freqs: Vec<f32>,
     pub pre_db: Vec<f32>,
     pub post_db: Vec<f32>,
+    /// The side chain's spectrum, while the Side chain view is on (plan §7.4).
+    pub key_db: Vec<f32>,
     last_time: Option<f64>,
     /// Audio came since the last analysis, when audio last came, and whether the windows hold
     /// only the sound from before a silence ([`STALE_SECONDS`]).
@@ -335,6 +340,7 @@ impl Spectrum {
             freqs: Vec::new(),
             pre_db: Vec::new(),
             post_db: Vec::new(),
+            key_db: Vec::new(),
             last_time: None,
             fresh: false,
             last_audio: None,
@@ -385,9 +391,9 @@ impl Spectrum {
             .is_some_and(|last| now - last > STALE_SECONDS);
         if silent && !self.fresh && !self.stale {
             self.stale = true;
-            self.short.analysed = [false; 2];
+            self.short.analysed = [false; OUTPUTS];
             if let Some(long) = &mut self.long {
-                long.window.analysed = [false; 2];
+                long.window.analysed = [false; OUTPUTS];
             }
         }
     }
@@ -421,6 +427,8 @@ impl Spectrum {
                 block.pre[1][index],
                 block.post[0][index],
                 block.post[1][index],
+                block.key[0][index],
+                block.key[1][index],
             ];
             self.short.push(frame);
             if let Some(long) = &mut self.long {
@@ -445,6 +453,7 @@ impl Spectrum {
             self.freqs = freqs.to_vec();
             self.pre_db = vec![FLOOR_DB; freqs.len()];
             self.post_db = vec![FLOOR_DB; freqs.len()];
+            self.key_db = vec![FLOOR_DB; freqs.len()];
         }
         let elapsed = self
             .last_time
@@ -457,9 +466,11 @@ impl Spectrum {
             self.observe(now);
         }
         if !self.stale {
-            self.short.analyse(self.channels, settings.show);
+            self.short
+                .analyse(self.channels, settings.show, settings.side_chain);
             if let Some(long) = &mut self.long {
-                long.window.analyse(self.channels, settings.show);
+                long.window
+                    .analyse(self.channels, settings.show, settings.side_chain);
             }
         }
         let long = self.long.as_ref().map(|long| &long.window);
@@ -467,7 +478,11 @@ impl Spectrum {
         let half = 2f32.powf(BAND_OCTAVES / 2.0);
         let tilt = settings.tilt.db_per_octave();
         for (index, &freq) in self.freqs.iter().enumerate() {
-            for (out, shown) in [(0, &mut self.pre_db), (1, &mut self.post_db)] {
+            for (out, shown) in [
+                (0, &mut self.pre_db),
+                (1, &mut self.post_db),
+                (2, &mut self.key_db),
+            ] {
                 let window = match long {
                     Some(long) if freq < CROSSOVER_HZ && long.analysed[out] => Some(long),
                     _ => Some(short).filter(|short| short.analysed[out]),
@@ -531,6 +546,7 @@ mod tests {
                                 channels: 2,
                                 pre: [[0.0; BLOCK_FRAMES]; 2],
                                 post: [[0.0; BLOCK_FRAMES]; 2],
+                                key: [[0.0; BLOCK_FRAMES]; 2],
                             };
                             for index in 0..BLOCK_FRAMES {
                                 let value = source(0);
@@ -586,6 +602,7 @@ mod tests {
                 channels: 2,
                 pre: [[0.0; BLOCK_FRAMES]; 2],
                 post: [[0.0; BLOCK_FRAMES]; 2],
+                key: [[0.0; BLOCK_FRAMES]; 2],
             };
             for frame in 0..BLOCK_FRAMES {
                 let value = signal(*seq as usize * BLOCK_FRAMES + frame);
@@ -718,6 +735,7 @@ mod tests {
             channels: 2,
             pre: [[0.5; BLOCK_FRAMES]; 2],
             post: [[0.5; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
         };
         spectrum.ingest(&other);
         assert_eq!(
@@ -916,5 +934,52 @@ mod tests {
         };
         spectrum.analyse(&[1_000.0], 1.0 / 60.0, &pre_only);
         assert!(spectrum.pre_db[0] > -7.0, "{}", spectrum.pre_db[0]);
+    }
+    /// **The side chain is a third reading** (plan §7.4): a key's tone reads where it is while the
+    /// Side chain view is on, and the key stays at the floor while it is off.
+    #[test]
+    fn the_key_is_read_only_while_the_side_chain_view_is_on() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        let rate = spectrum.sample_rate();
+        let blocks = (rate * 2.0) as usize / BLOCK_FRAMES;
+        let freq = 500.0f32;
+        let feed_key = |spectrum: &mut Spectrum, from: usize| {
+            for seq in from..from + blocks {
+                let mut block = Block {
+                    seq: seq as u64,
+                    generation: 0,
+                    sample_rate: rate,
+                    channels: 2,
+                    pre: [[0.0; BLOCK_FRAMES]; 2],
+                    post: [[0.0; BLOCK_FRAMES]; 2],
+                    key: [[0.0; BLOCK_FRAMES]; 2],
+                };
+                for frame in 0..BLOCK_FRAMES {
+                    let n = seq * BLOCK_FRAMES + frame;
+                    let value = (std::f32::consts::TAU * freq * n as f32 / rate).sin();
+                    block.key[0][frame] = value;
+                    block.key[1][frame] = value;
+                }
+                spectrum.ingest(&block);
+            }
+        };
+        feed_key(&mut spectrum, 0);
+        spectrum.analyse(&[freq], 0.0, &flat());
+        assert_eq!(spectrum.key_db[0], FLOOR_DB, "the view off reads no key");
+        let on = ViewSettings {
+            side_chain: true,
+            ..flat()
+        };
+        feed_key(&mut spectrum, blocks);
+        spectrum.analyse(&[freq], 0.1, &on);
+        assert!(
+            spectrum.key_db[0].abs() < 0.5,
+            "the key's tone: {}",
+            spectrum.key_db[0]
+        );
+        assert_eq!(
+            spectrum.pre_db[0], FLOOR_DB,
+            "and the silent input reads none"
+        );
     }
 }

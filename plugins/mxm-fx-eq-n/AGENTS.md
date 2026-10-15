@@ -173,7 +173,9 @@ transaction.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
   falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
-  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`).
+  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`). The **Side
+  chain** view (plan §7.4), offered only on a layout with the port (`Telemetry::side_chain_port`),
+  draws the key's spectrum dashed and lettered "SC"; the audio thread copies the key only then.
 
 ## The host tests (`host-tests/`)
 

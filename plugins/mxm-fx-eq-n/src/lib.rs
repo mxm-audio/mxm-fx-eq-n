@@ -131,6 +131,7 @@ impl MxmFxEqN {
         let stereo = self.channels == 2 && channels.len() >= 2;
         let tagged = if stereo { 2 } else { 1 };
         let metering = self.telemetry.connected();
+        let key_wanted = self.telemetry.side_chain_wanted();
         let mut peaks = [0.0f32; 2];
 
         // Pieces of at most one analyser block, so its pre-EQ copy needs no buffer. The engine's
@@ -163,6 +164,7 @@ impl MxmFxEqN {
                         tagged,
                         [&pre[0][..length], &pre[1][..length]],
                         [left, right],
+                        key.filter(|_| key_wanted),
                     );
                 }
                 if metering {
@@ -173,7 +175,8 @@ impl MxmFxEqN {
                 self.engine.process_mono_keyed(left, side(0));
                 if wanted {
                     let pre = &pre[0][..length];
-                    self.tap.capture(tagged, [pre, pre], [left, left]);
+                    let key = side(0).filter(|_| key_wanted).map(|key| [key, key]);
+                    self.tap.capture(tagged, [pre, pre], [left, left], key);
                 }
                 if metering {
                     peaks[0] = peak_of(peaks[0], left);
@@ -295,6 +298,9 @@ impl Plugin for MxmFxEqN {
         config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
+        // Whether the layout has the side-chain port: all the plugin observes of a route (§7.4).
+        self.telemetry
+            .publish_side_chain_port(!layout.aux_input_ports.is_empty());
         self.prepare(
             config.sample_rate,
             layout

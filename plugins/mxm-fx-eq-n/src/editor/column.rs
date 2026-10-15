@@ -69,6 +69,8 @@ pub enum Leaf {
     Placement,
     /// A Stereo band into a Left/Right or Mid/Side pair (plan §7.3).
     Split,
+    /// The side chain's spectrum as a reference line (plan §7.4).
+    SideChainView,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -96,6 +98,8 @@ const GAIN_SCALE_UNHEARD: &str = concat!(
     "changes nothing now; cuts, notches and band passes stay as drawn."
 );
 const DELETE_DESCRIPTION: &str = "Removes the band. Undo brings it back.";
+const SIDE_CHAIN_VIEW_DESCRIPTION: &str = "Shows the side-chain input's spectrum as a dashed line, \
+     to compare with the sound. With nothing routed to the side chain, the line stays flat.";
 const PLACEMENT_DESCRIPTION: &str = "Where the band works: on both channels, on the left or the \
      right alone, or on the middle or the sides of the stereo image. A Mid or Side cut also moves \
      the image a little near its frequency.";
@@ -357,15 +361,24 @@ const RESOLUTION_OPTIONS: [&str; 3] = ["Low", "Medium", "High"];
 const SPEED_OPTIONS: [&str; 3] = ["Slow", "Medium", "Fast"];
 const TILT_OPTIONS: [&str; 4] = ["0 dB/oct", "1.5 dB/oct", "3 dB/oct", "4.5 dB/oct"];
 
-pub fn analyser_tree() -> Node<Leaf> {
+/// The Analyser card. Its toggles share a row, so the opening stays inside the budget (§8); the
+/// Side chain view is offered only on a layout with the port (plan §7.4).
+pub fn analyser_tree(side_chain_port: bool) -> Node<Leaf> {
     let options = |all: &[&str]| all.iter().map(|option| (*option).to_owned()).collect();
-    stack(vec![
+    let toggle = |key: Leaf, label: &str| {
         leaf(
-            Leaf::Analyser,
+            key,
             Kind::Toggle {
-                label: "Analyser".to_owned(),
+                label: label.to_owned(),
             },
-        ),
+        )
+    };
+    let mut toggles = vec![toggle(Leaf::Analyser, "Analyser")];
+    if side_chain_port {
+        toggles.push(toggle(Leaf::SideChainView, "Side chain"));
+    }
+    stack(vec![
+        tree::row(toggles),
         selector_leaf(Leaf::Show, "Show", options(&SHOW_OPTIONS)),
         selector_leaf(Leaf::Resolution, "Resolution", options(&RESOLUTION_OPTIONS)),
         selector_leaf(Leaf::Speed, "Speed", options(&SPEED_OPTIONS)),
@@ -445,7 +458,7 @@ impl EqApp {
             tokens,
             ANALYSER_CARD,
             ANALYSER_TITLE,
-            |_, _| analyser_tree(),
+            |app, _| analyser_tree(app.telemetry.side_chain_port()),
             false,
             None,
         );
@@ -767,6 +780,24 @@ impl EqApp {
                         &mut settings.analyser,
                         false,
                         "Shows the sound's spectrum behind the curve.",
+                        0.0,
+                    )
+                });
+                if changed {
+                    self.set_view(settings);
+                }
+            }
+            Leaf::SideChainView => {
+                let mut settings = self.params.view.get();
+                let changed = navigation::at(ui, "side chain view", |ui| {
+                    mxm_ui::control::toggle_sized(
+                        ui,
+                        tokens,
+                        "Side chain",
+                        "Side chain view",
+                        &mut settings.side_chain,
+                        false,
+                        SIDE_CHAIN_VIEW_DESCRIPTION,
                         0.0,
                     )
                 });

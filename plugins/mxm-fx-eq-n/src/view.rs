@@ -139,6 +139,9 @@ pub struct ViewSettings {
     pub resolution: Resolution,
     pub speed: Speed,
     pub tilt: Tilt,
+    /// The side chain's spectrum as a third line, the reference overlay (plan §7.4): offered only
+    /// on a layout with the port.
+    pub side_chain: bool,
 }
 
 impl Default for ViewSettings {
@@ -149,6 +152,7 @@ impl Default for ViewSettings {
             resolution: Resolution::default(),
             speed: Speed::default(),
             tilt: Tilt::default(),
+            side_chain: false,
         }
     }
 }

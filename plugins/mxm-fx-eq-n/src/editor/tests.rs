@@ -1292,6 +1292,7 @@ fn the_analyser_coming_back_on_starts_from_silence() {
             channels: 2,
             pre: [[0.0; BLOCK_FRAMES]; 2],
             post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
         };
         for frame in 0..BLOCK_FRAMES {
             let n = seq as usize * BLOCK_FRAMES + frame;
@@ -1717,7 +1718,7 @@ fn every_card_passes_the_tree_checks_in_every_state_and_fits_the_column() {
     type Tree = fn(&EqApp) -> mxm_ui::tree::Node<column::Leaf>;
     let cards: [(&str, Tree); 2] = [
         (column::OUTPUT_TITLE, column::output_tree),
-        (column::ANALYSER_TITLE, |_| column::analyser_tree()),
+        (column::ANALYSER_TITLE, |_| column::analyser_tree(true)),
     ];
     for (title, tree) in cards {
         let floor = settled(|ui| mxm_ui::tree::card_floor(ui, title, &tree(&build)));
@@ -2427,4 +2428,31 @@ fn menu_on_the_graph_opens_the_selected_band_s_menu() {
     rig.type_keys(&[job_key(MENU)]);
     assert!(menu_shown(&mut rig), "the band's menu");
     assert_eq!(rig.app.context_slot, Some(0));
+}
+
+/// **The Side chain view is offered only on a layout with the port** (plan §7.4), and turning it
+/// on tells the audio thread to copy the key.
+#[test]
+fn the_side_chain_view_is_offered_only_with_the_port() {
+    for (port, offered) in [(false, false), (true, true)] {
+        let found: Vec<column::Leaf> = column::analyser_tree(port)
+            .keys()
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(found.contains(&column::Leaf::SideChainView), offered);
+    }
+    let mut rig = Rig::new();
+    rig.app.telemetry.publish_side_chain_port(true);
+    rig.press(Vec::new());
+    assert!(!rig.app.telemetry.side_chain_wanted());
+    rig.app.set_view(crate::view::ViewSettings {
+        side_chain: true,
+        ..rig.app.params.view.get()
+    });
+    rig.press(Vec::new());
+    assert!(
+        rig.app.telemetry.side_chain_wanted(),
+        "the view reaches the audio thread"
+    );
 }
