@@ -30,7 +30,6 @@ use mxm_params::ErasedParam;
 use nice_plug::context::gui::GuiContext;
 use nice_plug::params::internals::ParamPtr;
 use nice_plug::prelude::*;
-use nice_plug_egui::{EguiEditorState, create_egui_editor};
 
 use crate::analyser::Block;
 use crate::audition::Audition;
@@ -64,7 +63,7 @@ pub const GRAPH_KEY: &str = "graph";
 /// The Solo button's key: OPEN on it presses it.
 pub const SOLO_KEY: &str = "solo";
 
-pub type EqEditor = nice_plug_egui::EguiEditor<EqApp>;
+pub type EqEditor = mxm_editor::Editor<EqApp>;
 
 /// What an editor needs from the plugin instance.
 pub struct Handles {
@@ -75,26 +74,10 @@ pub struct Handles {
     pub analyser: Option<rtrb::Consumer<Block>>,
 }
 
+/// The window, its setup (`mxm_ui::shell::install`) and the host context's lifecycle are
+/// mxm-editor's; this editor is the [`mxm_editor::Panel`] inside.
 pub fn create(handles: Handles) -> Option<EqEditor> {
-    let state = EguiEditorState::from_size(
-        nice_plug::editor::dpi::LogicalSize::new(REFERENCE.0, REFERENCE.1),
-        1.0,
-    );
-    create_egui_editor(
-        state,
-        nice_plug_egui::RepaintNotifier::new(),
-        nice_plug_egui::EguiNiceSettings {
-            title: crate::NAME.to_owned(),
-            resize_hint: ResizeHint {
-                size_constraints: nice_plug::editor::SizeConstraints::min_logical_size(
-                    nice_plug::editor::dpi::LogicalSize::new(MINIMUM.0 as f32, MINIMUM.1 as f32),
-                ),
-                ..ResizeHint::RESIZABLE
-            },
-            ..Default::default()
-        },
-        EqApp::new(handles),
-    )
+    mxm_editor::create(crate::NAME, REFERENCE, MINIMUM, EqApp::new(handles))
 }
 
 /// A slot's field, as its place in [`BAND_FIELDS`].

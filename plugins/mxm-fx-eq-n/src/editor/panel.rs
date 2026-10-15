@@ -7,7 +7,6 @@ use mxm_ui::space::{SPACE_3, SPACE_5};
 use mxm_ui::theme::Tokens;
 use mxm_ui::visual::EMPHASIS_STROKE;
 use nice_plug::context::gui::GuiContext;
-use nice_plug_egui::NiceEguiApp;
 
 use super::{CARDS, EqApp, METER_RAIL, history};
 use crate::view::ViewSettings;
@@ -307,27 +306,18 @@ impl EqApp {
     }
 }
 
-impl NiceEguiApp for EqApp {
-    fn build(
-        &mut self,
-        context: egui::Context,
-        gui_context: GuiContext,
-        _frame: &mut nice_plug_egui::Frame,
-    ) -> Result<(), nice_plug_egui::baseview::HandlerError> {
-        mxm_ui::theme::apply(&context);
-        mxm_ui::typography::apply(&context);
-        context.set_theme(mxm_ui::theme::preference());
-        // The keys are the keymap in use in the folder newDAWn and every editor share.
-        navigation::use_shared_keymap(&context);
-        self.attach(gui_context);
-        Ok(())
+impl mxm_editor::Panel for EqApp {
+    /// The window is open and its setup applied, the keymap newDAWn and every editor share
+    /// included: the history's recording context wraps the host's.
+    fn opened(&mut self, _window: &egui::Context, host: &GuiContext) {
+        self.attach(host.clone());
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut nice_plug_egui::Frame) {
+    fn ui(&mut self, ui: &mut Ui, _host: &GuiContext) {
         self.panel(ui);
     }
 
-    fn editor_closed(&mut self) {
+    fn closed(&mut self, _host: &GuiContext) {
         self.detach();
     }
 }
