@@ -904,9 +904,11 @@ the display's own smoothed levels (1/12 octave, §4), so what is labelled is wha
 **A freeze keeps one source and one representation**: the spectrum grabbed is fixed when Freeze is
 turned on — the post-EQ one when it is shown, else the pre-EQ one (Pro-Q's rule: post "works best"
 because it matches what is heard) — and the hold, its labels and every grab use it alone. **Any
-change to Show, Resolution, Speed or Tilt ends the freeze** (the toggle turns off and the display
-runs again), as do a reset and a change of rate, so held levels are never shown as another source
-or under another transform. **Freeze is the editor's moment, not a setting**: unlike the analyser's
+change to Show, Resolution, Speed, Tilt or the Side chain view ends the freeze** (the toggle turns
+off and the display runs again), as do a reset (seen with the first audio after it) and a change of
+rate, so held levels are never shown as another source or under another transform; the two-second
+hold starts again on the same changes, so it never mixes them either. The side-chain line holds
+with the rest. **Freeze is the editor's moment, not a setting**: unlike the analyser's
 view state (§4) it is not saved with the project; turning the analyser off, closing the editor or a
 restored state or preset ends it, and its hold goes with it, so a reopened editor always shows the
 live spectrum.

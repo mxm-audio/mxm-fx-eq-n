@@ -298,7 +298,10 @@ fn pictures() {
                 })
                 .collect();
             rig.app.hold.push(0.0, &levels);
-            rig.app.hold_post = Some(true);
+            rig.app.hold_basis = Some(grab::Basis {
+                view: rig.app.params.view.get(),
+                generation: rig.app.spectrum.generation(),
+            });
             rig.app.freeze_asked = true;
         }
         let mut app = rig.app;
@@ -2504,7 +2507,10 @@ fn frozen_rig(centre: f32) -> Rig {
         .collect();
     let now = rig.ctx.input(|input| input.time);
     rig.app.hold.push(now, &levels);
-    rig.app.hold_post = Some(true);
+    rig.app.hold_basis = Some(grab::Basis {
+        view: rig.app.params.view.get(),
+        generation: rig.app.spectrum.generation(),
+    });
     rig.app.freeze_asked = true;
     rig.press(Vec::new());
     rig
@@ -2669,4 +2675,81 @@ fn a_grab_takes_the_lowest_off_slot_and_back_or_a_click_leaves_nothing() {
     assert_eq!(band.shape, Some(Shape::Bell), "the lowest Off slot");
     assert!((band.freq / peak.freq - 1.0).abs() < 1.0e-3);
     assert_eq!(rig.band(3).shape, None);
+}
+
+/// **The hold never mixes representations** (plan §7.4): levels held under one Tilt are gone once
+/// it changes, so a freeze right after holds only what the new Tilt shows.
+#[test]
+fn a_setting_change_restarts_the_hold() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let freqs = graph::Curves::compute(&rig.app, &axes).freqs;
+    let loud: Vec<f32> = freqs
+        .iter()
+        .map(|&f| {
+            if (f / 1_000.0).log2().abs() < 0.05 {
+                -10.0
+            } else {
+                -60.0
+            }
+        })
+        .collect();
+    let now = rig.ctx.input(|input| input.time);
+    rig.app.hold.push(now, &loud);
+    rig.app.hold_basis = Some(grab::Basis {
+        view: rig.app.params.view.get(),
+        generation: rig.app.spectrum.generation(),
+    });
+    let mut settings = rig.app.params.view.get();
+    settings.tilt = crate::view::Tilt::Three;
+    rig.app.set_view(settings);
+    rig.app.freeze_asked = true;
+    rig.press(Vec::new());
+    let frozen = rig.app.frozen.as_ref().expect("frozen");
+    assert!(
+        frozen.peaks.is_empty(),
+        "the old Tilt's peak is gone: {:?}",
+        frozen.peaks
+    );
+    assert!(frozen.post.iter().all(|&db| db < -50.0));
+}
+
+/// **The side chain's line holds with the freeze** (plan §7.4): nothing moves while frozen, and
+/// turning the Side chain view on or off ends it.
+#[test]
+fn the_side_chain_line_holds_while_frozen() {
+    let mut rig = Rig::new();
+    rig.app.telemetry.publish_side_chain_port(true);
+    rig.app.set_view(crate::view::ViewSettings {
+        side_chain: true,
+        ..rig.app.params.view.get()
+    });
+    rig.press(Vec::new());
+    rig.press(Vec::new());
+    let len = rig.app.spectrum.key_db.len();
+    rig.app.spectrum.key_db = vec![-20.0; len];
+    rig.app.hold_basis = Some(grab::Basis {
+        view: rig.app.params.view.get(),
+        generation: rig.app.spectrum.generation(),
+    });
+    rig.app.freeze_asked = true;
+    rig.press(Vec::new());
+    let held = rig.app.frozen.as_ref().expect("frozen").key.clone();
+    assert_eq!(held.len(), len);
+    rig.app.spectrum.key_db = vec![-5.0; len];
+    assert_eq!(
+        rig.app.shown_spectra()[2],
+        held.as_slice(),
+        "the drawn key is the held one"
+    );
+    rig.press(Vec::new());
+    assert!(rig.app.frozen.is_some());
+    rig.app.set_view(crate::view::ViewSettings {
+        side_chain: false,
+        ..rig.app.params.view.get()
+    });
+    rig.press(Vec::new());
+    assert!(rig.app.frozen.is_none(), "the view toggled ends it");
 }

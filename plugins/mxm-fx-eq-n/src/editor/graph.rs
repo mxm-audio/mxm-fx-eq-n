@@ -803,27 +803,30 @@ impl EqApp {
 
         // The spectra, behind everything: post as a fill, pre as an outline.
         let settings = self.params.view.get();
-        if !settings.analyser && self.freezing() {
+        if !settings.analyser && (self.freezing() || self.hold_basis.is_some()) {
             self.unfreeze();
         }
         if settings.analyser {
             let now = ui.input(|input| input.time);
             self.spectrum.analyse(&curves.freqs, now, &settings);
             // A freeze holds one source and one representation (plan §7.4): a setting, the size or
-            // a reset under it ends it.
-            let generation = self.spectrum.generation();
+            // a reset under it ends it, and the hold restarts on the same changes.
+            let basis = grab::Basis {
+                view: settings,
+                generation: self.spectrum.generation(),
+            };
             if self
                 .frozen
                 .as_ref()
-                .is_some_and(|frozen| !frozen.holds(&settings, generation, curves.xs.len()))
+                .is_some_and(|frozen| !frozen.holds(&basis, curves.xs.len()))
             {
                 self.unfreeze();
             }
             let post_shown = matches!(settings.show, Show::Post | Show::Both);
             if self.frozen.is_none() {
-                if self.hold_post != Some(post_shown) {
+                if self.hold_basis != Some(basis) {
                     self.hold.clear();
-                    self.hold_post = Some(post_shown);
+                    self.hold_basis = Some(basis);
                 }
                 let source = if post_shown {
                     &self.spectrum.post_db
@@ -846,19 +849,22 @@ impl EqApp {
                     } else {
                         (Vec::new(), held)
                     };
+                    let key = if settings.side_chain {
+                        self.spectrum.key_db.clone()
+                    } else {
+                        Vec::new()
+                    };
                     self.frozen = Some(grab::Frozen {
-                        view: settings,
-                        generation,
+                        basis,
                         source_post: post_shown,
                         post,
                         pre,
+                        key,
                         peaks,
                     });
                 }
             }
-            let frozen = self.frozen.as_ref();
-            let post_db: &[f32] = frozen.map_or(&self.spectrum.post_db, |f| &f.post);
-            let pre_db: &[f32] = frozen.map_or(&self.spectrum.pre_db, |f| &f.pre);
+            let [pre_db, post_db, key_db] = self.shown_spectra();
             let points = |values: &[f32]| -> Vec<Pos2> {
                 curves
                     .xs
@@ -903,9 +909,9 @@ impl EqApp {
             // told apart by hue; at the floor while nothing comes in.
             if settings.side_chain
                 && self.telemetry.side_chain_port()
-                && self.spectrum.key_db.len() == curves.xs.len()
+                && key_db.len() == curves.xs.len()
             {
-                let line = points(&self.spectrum.key_db);
+                let line = points(key_db);
                 let end = line.last().copied();
                 painter.extend(Painted::dashed_line(
                     &line,

@@ -177,10 +177,12 @@ and `audition.rs`'s tests hold the lifecycle.
   in dev builds, so a debug bundle animates too.
 - **Freeze and grab** (plan §7.4, `editor/grab.rs`): while running, the editor keeps the shown
   source's highest level per point over two seconds (`Hold`; post when shown, else pre). Freeze
-  holds that line, the other line's last frame, and the peaks `grab::peaks` finds in it. A change
-  of Show, Resolution, Speed or Tilt, the analyser off, a size change, a reset or new rate, a
-  restore or preset load, and closing the editor each end it (`Frozen::holds`, `unfreeze`); it is
-  never saved. A drag from a peak makes a static bell at its frequency with its Q, only the gain
+  holds that line, the other line's last frame, the side-chain line, and the peaks `grab::peaks`
+  finds in it. Both the hold and a freeze carry a `grab::Basis` (the view settings and the audio's
+  generation): a change of any view setting, a reset (seen with the first block after it) or a
+  new rate restarts the hold and ends a freeze, as do the analyser off, a size change, a restore
+  or preset load, and closing the editor (`Frozen::holds`, `unfreeze`); it is never saved. A peak
+  near the display's edge counts once it has fallen 6 dB before the edge. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
 

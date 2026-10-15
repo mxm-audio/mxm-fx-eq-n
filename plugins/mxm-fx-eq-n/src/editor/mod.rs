@@ -213,9 +213,9 @@ pub struct EqApp {
     pub(crate) menu_asked: bool,
     /// A held solo this frame: Ctrl/Cmd held on a point.
     pub(crate) pointer_solo: Option<usize>,
-    /// The display's last two seconds, for a freeze (plan §7.4), and which source it holds.
+    /// The display's last two seconds, for a freeze (plan §7.4), and the basis they were read on.
     pub(crate) hold: grab::Hold,
-    pub(crate) hold_post: Option<bool>,
+    pub(crate) hold_basis: Option<grab::Basis>,
     /// The freeze in force, and a Freeze asked for this frame (made where the spectrum is drawn).
     pub(crate) frozen: Option<grab::Frozen>,
     pub(crate) freeze_asked: bool,
@@ -274,7 +274,7 @@ impl EqApp {
             context_slot: None,
             menu_asked: false,
             hold: grab::Hold::default(),
-            hold_post: None,
+            hold_basis: None,
             frozen: None,
             freeze_asked: false,
             focus_peak: None,
@@ -737,6 +737,19 @@ impl EqApp {
         self.freeze_asked = false;
         self.focus_peak = None;
         self.hold.clear();
+        self.hold_basis = None;
+    }
+
+    /// The pre, post and side-chain lines as drawn: a freeze's while frozen, else the live ones.
+    pub(crate) fn shown_spectra(&self) -> [&[f32]; 3] {
+        match &self.frozen {
+            Some(frozen) => [&frozen.pre, &frozen.post, &frozen.key],
+            None => [
+                &self.spectrum.pre_db,
+                &self.spectrum.post_db,
+                &self.spectrum.key_db,
+            ],
+        }
     }
 
     /// Whether a band can still be made: an Off slot is free.

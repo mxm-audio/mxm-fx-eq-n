@@ -375,6 +375,7 @@ impl Spectrum {
         self.stale = false;
         self.pre_db.iter_mut().for_each(|db| *db = FLOOR_DB);
         self.post_db.iter_mut().for_each(|db| *db = FLOOR_DB);
+        self.key_db.iter_mut().for_each(|db| *db = FLOOR_DB);
     }
 
     /// Plans the long window a resolution needs. Allocates, on the GUI thread, only on a change.
@@ -1017,5 +1018,17 @@ mod tests {
             "{:?}",
             spectrum.key_db
         );
+    }
+
+    /// **A restart floors the side chain's line too**: an editor reopened, or the analyser back on,
+    /// never shows an old key.
+    #[test]
+    fn a_restart_floors_the_key() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        spectrum.analyse(&[500.0], 0.0, &flat());
+        // A loud key, as drawn when the editor closed.
+        spectrum.key_db[0] = -3.0;
+        spectrum.restart();
+        assert_eq!(spectrum.key_db, [FLOOR_DB]);
     }
 }

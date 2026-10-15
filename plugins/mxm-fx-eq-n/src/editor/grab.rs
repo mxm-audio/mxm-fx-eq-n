@@ -75,40 +75,36 @@ impl Hold {
     }
 }
 
+/// What levels were read under (plan §7.4): the analyser's settings and the audio's generation.
+/// The hold mixes levels of one basis only, and a freeze ends when its basis changes, so held
+/// levels are never shown as another source or under another transform.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Basis {
+    pub view: crate::view::ViewSettings,
+    pub generation: Option<u32>,
+}
+
 /// A freeze (plan §7.4): one source and one representation, held until a setting, the size, a
 /// reset or a restore moves under it. The editor's moment, never saved.
 pub struct Frozen {
-    /// The analyser's settings it was frozen under; any change ends it.
-    pub view: crate::view::ViewSettings,
-    /// The generation of the audio it was frozen from; a reset or a new rate ends it.
-    pub generation: Option<u32>,
+    /// What it was frozen under; any change ends it.
+    pub basis: Basis,
     /// Whether the grabbed source is the post-EQ spectrum (else the pre-EQ one).
     pub source_post: bool,
     /// Each line as drawn while frozen: the source's two-second hold, and the other line's last
     /// frame when it was shown (empty otherwise).
     pub post: Vec<f32>,
     pub pre: Vec<f32>,
+    /// The side chain's line as it was, held with the rest (empty with its view off).
+    pub key: Vec<f32>,
     /// The source's peaks, strongest first.
     pub peaks: Vec<Peak>,
 }
 
 impl Frozen {
-    /// Whether `view` and `generation` still describe it, its lines `len` long.
-    pub fn holds(
-        &self,
-        view: &crate::view::ViewSettings,
-        generation: Option<u32>,
-        len: usize,
-    ) -> bool {
-        let same = |a: &crate::view::ViewSettings, b: &crate::view::ViewSettings| {
-            a.analyser == b.analyser
-                && a.show == b.show
-                && a.resolution == b.resolution
-                && a.speed == b.speed
-                && a.tilt == b.tilt
-        };
-        same(&self.view, view)
-            && self.generation == generation
+    /// Whether `basis` still describes it, its lines `len` long.
+    pub fn holds(&self, basis: &Basis, len: usize) -> bool {
+        self.basis == *basis
             && (if self.source_post {
                 &self.post
             } else {
@@ -214,8 +210,8 @@ enum Side {
 }
 
 /// The lowest level between the peak at `index` and the next higher level on `side`, within
-/// [`KEY_OCTAVES`]; `None` when the spectrum's edge comes first, since a window cut short cannot
-/// show the fall.
+/// [`KEY_OCTAVES`]. Where the spectrum's edge comes first, the lowest seen counts once it is
+/// already [`PROMINENCE_DB`] down (the unseen rest could only lower it); short of that, `None`.
 fn key_point(freqs: &[f32], db: &[f32], index: usize, side: Side) -> Option<f32> {
     let level = db[index];
     let reach = 2f32.powf(KEY_OCTAVES);
@@ -223,8 +219,11 @@ fn key_point(freqs: &[f32], db: &[f32], index: usize, side: Side) -> Option<f32>
     let mut at = index;
     loop {
         let next = match side {
-            Side::Below => at.checked_sub(1)?,
-            Side::Above => Some(at + 1).filter(|&next| next < db.len().min(freqs.len()))?,
+            Side::Below => at.checked_sub(1),
+            Side::Above => Some(at + 1).filter(|&next| next < db.len().min(freqs.len())),
+        };
+        let Some(next) = next else {
+            return (level - lowest >= PROMINENCE_DB).then_some(lowest);
         };
         let ratio = match side {
             Side::Below => freqs[index] / freqs[next],
@@ -423,5 +422,24 @@ mod tests {
             [true, false, true, false],
             "the second overlaps the first, the fourth the third"
         );
+    }
+
+    /// **A peak near the edge counts when it falls 6 dB before the edge** (plan §7.4): a narrow
+    /// resonance at 18 kHz or 22 Hz is a peak; a broad one there, cut off by the edge, is not.
+    #[test]
+    fn a_peak_near_the_edge_counts_when_it_falls_before_the_edge() {
+        let freqs = axis();
+        for (centre, q, found) in [
+            (18_000.0, 20.0, true),
+            (22.0, 20.0, true),
+            (18_000.0, 1.5, false),
+            (22.0, 1.5, false),
+        ] {
+            let db = resonance(&freqs, -60.0, centre, 30.0, q);
+            let near = peaks(&freqs, &db, -96.0)
+                .iter()
+                .any(|peak| (peak.freq / centre).log2().abs() < 0.1);
+            assert_eq!(near, found, "{centre} Hz, Q {q}");
+        }
     }
 }
