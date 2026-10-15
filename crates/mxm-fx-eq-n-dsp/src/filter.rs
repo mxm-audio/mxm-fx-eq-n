@@ -257,6 +257,28 @@ impl Filter {
         self.ramp > 0
     }
 
+    /// The ramp in progress moved on by `frames` with no audio through the filter, landing on its
+    /// target once it runs out: for frames a band is not heard, a placed band's in mono (plan
+    /// §7.3).
+    pub fn skip(&mut self, frames: usize) {
+        if self.ramp == 0 {
+            return;
+        }
+        let steps = frames.min(self.ramp);
+        self.ramp -= steps;
+        let landed = self.ramp == 0;
+        for section in &mut self.sections[..self.count] {
+            if landed {
+                section.now = section.target;
+            } else {
+                for _ in 0..steps {
+                    section.now.add(section.step);
+                }
+            }
+            section.derive();
+        }
+    }
+
     /// One frame through the cascade, `C` channels. **One or two**: each section keeps two lanes of
     /// state, and any other width fails to compile rather than panicking on the audio thread.
     ///

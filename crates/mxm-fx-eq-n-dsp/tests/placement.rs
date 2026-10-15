@@ -446,3 +446,20 @@ fn a_dynamic_split_pair_moves_by_its_channels() {
         "equal channels have no side: {mid} {side}"
     );
 }
+
+/// **A placed band edited in mono settles** though it is never heard: its coefficient ramps move
+/// on over the frames the engine skips.
+#[test]
+fn a_placed_band_edited_in_mono_settles() {
+    let mut engine = placed(Placement::Left, bell(1_000.0, 12.0));
+    let mut buffer = sine(9_600, 1_000.0, 0.25);
+    engine.process_mono(&mut buffer);
+    engine.set_band(0, bell(2_000.0, 12.0));
+    let mut buffer = sine(96_000, 1_000.0, 0.25);
+    engine.process_mono(&mut buffer);
+    assert_eq!(buffer, sine(96_000, 1_000.0, 0.25), "never heard");
+    assert!(
+        engine.is_settled(),
+        "and settled once its glides have landed"
+    );
+}

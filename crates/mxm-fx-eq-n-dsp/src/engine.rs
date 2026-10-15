@@ -595,6 +595,14 @@ impl BandEngine {
 
     /// `frames` of the fade in progress at once, for frames no stage ran: a placed band in mono.
     fn advance_by(&mut self, frames: usize) {
+        // Its coefficient ramps too, or a band edited while unheard would never settle.
+        for running in [&mut self.current, &mut self.previous]
+            .into_iter()
+            .flatten()
+        {
+            running.filter.skip(frames);
+        }
+        self.detector.skip(frames);
         if self.fade != Fade::None {
             self.left = self
                 .left

@@ -5,7 +5,8 @@
 two rounds, all accepted). **Approved by the owner** (2026-10-15, *"Approve and build"*: decisions 19,
 20 and 22 as proposed; 18 and 21 their alternatives — Split now, no presets); Split's design, added
 after that, approved by the agent-loop in round 6 (3 findings over rounds 4–5, all accepted). F2.1–F2.3
-built (2026-10-15), in code review. **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
+built (2026-10-15), their code review approved in round 3 (11 findings over two rounds, all accepted; round 3's one
+MINOR fixed after it). F2.4, the owner's listening, is next. **Revision 24 — the external side chain, designed for the owner's approval** (2026-10-14; §7.2,
 decisions 15–17; its design approved by the agent-loop in round 2, 2026-10-14: 2 findings, one
 accepted, one premise rejected with the permanence it asked for stated). **Approved by the owner**
 (2026-10-14, *"Approve and build"*, decisions 16 and 17 as proposed); SC.0 done; SC.1–SC.3 built (2026-10-14), their code review approved in round 2 (one finding,
@@ -872,9 +873,9 @@ MXM Player: every host test, and a placed band restored through the state heard 
 | Step | Delivers | Gate |
 |---|---|---|
 | **F2.0** | Decisions 18–22, signed. **Done** (2026-10-15) | Owner |
-| **F2.1** | DSP: placement in the band's structure, each channel's path, detection, solo, mono | DSP tests at the end |
-| **F2.2** | Shell: 24 placements, both migrations, host tests | Unit and host tests at the end; `clap-validator` |
-| **F2.3** | Editor: the selector, Split, the grouped curves and their letters, the point's letter | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
+| **F2.1** | DSP: placement in the band's structure, each channel's path, detection, solo, mono. **Built** (2026-10-15): 14 placement tests; steady 19.2 → 20.5 % at 192 kHz, 24 mid bells ≈ 10 % | DSP tests at the end |
+| **F2.2** | Shell: 24 placements, both migrations, host tests. **Built** | Unit and host tests at the end; `clap-validator` |
+| **F2.3** | Editor: the selector, Split, the grouped curves and their letters, the point's letter. **Built**; review approved in round 3 | Editor tests at the end; one agent-loop review of F2.1–F2.3 |
 | **F2.4** | Listening, and the image checked by ear on speakers and headphones | Owner sign-off |
 
 ## 8. What must not break
