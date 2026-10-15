@@ -104,14 +104,16 @@ pub struct Frozen {
 impl Frozen {
     /// Whether `basis` still describes it, its lines `len` long.
     pub fn holds(&self, basis: &Basis, len: usize) -> bool {
-        self.basis == *basis
-            && (if self.source_post {
-                &self.post
-            } else {
-                &self.pre
-            })
-            .len()
-                == len
+        self.basis == *basis && self.points() == len
+    }
+
+    /// How many points its grabbed line has: the graph's width when it was made.
+    pub fn points(&self) -> usize {
+        if self.source_post {
+            self.post.len()
+        } else {
+            self.pre.len()
+        }
     }
 }
 

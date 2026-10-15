@@ -185,7 +185,8 @@ and `audition.rs`'s tests hold the lifecycle.
   or preset load, and closing the editor (`Frozen::holds`, `unfreeze`); it is never saved. A peak
   near the display's edge counts once it has fallen 6 dB before the edge. On a basis change the
   display starts from its new readings (`Spectrum::snap`), not a fall from the old levels, so the
-  hold takes nothing of before. A peak's drawn label is part of it for the pointer. A drag from a peak makes a static bell at its frequency with its Q, only the gain
+  hold takes nothing of before. A peak's drawn label is part of it for the pointer; its marker
+  stays inside the graph (`graph::peak_marker`), so a peak above 0 dB under Tilt is still grabbed. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
 

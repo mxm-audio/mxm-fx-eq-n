@@ -91,6 +91,32 @@ pub struct Drag {
     pub gain_only: bool,
 }
 
+/// Where a frozen peak's marker is drawn and found: at its level, held inside the graph, so a peak
+/// louder than the top of the drawn range (a loud tone under Tilt) is still seen and grabbed.
+pub fn peak_marker(axes: &Axes, peak: &grab::Peak) -> Pos2 {
+    let margin = PEAK_MARKER_RADIUS + 2.0;
+    pos2(
+        axes.x(peak.freq),
+        axes.spectrum_y(peak.db)
+            .clamp(axes.rect.top() + margin, axes.rect.bottom() - margin),
+    )
+}
+
+/// A peak's label of `size` for its marker at `at`: above it, or below where the graph's top
+/// leaves no room.
+pub fn peak_label(axes: &Axes, at: Pos2, size: Vec2) -> Rect {
+    let size = size + vec2(4.0, 2.0);
+    let offset = 2.0 * PEAK_MARKER_RADIUS + size.y / 2.0;
+    let above = Rect::from_center_size(at - vec2(0.0, offset), size);
+    if above.top() >= axes.rect.top() {
+        above
+    } else {
+        Rect::from_center_size(at + vec2(0.0, offset), size)
+    }
+}
+
+const PEAK_MARKER_RADIUS: f32 = 4.0;
+
 /// The hover over a frozen peak (plan §7.4).
 const PEAK_DESCRIPTION: &str =
     "Drag up or down to make a bell at this peak, its width set from the peak's.";
@@ -464,12 +490,7 @@ impl EqApp {
         frozen
             .peaks
             .iter()
-            .map(|peak| {
-                (
-                    *peak,
-                    pos2(axes.x(peak.freq), axes.spectrum_y(peak.db)).distance(at),
-                )
-            })
+            .map(|peak| (*peak, peak_marker(axes, peak).distance(at)))
             .filter(|&(_, distance)| distance <= HIT_RADIUS)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(peak, _)| peak)
@@ -508,6 +529,14 @@ impl EqApp {
         let axes = Axes::new(rect, self.high());
 
         let curves = Curves::compute(self, &axes);
+        // A freeze made at another width ends before the pointer reaches it (plan §7.4).
+        if self
+            .frozen
+            .as_ref()
+            .is_some_and(|frozen| frozen.points() != curves.xs.len())
+        {
+            self.unfreeze();
+        }
         self.graph_pointer(ui, &response, &axes, &curves);
         let curves = Curves::compute(self, &axes);
         self.paint_graph(ui, tokens, &axes, &curves);
@@ -965,16 +994,12 @@ impl EqApp {
                     .peaks
                     .iter()
                     .map(|peak| {
-                        let at = pos2(axes.x(peak.freq), axes.spectrum_y(peak.db));
+                        let at = peak_marker(axes, peak);
                         let text = format_freq(peak.freq);
                         let size = painter
                             .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
                             .size();
-                        let rect = Rect::from_center_size(
-                            at - vec2(0.0, 8.0 + size.y / 2.0),
-                            size + vec2(4.0, 2.0),
-                        );
-                        (at, text, rect)
+                        (at, text, peak_label(axes, at, size))
                     })
                     .collect();
                 let rects: Vec<Rect> = labels.iter().map(|(_, _, rect)| *rect).collect();
@@ -990,7 +1015,7 @@ impl EqApp {
                 {
                     painter.circle_stroke(
                         at,
-                        4.0,
+                        PEAK_MARKER_RADIUS,
                         Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
                     );
                     if self.focus_peak == Some(index) && self.selected.is_none() {

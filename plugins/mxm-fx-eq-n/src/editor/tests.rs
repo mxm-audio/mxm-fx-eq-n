@@ -2904,3 +2904,56 @@ fn a_freeze_after_a_change_holds_no_old_display_level() {
         );
     }
 }
+
+/// **A resize ends a freeze before the pointer** (plan §7.4): a press on the old peak that moves
+/// past the drag threshold in the first frame at a new width makes no band.
+#[test]
+fn a_resize_ends_the_freeze_before_the_pointer() {
+    let wider = Rig::opening() + egui::vec2(240.0, 0.0);
+    let mut sizing = Rig::new();
+    for _ in 0..2 {
+        sizing.frame(wider, Vec::new());
+    }
+    let axes = graph::Axes::new(sizing.app.graph_rect, sizing.app.high());
+    let mut rig = frozen_rig(1_000.0);
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    let at = graph::peak_marker(&axes, &peak);
+    let mut events = pointer(at, Some(true));
+    events.push(egui::Event::PointerMoved(at + egui::vec2(0.0, 30.0)));
+    rig.frame(wider, events);
+    assert!(rig.app.frozen.is_none(), "the new width ended it");
+    rig.frame(wider, pointer(at + egui::vec2(0.0, 30.0), Some(false)));
+    assert!(
+        (0..SLOTS).all(|slot| rig.band(slot).shape.is_none()),
+        "no band"
+    );
+}
+
+/// **A peak louder than the drawn range stays on the graph** (plan §7.4): a peak reading +5 dB
+/// keeps its marker and label inside the graph, and the pointer finds and grabs it there.
+#[test]
+fn a_loud_peak_is_drawn_and_grabbed_inside_the_graph() {
+    let mut rig = frozen_rig_at(10_000.0, 10f32.powf(0.5));
+    rig.press(Vec::new());
+    let peak = rig.app.frozen.as_ref().unwrap().peaks[0];
+    assert!(peak.db > 0.0, "{}", peak.db);
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let at = graph::peak_marker(&axes, &peak);
+    assert!(axes.rect.contains(at), "the marker on the graph");
+    let &(_, label) = rig.app.peak_labels.first().expect("its label is drawn");
+    assert!(
+        axes.rect.contains_rect(label),
+        "the label on the graph: {label:?}"
+    );
+    assert_eq!(
+        rig.app.peak_at(&axes, at).map(|found| found.freq),
+        Some(peak.freq)
+    );
+    let to = at + egui::vec2(0.0, 60.0);
+    rig.press(pointer(at, Some(true)));
+    for step in 1..=8 {
+        rig.press(pointer(at + (to - at) * (step as f32 / 8.0), None));
+    }
+    rig.press(pointer(to, Some(false)));
+    assert_eq!(rig.band(0).shape, Some(Shape::Bell), "grabbed");
+}
