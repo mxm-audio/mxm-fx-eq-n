@@ -427,7 +427,36 @@ impl ClapPlugin for MxmFxEqN {
     ];
 }
 
+impl Vst3Plugin for MxmFxEqN {
+    /// Permanent, as `CLAP_ID` is: the CLAP id's hash written out, held to it by
+    /// `identity::the_vst3_class_id_is_the_clap_ids_hash`.
+    const VST3_CLASS_ID: [u8; 16] = [
+        0x18, 0xe7, 0x78, 0x58, 0x44, 0x76, 0x98, 0x70, 0x0c, 0xe2, 0xe5, 0x6d, 0xd9, 0xfa, 0xc6,
+        0x75,
+    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Fx, Vst3SubCategory::Eq];
+}
+
 nice_export_clap!(MxmFxEqN);
+nice_export_vst3!(MxmFxEqN);
+
+/// The plugin's identity in each format.
+#[cfg(test)]
+mod identity {
+    use super::MxmFxEqN;
+    use mxm_plugin_test::formats;
+
+    #[test]
+    fn the_vst3_class_id_is_the_clap_ids_hash() {
+        formats::the_vst3_class_id_is_the_clap_ids_hash::<MxmFxEqN>();
+    }
+
+    #[test]
+    fn the_vst3_categories_follow_the_clap_features() {
+        formats::the_vst3_categories_follow_the_clap_features::<MxmFxEqN>();
+    }
+}
 
 #[cfg(test)]
 mod tests;
