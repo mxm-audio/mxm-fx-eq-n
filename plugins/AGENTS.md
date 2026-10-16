@@ -45,7 +45,8 @@ machine only lives in its own `AGENTS.md` below.
   multiplies the audio (5–20 ms), never a coefficient: envelope and glide times stay unsmoothed.
 - **Permanent identifiers** ([§](https://github.com/mxm-audio/mxm-kit/blob/main/docs/plugin-conventions.md#permanent-identifiers--never-change-these)): the
   `CLAP_ID` is `dk.mxm.<plugin>`, assembled from `plugin_name!`; a parameter `#[id]` is never
-  changed or reused. Both are public interface.
+  changed or reused. Both are public interface. mxm-fx-eq-n's parameters are exempt until its first
+  release (the owner, 2026-10-16; its `AGENTS.md`, *Not permanent during pre-alpha*).
 - **nice-plug, not nih-plug** ([§](https://github.com/mxm-audio/mxm-kit/blob/main/docs/plugin-conventions.md#this-is-nice-plug-not-nih-plug)): `activate`, an
   associated `type Editor`, `nice_export_clap!`; declare `CLAP_FEATURES` and `AUDIO_IO_LAYOUTS`.
 - **Parameters** ([§](https://github.com/mxm-audio/mxm-kit/blob/main/docs/plugin-conventions.md#parameters)): gain stores linear gain; skewed ranges for frequency,

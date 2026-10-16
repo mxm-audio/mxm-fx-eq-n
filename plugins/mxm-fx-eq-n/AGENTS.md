@@ -19,7 +19,7 @@ F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's. No co
 # Ownership
 
 - `src/lib.rs`: identity, layouts, the lifecycle and `process`.
-- `src/params.rs`: the permanent parameters, their domains and readings.
+- `src/params.rs`: the parameters, their domains and readings.
 - `src/preset.rs`: the `mxm_preset::Instrument` seam and the factory set's design.
 - `presets/`: the factory set, generated from that design, never hand-edited.
 - `src/audition.rs`: band solo, the transient command.
@@ -48,7 +48,12 @@ F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's. No co
   plain stereo and mono, which MXM Player selects. A Stereo band treats both channels alike; a
   placed band works on its own channel (plan §7.3). No note port, so no developer channel
   (`plugins/AGENTS.md`, *A developer channel*).
-- **293 permanent parameters** (`params.rs`):
+- **Not permanent during pre-alpha** (the owner, 2026-10-16: "relax it for pre-alpha"): until the
+  first release a parameter's id, its order, its stepped domain and the places of its values may
+  change when the design calls for it, the tests that pin them and the factory set changing with
+  them, and a state or preset from before the change need not load as it was. From the first
+  release they are permanent, as the collection's convention has it (`plugins/AGENTS.md`).
+- **293 parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
@@ -68,7 +73,7 @@ F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's. No co
   - F7's `autogain` last (plan §7.8), on or off, automatable, off by default, at
     `params::AUTO_GAIN_INDEX`.
 
-  `the_ids_are_complete_unique_permanent_and_293` holds them.
+  `the_ids_are_complete_unique_and_293` holds them.
 - **A state or preset from before F1, §7.2 or §7.3 leaves every band static, on its own input, in
   Stereo** (one from before F6 or F7: Zero latency, Medium, auto gain off): a preset through
   `default_missing_legacy_parameter`, a host state through `filter_state`
@@ -77,7 +82,7 @@ F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's. No co
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
   and a preset's band 3 is slot 3. No ownership state exists.
 
-## The stepped domains are reserved from this first release
+## The stepped domains are reserved
 
 Saved projects and presets hold normalised values (mxm-kit's `crates/mxm-preset/AGENTS.md`), so a range that
 grew would remap them.
@@ -240,8 +245,9 @@ transaction.
 
 # Work Guidance
 
-- A parameter's id, its stepped domain and the place of each stepped value are permanent. Rename a
-  field freely, never an id.
+- During pre-alpha an id, the order, a stepped domain or a value's place may change (*Not
+  permanent during pre-alpha*); change the pinning tests and regenerate the factory set with it.
+  From the first release: rename a field freely, never an id.
 - A new shape or slope takes the next unassigned value, gets a reading, and joins the place test.
 
 # Verification

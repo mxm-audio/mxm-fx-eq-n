@@ -1,4 +1,4 @@
-//! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
+//! The host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
 //! **Twenty-four band slots, two globals, each slot's dynamics, side-chain switch and placement,
 //! the phase mode and its resolution, and auto gain: 293 parameters.** The slots are
@@ -8,10 +8,11 @@
 //! `release_24`, so no v1 id moved, the side-chain switches after those (plan §7.2), `key_1`
 //! through `key_24`, the placements after those (plan §7.3), `place_1` through `place_24`, then
 //! F6's `phase` and `resolution` (plan §7.7), not automatable, and last F7's `autogain` (plan §7.8).
-//! Every id is permanent. A host keeps its parameter names from
+//! The tests pin every id; during pre-alpha one may change (the owner, 2026-10-16), from the first
+//! release none may. A host keeps its parameter names from
 //! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
-//! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
+//! **The stepped parameters reserve a fixed domain** (plan §2.1). Projects
 //! and presets store the normalised value, so a range that grew would move every saved shape. The
 //! type is 0–31: 0 Off, 1–8 the eight shapes, the rest unassigned and read as unavailable, Off to the
 //! DSP. The slope is 0–15: 0–7 the eight slopes, the rest unassigned and read as 12 dB/octave. A new
@@ -903,7 +904,7 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_293() {
+    fn the_ids_are_complete_unique_and_293() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()

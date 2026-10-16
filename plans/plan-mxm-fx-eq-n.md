@@ -249,7 +249,10 @@ named by its number ("Band 7 frequency"), never by its shape.
 **Rejected: bands as persisted state**, as `mxm-fx-curve` keeps its points. It removes the parameter
 clutter but loses automation of frequency, gain and Q, which every surveyed product offers.
 **Rejected: CLAP parameter rescan** to add parameters at runtime. Hosts handle a changing parameter
-list poorly, and an id must be permanent from the release that declares it.
+list poorly, and an id must be permanent from the release that declares it. **Until the first
+release the parameters are not permanent** (the owner, 2026-10-16: "relax it for pre-alpha"): an
+id, the order, a stepped domain or a value's place may change when the design calls for it, and an
+older state or preset need not load as it was.
 
 **The cap is 24 slots**, Pro-Q's (decision 1, owner, 2026-10-12; research §17.1).
 

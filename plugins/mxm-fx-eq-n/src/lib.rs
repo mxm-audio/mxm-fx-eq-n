@@ -1,6 +1,6 @@
 //! `mxm-fx-eq-n` — a parametric EQ with only the bands you need (`plans/plan-mxm-fx-eq-n.md`).
 //!
-//! The shell: 24 band slots and two globals as permanent host parameters (`params`), the preset
+//! The shell: 24 band slots and two globals as host parameters (`params`), the preset
 //! seam (`preset`), band solo as a transient command (`audition`), the Out meter and the editor
 //! link (`telemetry`), the analyser's audio half (`analyser`) and the registry other tracks' editors
 //! read this one through (`instances`, plan §7.8), over `crates/mxm-fx-eq-n-dsp`. The editor is E3's.
