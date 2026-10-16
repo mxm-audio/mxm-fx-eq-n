@@ -1,8 +1,49 @@
 # NOTES.md — plugins/mxm-fx-eq-n
 
-The detail behind this folder's AGENTS.md: the reasons for each deviation, the solo and handoff
-design, the editor's interaction in full, the analyser's measurements and the factory set. AGENTS.md is the
-contract; this file is the reference it links to.
+The detail behind this folder's AGENTS.md: what is built, the parameters in full, the reasons for
+each deviation, the solo and handoff design, the editor's features and interaction in full, the
+analyser's measurements, the factory set and the host tests. AGENTS.md is the contract; this file
+is the reference it links to.
+
+## What is built
+
+**Built through E4**: the host surface, the preset seam, solo's command path, the analyser and the
+meter (E2), the editor (E3), and the factory set and the host tests (E4), and F1's dynamic bands
+through the shell, the editor and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's
+per-band stereo placement (plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan
+§7.5), F5's EQ match (plan §7.6), F6's phase modes (plan §7.7), F7's auto gain and other tracks'
+spectra (plan §7.8) and F8's work with several bands (plan §7.9). DAW and listening checks are E5's,
+F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's.
+
+The editor's modules, by phase: `mod.rs` its state, writes and keyboard commands; `panel.rs` the
+frame; `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs`
+the analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
+finder, the rungs and the worker, its tests in `finder/tests.rs`; `matcher.rs` F5's EQ match, its
+tests in `matcher/tests.rs`; `external.rs` F7's external spectrum and collisions; `selection.rs`
+F8's selection, a group's edits and the clipboard; `tests.rs` the editor's tests.
+
+## The parameters in full
+
+- 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
+  `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
+  frequency"), never the shape;
+- `output`, the output gain, as linear gain shown in dB;
+- `gainscale`, 0–200 %;
+- F1's dynamics, four per slot after the globals (plan §7.1): `range_<n>`, `threshold_<n>`,
+  `attack_<n>` and `release_<n>`, named "Band 7 range" and grouped with their slot; their place
+  in the editor's indices starts at `params::DYNAMICS_BASE`, so no v1 index moved;
+- the side-chain switches after them (plan §7.2), `key_1` … `key_24`, "Band 7 side chain", from
+  `params::KEY_BASE`;
+- the placements (plan §7.3), `place_1` … `place_24`, "Band 7 placement", stepped 0–7
+  (0 Stereo, 1 Left, 2 Right, 3 Mid, 4 Side, 5–7 unassigned, read *Unavailable n*, heard as
+  Stereo), from `params::PLACE_BASE`;
+- F6's phase after them (plan §7.7), **not automatable**: `phase` stepped 0–7 (0 Zero latency,
+  1 Linear phase, the rest heard as Zero latency) and `resolution` 0–7 (0 Low, 1 Medium,
+  2 High, the rest heard as Medium), at `params::PHASE_INDEX` and `RESOLUTION_INDEX`;
+- F7's `autogain` last (plan §7.8), on or off, automatable, off by default, at
+  `params::AUTO_GAIN_INDEX`.
+
+`the_ids_are_complete_unique_and_293` holds them.
 
 ## Deviations from the shared parameter rules, and why
 
@@ -58,15 +99,71 @@ and `audition.rs`'s tests hold the lifecycle.
   the editor clears the meter as closing does: a block that read "connected" just before a close
   can publish after it (`a_block_publishing_across_a_close_is_not_shown_on_reopening`). The peak
   keeps a non-finite sample (`f32::max` would drop NaN), so broken output latches the clip.
+- **Other tracks** (`instances.rs`, plan §7.8; NOTES, *Other tracks*): a second tap, post-EQ only,
+  copies into its own ring only while another track's editor watches (an atomic count, the audio
+  thread's one read); the ring's consumer lives in the instance's registry entry, which editors
+  drain under a mutex the audio thread never takes. The instance id is host state
+  (`#[persist = "instance"]`), never a preset's; a duplicated id is renewed for the later instance.
+
+## One latency per activation
+
+- **One latency per activation** (plan §7.7; the kit's *Latency is fixed*; NOTES, *Phase, the
+  latency and its restart*): activation builds and primes the phase the parameters hold and
+  reports its latency; one asked while active is reported from `process` and heard after the
+  host's restart. A reset in Linear phase hears its kernel once designed, in realtime never
+  waiting (the DSP's `AGENTS.md`).
+
+## The editor's features in short
+
+The full text of each follows, in *The editor in full*.
+
+- **Dynamic bands** (plan §7.1, §7.2): Range, Threshold, Attack, Release, the Side chain toggle and
+  a meter of the movement in a bell or shelf's card; the graph rings the point (dashed when keyed),
+  draws where Range would take it and, while a band moves, the curve as heard over the drawn one,
+  both from `Telemetry::gains`, published only with an editor connected.
+- **Stereo placement** (plan §7.3): a **Placement** selector beside Bypass, a **Split** button (a
+  Stereo band into Left/Right, Alt into Mid/Side) beside Delete band. With placed bands the graph
+  draws each channel's response to itself (L, R; M, S dashed), lettered, as is a placed point. In
+  mono (`Telemetry::mono`) a placed band is faint, refuses solo, and offers only Stereo.
+- **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
+  decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
+  falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
+  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`). The
+  **External** selector (plan §7.4, §7.8) draws one other spectrum, dashed and lettered: the side
+  chain's on a layout with the port ("SC"; the audio thread copies the key only then) or another
+  track's by name (`external.rs`, a second analyser, post only); **Collisions** hatch the bottom
+  edge where both carry sound (NOTES, *Other tracks*).
+  **Freeze** holds two seconds' highest levels and marks peaks a drag grabs (NOTES, *Freeze*).
+- **Find** (plan §7.5, decisions 27–30; NOTES, *Find*): the Resonances card's toggle; it proposes
+  static cut bells from the pre-EQ input, never a continuous curve, written as ordinary bands, one
+  undo step each; never saved; its search on `finder::Worker`, listening inside
+  `spectrum::BUDGET_MS` (`finder_cost`).
+- **Phase** (plan §7.7, decisions 35–37; NOTES, *Phase*): the Output card's **Phase** and
+  **Resolution** selectors, each change one undo step, Resolution offered only in Linear phase;
+  their hovers give the latency and say when a change waits for the host's restart. **The drawn
+  curve follows the phase in force** (`Telemetry::phase`): in Linear phase the kernel's own
+  magnitude (`linear::heard_lines`), and a dynamic band shows no reach there, being held.
+- **Several bands** (plan §7.9, decisions 44–47; NOTES, *Several bands*): a selection, its
+  primary the band `selected` names; **every edit of the primary moves the group** (`group_edit`)
+  by one ratio, offset or factor, stopping at its first member's limit, one undo step; Delete,
+  DUPLICATE, copy, cut, paste (a clipboard in the process) and Invert gain take the selection.
+- **Auto gain** (plan §7.8, decisions 38–40; NOTES, *Auto gain*): the Output card's switch, on
+  Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it
+  (`Telemetry::make_up`), the output at it or ramping to it within one fade.
+- **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, offered with
+  the analyser on and the side-chain port; it proposes bells and shelves for the free slots, the EQ
+  as heard counted, **Apply** writing them all as one undo step; never saved; its fits on the same
+  worker, listening inside `spectrum::BUDGET_MS` (`match_cost`).
 
 ## The editor in full
 
 - **Layout**, the named exception to paged cards (`plugins/AGENTS.md`): the graph takes every spare
-  point, an Out meter rail (`shell::vertical_level_meter`, post output gain) stands beside it, and a
-  fixed-width column of three cards, Band, Output and Analyser, sits to its right and never under
-  it. Narrower than graph and column, the whole surface scrolls sideways with the column still
-  beside; taller than the space, the column scrolls on its own. The window opens at `REFERENCE`,
-  inside the quarter-4K budget and as tall as the column's tallest state
+  point, an Out meter rail (`shell::vertical_level_meter`, post output gain) stands beside it, and two
+  fixed-width columns of cards sit to its right and never under it (decision 30): the Band card
+  alone, then Output, Analyser, Resonances and Match. Narrower than graph and columns, the whole
+  surface scrolls sideways with the columns still beside; taller than the space, the columns
+  scroll together. The window opens at `REFERENCE`, inside the quarter-4K budget and hugged to
+  the taller column
   (`the_opening_size_is_inside_the_budget_and_holds_the_column_without_scrolling`), and narrows to
   `MINIMUM` (`the_app_bar_holds_in_the_minimum_window`). Every card is one of the cursor's
   (`navigation::bar_card`), the graph first.
@@ -411,6 +508,17 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
   presence at 3.5 kHz; mud at 300 Hz; air as a 12 kHz shelf; a kick's thump at 60 Hz, box at
   350 Hz and beater at 4 kHz; the telephone band's 300 Hz – 3.4 kHz; mains hum at 50 and 60 Hz
   with three harmonics each, notched at Q 10. E5's listening judges them.
+
+## The host tests (`host-tests/`)
+
+- They hold the bundle's boundary (plan §8): discovered as an effect with no map, the editor
+  offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
+  ringing down to exact silence, a dynamic band cutting the loud note, a state from before F1
+  restored static through the wrapper's own `filter_state`, the EQ on the plain stereo
+  configuration, a restored Linear phase delaying the render by its latency to the bit, auto gain
+  on a restored broadband boost at the dry level, the instance id kept through the host's state,
+  and the player's bypass bit-exact dry. They read this repository's own
+  `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle there first).
 
 ## The slower checks
 
