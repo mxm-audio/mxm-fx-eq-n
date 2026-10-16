@@ -769,7 +769,7 @@ layouts become *stereo + stereo key*, *mono + mono key*, *stereo*, *mono*, in th
 - the keyed layouts first: nice-plug starts on the first layout, so a host that never selects a
   configuration offers the input (whether Bitwig selects one is SC.4's check);
 - **the configuration ids are set here, once, and permanent from SC.2 on**, as parameter ids are:
-  nice-plug's id is the layout's index, and the EQ has never been released (private, pre-alpha, no
+  nice-plug's id is the layout's index, and the EQ has never been released (pre-alpha, no
   tags) and its one host so far, MXM Player, negotiates on every load and saves no id, so no project
   holds the old ones. The layouts test pins the four, ports and names;
 - MXM Player picks the first configuration with one input port (`envelope.rs`,
