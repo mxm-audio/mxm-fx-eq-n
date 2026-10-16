@@ -18,6 +18,7 @@ pub mod dynamics;
 pub mod engine;
 pub mod filter;
 pub mod linear;
+pub mod loudness;
 
 pub use design::{
     Cascade, Design, MAX_EFFECTIVE_GAIN_DB, MAX_SECTIONS, Method, Section, Shape, Slope,

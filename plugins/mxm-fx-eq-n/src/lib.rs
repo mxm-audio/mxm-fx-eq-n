@@ -2,8 +2,8 @@
 //!
 //! The shell: 24 band slots and two globals as permanent host parameters (`params`), the preset
 //! seam (`preset`), band solo as a transient command (`audition`), the Out meter and the editor
-//! link (`telemetry`) and the analyser's audio half (`analyser`), over `crates/mxm-fx-eq-n-dsp`. The
-//! editor is E3's.
+//! link (`telemetry`), the analyser's audio half (`analyser`) and the registry other tracks' editors
+//! read this one through (`instances`, plan §7.8), over `crates/mxm-fx-eq-n-dsp`. The editor is E3's.
 
 macro_rules! plugin_name {
     () => {
@@ -17,6 +17,7 @@ pub const CLAP_ID: &str = concat!("dk.mxm.", plugin_name!());
 pub mod analyser;
 pub mod audition;
 pub mod editor;
+pub mod instances;
 pub mod params;
 pub mod preset;
 pub mod telemetry;
@@ -41,6 +42,10 @@ pub struct MxmFxEqN {
     tap: Tap,
     /// The ring's editor half, until the editor takes it.
     analyser: Option<rtrb::Consumer<Block>>,
+    /// The share tap, post-EQ only, copying while another track's editor watches this one, and
+    /// this instance's registry entry (plan §7.8).
+    share: Tap,
+    instance: Arc<instances::Instance>,
     channels: usize,
     offline: bool,
     /// The phase the parameters last asked for while active, reported to the host as its latency
@@ -51,14 +56,19 @@ pub struct MxmFxEqN {
 impl Default for MxmFxEqN {
     fn default() -> Self {
         let (tap, consumer) = analyser::ring();
+        let (share, share_consumer) = analyser::ring_with(instances::SHARE_BLOCKS);
+        let params = Arc::new(EqParams::default());
+        let instance = instances::Instance::join(params.identity.shared(), share_consumer);
         Self {
-            params: Arc::new(EqParams::default()),
+            params,
             telemetry: Arc::new(Telemetry::default()),
             audition: Arc::new(Audition::default()),
             history: editor::history::Shared::default(),
             engine: Box::new(Engine::new(48_000.0)),
             tap,
             analyser: Some(consumer),
+            share,
+            instance,
             channels: 2,
             offline: false,
             asked_phase: Phase::ZeroLatency,
@@ -94,6 +104,7 @@ impl MxmFxEqN {
         }
         self.engine.set_output_gain(self.params.output.value());
         self.engine.set_gain_scale(self.params.gain_scale.value());
+        self.engine.set_auto_gain(self.params.auto_gain.value());
         let solo = if self.offline || !self.telemetry.connected() {
             None
         } else {
@@ -119,6 +130,7 @@ impl MxmFxEqN {
         self.telemetry.publish_sample_rate(sample_rate);
         self.telemetry.publish_channels(self.channels);
         self.tap.discontinuity(sample_rate);
+        self.share.discontinuity(sample_rate);
         // The phase the parameters hold, built here, off the audio thread (plan §7.7): Linear
         // phase's convolver and design thread, its first kernel designed before the first sample.
         let phase = self.params.phase_mode();
@@ -159,6 +171,12 @@ impl MxmFxEqN {
     ) -> ProcessStatus {
         self.sync();
         self.tap.set_wanted(self.telemetry.analyser_wanted());
+        // A watch from none starts a new generation, so nothing from before it reads as current.
+        let watched = self.instance.watched();
+        if watched && !self.share.wanted() {
+            self.share.discontinuity(self.telemetry.sample_rate());
+        }
+        self.share.set_wanted(watched);
         let Some(first) = channels.first() else {
             return ProcessStatus::Normal;
         };
@@ -194,6 +212,9 @@ impl MxmFxEqN {
                 }
                 let key = side(0).zip(side(1)).map(|(l, r)| [l, r]);
                 self.engine.process_stereo_keyed(left, right, key);
+                if watched {
+                    self.share.capture_post(tagged, [left, right]);
+                }
                 if wanted {
                     self.tap.capture(
                         tagged,
@@ -208,6 +229,9 @@ impl MxmFxEqN {
                 }
             } else {
                 self.engine.process_mono_keyed(left, side(0));
+                if watched {
+                    self.share.capture_post(tagged, [left, left]);
+                }
                 if wanted {
                     let pre = &pre[0][..length];
                     let key = side(0).filter(|_| key_wanted).map(|key| [key, key]);
@@ -226,6 +250,8 @@ impl MxmFxEqN {
             }
             self.telemetry
                 .publish_heard_scale(self.engine.gain_scale() as f32);
+            self.telemetry
+                .publish_make_up(self.engine.make_up_db() as f32);
             for slot in 0..mxm_fx_eq_n_dsp::SLOTS {
                 if let Some((drawn, heard)) = self.engine.gains_db(slot) {
                     self.telemetry
@@ -324,6 +350,7 @@ impl Plugin for MxmFxEqN {
             audition: self.audition.clone(),
             history: self.history.clone(),
             analyser: self.analyser.take(),
+            instance: self.instance.clone(),
         })
     }
 
@@ -357,12 +384,14 @@ impl Plugin for MxmFxEqN {
     fn reset(&mut self) {
         self.audition.end();
         self.tap.discontinuity(self.telemetry.sample_rate());
+        self.share.discontinuity(self.telemetry.sample_rate());
         self.seed();
     }
 
     fn deactivate(&mut self) {
         self.audition.end();
         self.tap.discontinuity(self.telemetry.sample_rate());
+        self.share.discontinuity(self.telemetry.sample_rate());
         // Linear phase's design thread ends with its engine; the next activation builds another.
         *self.engine = Engine::new(f64::from(self.telemetry.sample_rate()));
     }

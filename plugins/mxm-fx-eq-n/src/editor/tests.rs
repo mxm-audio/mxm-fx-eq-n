@@ -91,6 +91,7 @@ impl Rig {
             audition: audition.clone(),
             history: history::Shared::default(),
             analyser: None,
+            instance: crate::instances::Instance::detached(),
         });
         let host = Arc::new(Host::default());
         app.attach(GuiContext::new(host.clone()));
@@ -516,6 +517,7 @@ fn the_cursor_reaches_and_operates_every_control() {
             audition: Arc::new(Audition::default()),
             history: history::Shared::default(),
             analyser: None,
+            instance: crate::instances::Instance::detached(),
         });
         // The band is written directly: the check's host records and applies nothing.
         let band = &app.params.bands[0];
@@ -537,9 +539,12 @@ fn the_cursor_reaches_and_operates_every_control() {
             "delete",
             "output",
             "gainscale",
+            "autogain",
             "phase",
             "resolution",
             "analyser",
+            "collisions",
+            "external",
             "show",
             "resolution",
             "speed",
@@ -642,6 +647,7 @@ fn a_restore_while_the_editor_is_closed_starts_an_epoch_on_reopening() {
         audition: rig.audition.clone(),
         history: rig.app.history.clone(),
         analyser: None,
+        instance: crate::instances::Instance::detached(),
     });
     reopened.attach(GuiContext::new(rig.host.clone()));
     rig.app = reopened;
@@ -1691,6 +1697,7 @@ fn pair(select: Option<(Shape, Slope)>) -> (EqApp, EqApp) {
             audition: Arc::new(Audition::default()),
             history: history::Shared::default(),
             analyser: None,
+            instance: crate::instances::Instance::detached(),
         })
     };
     let (mut build, mut paint) = (make(), make());
@@ -1762,7 +1769,9 @@ fn every_card_passes_the_tree_checks_in_every_state_and_fits_the_column() {
     type Tree = fn(&EqApp) -> mxm_ui::tree::Node<column::Leaf>;
     let cards: [(&str, Tree); 4] = [
         (column::OUTPUT_TITLE, column::output_tree),
-        (column::ANALYSER_TITLE, |_| column::analyser_tree(true)),
+        (column::ANALYSER_TITLE, |_| {
+            column::analyser_tree(vec!["Off".to_owned(), "Side chain".to_owned()])
+        }),
         (column::RESONANCES_TITLE, |_| column::resonances_tree()),
         (column::MATCH_TITLE, |_| column::match_tree()),
     ];
@@ -2476,17 +2485,16 @@ fn menu_on_the_graph_opens_the_selected_band_s_menu() {
     assert_eq!(rig.app.context_slot, Some(0));
 }
 
-/// **The Side chain view is offered only on a layout with the port** (plan §7.4), and turning it
-/// on tells the audio thread to copy the key.
+/// **The side chain is offered only on a layout with the port** (plan §7.4, §7.8: one of the
+/// External selector's choices), and choosing it tells the audio thread to copy the key.
 #[test]
-fn the_side_chain_view_is_offered_only_with_the_port() {
+fn the_side_chain_is_offered_only_with_the_port() {
     for (port, offered) in [(false, false), (true, true)] {
-        let found: Vec<column::Leaf> = column::analyser_tree(port)
-            .keys()
-            .into_iter()
-            .copied()
-            .collect();
-        assert_eq!(found.contains(&column::Leaf::SideChainView), offered);
+        let rig = Rig::new();
+        rig.app.telemetry.publish_side_chain_port(port);
+        let names = rig.app.external_names();
+        assert_eq!(names.contains(&"Side chain".to_owned()), offered);
+        assert_eq!(names[0], "Off");
     }
     let mut rig = Rig::new();
     rig.app.telemetry.publish_side_chain_port(true);
@@ -3784,4 +3792,118 @@ fn the_phase_hover_tells_the_delay_in_force() {
         resolution.contains("48 ms late") && resolution.contains("176 ms late"),
         "{resolution}"
     );
+}
+
+/// One frame of shared noise: into this editor's analyser, and into the other track's share tap
+/// when `other` is given.
+fn collide_frame(
+    rig: &mut Rig,
+    own: &mut (crate::analyser::Tap, rtrb::Consumer<crate::analyser::Block>),
+    other: Option<&mut crate::analyser::Tap>,
+    seed: &mut u32,
+) {
+    let frames: Vec<f32> = (0..800)
+        .map(|_| {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 17;
+            *seed ^= *seed << 5;
+            (*seed as f32 / u32::MAX as f32 - 0.5) * 0.5
+        })
+        .collect();
+    own.0
+        .capture(2, [&frames, &frames], [&frames, &frames], None);
+    if let Some(tap) = other {
+        tap.capture_post(2, [&frames, &frames]);
+    }
+    while let Ok(block) = own.1.pop() {
+        rig.app.spectrum.ingest(&block);
+    }
+    rig.press(Vec::new());
+}
+
+/// **Another track, watched and colliding** (plan §7.8): the External selector lists it by its
+/// track's name; chosen, it is watched while drawn; Collisions marks nothing on silence, marks
+/// where both carry sound at one level, and nothing once the other goes quiet past the analyser's
+/// staleness; a closed window drops the watch; a track gone is shown as not found.
+#[test]
+fn another_track_is_listed_watched_and_collides() {
+    use crate::instances::{IdentityField, Instance, SHARE_BLOCKS};
+    let identity = IdentityField::default();
+    let (mut tap, consumer) = crate::analyser::ring_with(SHARE_BLOCKS);
+    let other = Instance::join(identity.shared(), consumer);
+    other.set_track("zz-collide Bass");
+    let mut rig = Rig::new();
+    let names = rig.app.external_names();
+    assert_eq!(names[0], "Off");
+    assert!(names.contains(&"zz-collide Bass".to_owned()), "{names:?}");
+    rig.app.set_view(crate::view::ViewSettings {
+        external: other.id(),
+        collisions: true,
+        ..rig.app.params.view.get()
+    });
+    rig.press(Vec::new());
+    assert!(other.watched(), "chosen and drawn, it is watched");
+    assert!(rig.app.collision_marks.iter().all(|s| *s == 0.0), "silence");
+
+    let mut own = crate::analyser::ring();
+    own.0.set_wanted(true);
+    tap.set_wanted(true);
+    let mut seed = 7;
+    for _ in 0..40 {
+        collide_frame(&mut rig, &mut own, Some(&mut tap), &mut seed);
+    }
+    assert!(
+        rig.app.collision_marks.iter().any(|s| *s > 0.5),
+        "both carry sound at one level"
+    );
+    for _ in 0..40 {
+        collide_frame(&mut rig, &mut own, None, &mut seed);
+    }
+    assert!(
+        rig.app.collision_marks.iter().all(|s| *s == 0.0),
+        "the other went quiet"
+    );
+
+    mxm_editor::Panel::closed(&mut rig.app, &GuiContext::new(rig.host.clone()));
+    assert!(!other.watched(), "a closed window watches nothing");
+    drop(other);
+    rig.press(Vec::new());
+    assert!(rig.app.other.is_none());
+    assert!(
+        rig.app
+            .external_names()
+            .contains(&"Track not found".to_owned())
+    );
+}
+
+/// **The host's track name** reaches the registry through the editor, whether or not a window is
+/// open, and the editor never lists its own instance (plan §7.8).
+#[test]
+fn the_hosts_track_name_names_this_instance() {
+    use crate::instances::{IdentityField, Instance, names};
+    let identity = IdentityField::default();
+    let (_tap, consumer) = crate::analyser::ring_with(1);
+    let mut rig = Rig::new();
+    rig.app.instance = Instance::join(identity.shared(), consumer);
+    mxm_editor::Panel::track_info_changed(
+        &mut rig.app,
+        &nice_plug::prelude::TrackInfo::new("zz-info Keys", None),
+    );
+    assert!(
+        names()
+            .iter()
+            .any(|listed| listed.id == identity.get() && listed.name == "zz-info Keys")
+    );
+    assert!(
+        !rig.app
+            .external_names()
+            .contains(&"zz-info Keys".to_owned())
+    );
+}
+
+/// **Auto gain's hover** gives the make-up in force while it is on (plan §7.8).
+#[test]
+fn the_auto_gain_hover_gives_the_make_up() {
+    assert!(column::auto_gain_hover(true, -3.04).ends_with("Now -3.0 dB."));
+    assert!(!column::auto_gain_hover(false, 0.0).contains("Now"));
 }

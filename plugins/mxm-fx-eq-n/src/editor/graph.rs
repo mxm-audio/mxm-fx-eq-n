@@ -219,6 +219,10 @@ pub fn peak_label(axes: &Axes, at: Pos2, size: Vec2) -> Rect {
 
 const PEAK_MARKER_RADIUS: f32 = 4.0;
 
+/// The collision strip's height and its hatching's spacing (plan §7.8).
+const COLLISION_STRIP: f32 = 10.0;
+const COLLISION_HATCH: f32 = 5.0;
+
 /// The bottom-right corner of the side-chain line's "SC", by the line's end at `end`: just above
 /// it, held a line of text below the graph's top so a loud key's label is not cut off.
 pub fn side_chain_label_at(axes: &Axes, end: Pos2) -> Pos2 {
@@ -745,6 +749,80 @@ impl EqApp {
     }
 
     /// The frozen peak at `at`: its drawn label, or the nearest marker within the hit radius.
+    /// The collision strip along the graph's bottom edge (plan §7.8).
+    fn collision_strip(axes: &Axes) -> Rect {
+        Rect::from_min_max(
+            pos2(axes.rect.left(), axes.inner.bottom() - COLLISION_STRIP),
+            pos2(axes.rect.right(), axes.inner.bottom()),
+        )
+    }
+
+    /// The marks' strength at `x`, from the drawn frequencies either side.
+    fn collision_strength(curves: &Curves, marks: &[f32], x: f32) -> f32 {
+        if marks.len() != curves.xs.len() || marks.is_empty() {
+            return 0.0;
+        }
+        let at = curves.xs.partition_point(|&other| other < x);
+        match at {
+            0 => marks[0],
+            at if at >= marks.len() => marks[marks.len() - 1],
+            at => {
+                let (x0, x1) = (curves.xs[at - 1], curves.xs[at]);
+                let t = ((x - x0) / (x1 - x0).max(f32::EPSILON)).clamp(0.0, 1.0);
+                marks[at - 1] + (marks[at] - marks[at - 1]) * t
+            }
+        }
+    }
+
+    /// Collisions as diagonal hatching along the bottom edge, each stroke as opaque as the
+    /// strength under it: never a hue (plan §7.8).
+    fn paint_collisions(
+        &self,
+        painter: &egui::Painter,
+        axes: &Axes,
+        curves: &Curves,
+        marks: &[f32],
+        tokens: &Tokens,
+    ) {
+        if marks.iter().all(|strength| *strength <= 0.0) {
+            return;
+        }
+        let strip = Self::collision_strip(axes);
+        let painter = painter.with_clip_rect(strip.intersect(painter.clip_rect()));
+        let height = strip.height();
+        let mut x = strip.left() - height;
+        while x < strip.right() {
+            let strength = Self::collision_strength(curves, marks, x + height * 0.5);
+            if strength > 0.02 {
+                painter.add(Painted::line_segment(
+                    [pos2(x, strip.bottom()), pos2(x + height, strip.top())],
+                    Stroke::new(
+                        EMPHASIS_STROKE,
+                        tokens.text_primary.gamma_multiply(0.85 * strength),
+                    ),
+                ));
+            }
+            x += COLLISION_HATCH;
+        }
+    }
+
+    /// The collision marks' strength under the pointer at `at`, 0 off the strip.
+    pub(crate) fn collision_at(&self, axes: &Axes, curves: &Curves, at: Pos2) -> f32 {
+        if !Self::collision_strip(axes).contains(at) {
+            return 0.0;
+        }
+        Self::collision_strength(curves, &self.collision_marks, at.x)
+    }
+
+    /// Another track's name for its line's label (plan §7.8).
+    fn external_label(&self, id: u64) -> String {
+        crate::instances::names()
+            .into_iter()
+            .find(|listed| listed.id == id)
+            .map(|listed| super::external::short(&listed.name))
+            .unwrap_or_default()
+    }
+
     pub(crate) fn peak_at(&self, axes: &Axes, at: Pos2) -> Option<grab::Peak> {
         let frozen = self.frozen.as_ref()?;
         let labelled = self
@@ -862,6 +940,17 @@ impl EqApp {
             response
                 .clone()
                 .on_hover_text_at_pointer(PROPOSAL_DESCRIPTION);
+        }
+        // The collision marks under the pointer say what they mean (plan §7.8).
+        if let Some(at) = response.hover_pos()
+            && hit(at).is_none()
+            && self.collision_at(axes, curves, at) > 0.05
+        {
+            response.clone().on_hover_text_at_pointer(format!(
+                "This track may collide with {} here: both carry sound, the other near enough to \
+                 mask this one. An indication, not a measurement: listen before cutting.",
+                self.external_name
+            ));
         }
         // A frozen peak under the pointer says what a drag from it does, or why it cannot.
         if let Some(at) = response.hover_pos()
@@ -1198,7 +1287,19 @@ impl EqApp {
                 self.hold_basis = Some(basis);
                 self.spectrum.snap();
             }
-            self.spectrum.analyse(&curves.freqs, now, &settings);
+            // Collisions read this track's post-EQ spectrum whatever Show draws (plan §7.8).
+            let mut analysed = settings;
+            if settings.collisions && analysed.show == Show::Pre {
+                analysed.show = Show::Both;
+            }
+            self.spectrum.analyse(&curves.freqs, now, &analysed);
+            if let Some(other) = &mut self.other {
+                other.spectrum.analyse(
+                    &curves.freqs,
+                    now,
+                    &super::external::Other::settings(&settings),
+                );
+            }
             let post_shown = matches!(settings.show, Show::Post | Show::Both);
             if self.frozen.is_none() {
                 let source = if post_shown {
@@ -1279,13 +1380,27 @@ impl EqApp {
                     Stroke::new(AXIS_STROKE, tokens.text_secondary.gamma_multiply(0.8)),
                 ));
             }
-            // The side chain's spectrum, the reference line (plan §7.4): dashed and lettered, never
-            // told apart by hue; at the floor while nothing comes in.
-            if settings.side_chain
-                && self.telemetry.side_chain_port()
-                && key_db.len() == curves.xs.len()
+            // The external spectrum, the reference line (plan §7.4, §7.8): the side chain's or
+            // another track's, dashed and lettered with its name, never told apart by hue; at the
+            // floor while nothing comes in.
+            let side_chain = settings.side_chain && self.telemetry.side_chain_port();
+            let external: Option<(&[f32], String, bool)> = if side_chain {
+                Some((key_db, "SC".to_owned(), self.spectrum.live()))
+            } else {
+                self.other.as_ref().map(|other| {
+                    (
+                        &other.spectrum.post_db[..],
+                        self.external_label(other.id),
+                        other.spectrum.live(),
+                    )
+                })
+            };
+            let mut marks = Vec::new();
+            let mut name = String::new();
+            if let Some((external_db, label, external_live)) = &external
+                && external_db.len() == curves.xs.len()
             {
-                let line = points(key_db);
+                let line = points(external_db);
                 let end = line.last().copied();
                 painter.extend(Painted::dashed_line(
                     &line,
@@ -1297,12 +1412,32 @@ impl EqApp {
                     painter.text(
                         side_chain_label_at(axes, end),
                         egui::Align2::RIGHT_BOTTOM,
-                        "SC",
+                        label,
                         egui::FontId::proportional(11.0),
                         tokens.text_primary,
                     );
                 }
+                // Collisions (plan §7.8): only while both hold sound, never on a freeze.
+                if settings.collisions
+                    && self.frozen.is_none()
+                    && *external_live
+                    && self.spectrum.live()
+                {
+                    marks = super::external::collisions(
+                        &curves.freqs,
+                        &self.spectrum.post_db,
+                        external_db,
+                    );
+                    name = if side_chain {
+                        "the side chain".to_owned()
+                    } else {
+                        label.clone()
+                    };
+                }
             }
+            self.paint_collisions(&painter, axes, curves, &marks, tokens);
+            self.collision_marks = marks;
+            self.external_name = name;
             // A freeze's peaks (plan §7.4): a marker and its frequency, strongest first, a label
             // that would overlap a stronger one's not drawn; the keyboard's peak ringed.
             if let Some(frozen) = &self.frozen {

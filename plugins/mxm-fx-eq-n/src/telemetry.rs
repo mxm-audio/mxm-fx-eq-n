@@ -33,6 +33,8 @@ pub struct Telemetry {
     gains: [[AtomicU32; 2]; mxm_fx_eq_n_dsp::SLOTS],
     /// The gain scale the gains are heard under now, as `f32` bits.
     heard_scale: AtomicU32,
+    /// Auto gain's make-up in force, in dB, as `f32` bits: 0 while off (plan §7.8).
+    make_up: AtomicU32,
     /// The phase in force (plan §7.7), set at activation: 0 Zero latency, else 1 + the
     /// resolution's place. A change asked for waits for the host's restart; the editor draws
     /// what runs.
@@ -51,6 +53,7 @@ impl Default for Telemetry {
             output: [PeakMeter::new(), PeakMeter::new()],
             gains: std::array::from_fn(|_| [AtomicU32::new(0), AtomicU32::new(0)]),
             heard_scale: AtomicU32::new(1f32.to_bits()),
+            make_up: AtomicU32::new(0),
             phase: AtomicU32::new(0),
         }
     }
@@ -71,11 +74,22 @@ impl Telemetry {
             }
         }
         self.heard_scale.store(1f32.to_bits(), Ordering::Relaxed);
+        self.make_up.store(0, Ordering::Relaxed);
     }
 
     /// The gain scale where the DSP has glided it, from the audio thread after a block.
     pub fn publish_heard_scale(&self, scale: f32) {
         self.heard_scale.store(scale.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Auto gain's make-up in force, in dB, from the audio thread after a block (plan §7.8).
+    pub fn publish_make_up(&self, db: f32) {
+        self.make_up.store(db.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The make-up last published, in dB: 0 before any.
+    pub fn make_up(&self) -> f32 {
+        f32::from_bits(self.make_up.load(Ordering::Relaxed))
     }
 
     /// The gain scale the published gains are heard under: 1 before any.

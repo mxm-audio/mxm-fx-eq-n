@@ -76,8 +76,10 @@ pub enum Leaf {
     Placement,
     /// A Stereo band into a Left/Right or Mid/Side pair (plan §7.3).
     Split,
-    /// The side chain's spectrum as a reference line (plan §7.4).
-    SideChainView,
+    /// The external spectrum: off, the side chain's (plan §7.4) or another track's (plan §7.8).
+    External,
+    /// Marks where this track and the external spectrum may collide (plan §7.8).
+    Collisions,
     /// Holds the spectrum so its peaks can be grabbed (plan §7.4).
     Freeze,
     /// Listens for resonances and proposes cuts (plan §7.5).
@@ -100,6 +102,8 @@ pub enum Leaf {
     PhaseMode,
     /// Linear phase's resolution.
     LinearResolution,
+    /// Auto gain, the curve's loudness undone at the output (plan §7.8).
+    AutoGain,
 }
 
 const SHAPE_DESCRIPTION: &str = "What the band does to the sound around its frequency.";
@@ -131,6 +135,12 @@ const FREEZE_DESCRIPTION: &str = "Holds the spectrum's highest levels of the las
      marks its peaks. Drag a peak to make a bell there. Any analyser change lets it run again.";
 const SIDE_CHAIN_VIEW_DESCRIPTION: &str = "Shows the side-chain input's spectrum as a dashed line, \
      to compare with the sound. With nothing routed to the side chain, the line stays flat.";
+const EXTERNAL_DESCRIPTION: &str = "Another spectrum beside this track's, as a dashed line: the \
+     side chain's, or the output of this equaliser on another track. Tracks whose equaliser runs \
+     in another process, as Bitwig's Individually hosting has it, are not listed.";
+const COLLISIONS_DESCRIPTION: &str = "Hatches the graph's bottom edge where this track's sound and \
+     the other spectrum may collide: both carry sound there, the other near enough to mask this \
+     one. An indication, not a measurement: listen before cutting.";
 const PLACEMENT_DESCRIPTION: &str = "Where the band works: on both channels, on the left or the \
      right alone, or on the middle or the sides of the stereo image. A Mid or Side cut also moves \
      the image a little near its frequency.";
@@ -524,10 +534,20 @@ pub fn band_title(app: &EqApp) -> String {
 
 pub fn output_tree(app: &EqApp) -> Node<Leaf> {
     let names = |all: &[&str]| all.iter().map(|name| (*name).to_owned()).collect();
+    // Auto gain shares Phase's row, as Bypass shares Placement's, so the window still opens inside
+    // the budget (plan §7.8).
     stack(vec![
         slider_leaf(&app.params, 0, Slider::Output),
         slider_leaf(&app.params, 0, Slider::GainScale),
-        selector_leaf(Leaf::PhaseMode, "Phase", names(&crate::params::PHASE_NAMES)),
+        tree::row(vec![
+            leaf(
+                Leaf::AutoGain,
+                Kind::Toggle {
+                    label: "Auto gain".to_owned(),
+                },
+            ),
+            selector_leaf(Leaf::PhaseMode, "Phase", names(&crate::params::PHASE_NAMES)),
+        ]),
         selector_leaf(
             Leaf::LinearResolution,
             "Resolution",
@@ -537,6 +557,19 @@ pub fn output_tree(app: &EqApp) -> Node<Leaf> {
 }
 
 const LINEAR_RESOLUTIONS: [&str; 3] = ["Low", "Medium", "High"];
+
+/// Auto gain's hover (plan §7.8): what it does, and the make-up in force while it is on.
+pub(super) fn auto_gain_hover(on: bool, make_up_db: f32) -> String {
+    let mut text = String::from(AUTO_GAIN_DESCRIPTION);
+    if on {
+        text += &format!(" Now {make_up_db:+.1} dB.");
+    }
+    text
+}
+
+const AUTO_GAIN_DESCRIPTION: &str = "Holds the loudness as you equalise, so switching the \
+     equaliser off compares the curve, not the level. The loudness the curve adds to or takes from \
+     an average mix is estimated from the curve, never measured, and undone at the output.";
 const PHASE_ZERO_DESCRIPTION: &str = "Zero latency keeps the sound on time, its phase turning near \
      each band as an analogue equaliser's does. Linear phase turns no phase, so a Mid or Side band \
      moves sound across only by its gain, never where it is flat, and a steep cut keeps a hit's \
@@ -593,8 +626,9 @@ const SPEED_OPTIONS: [&str; 3] = ["Slow", "Medium", "Fast"];
 const TILT_OPTIONS: [&str; 4] = ["0 dB/oct", "1.5 dB/oct", "3 dB/oct", "4.5 dB/oct"];
 
 /// The Analyser card. Its toggles share a row, so the opening stays inside the budget (§8); the
-/// Side chain view is offered only on a layout with the port (plan §7.4).
-pub fn analyser_tree(side_chain_port: bool) -> Node<Leaf> {
+/// External selector offers `external`, the side chain only on a layout with the port (plan §7.4,
+/// §7.8).
+pub fn analyser_tree(external: Vec<String>) -> Node<Leaf> {
     let options = |all: &[&str]| all.iter().map(|option| (*option).to_owned()).collect();
     let toggle = |key: Leaf, label: &str| {
         leaf(
@@ -604,15 +638,14 @@ pub fn analyser_tree(side_chain_port: bool) -> Node<Leaf> {
             },
         )
     };
-    let mut toggles = vec![
+    let toggles = vec![
         toggle(Leaf::Analyser, "Analyser"),
         toggle(Leaf::Freeze, "Freeze"),
+        toggle(Leaf::Collisions, "Collisions"),
     ];
-    if side_chain_port {
-        toggles.push(toggle(Leaf::SideChainView, "Side chain"));
-    }
     stack(vec![
         tree::row(toggles),
+        selector_leaf(Leaf::External, "External", external),
         selector_leaf(Leaf::Show, "Show", options(&SHOW_OPTIONS)),
         selector_leaf(Leaf::Resolution, "Resolution", options(&RESOLUTION_OPTIONS)),
         selector_leaf(Leaf::Speed, "Speed", options(&SPEED_OPTIONS)),
@@ -761,7 +794,7 @@ impl EqApp {
             tokens,
             ANALYSER_CARD,
             ANALYSER_TITLE,
-            |app, _| analyser_tree(app.telemetry.side_chain_port()),
+            |app, _| analyser_tree(app.external_names()),
             false,
             None,
         );
@@ -867,6 +900,20 @@ impl EqApp {
                         0.0,
                     );
                 }
+            }
+            Leaf::AutoGain => {
+                let param = &self.params.auto_gain;
+                let on = param.value();
+                toggle_labelled(
+                    ui,
+                    tokens,
+                    crate::params::AUTO_GAIN_ID,
+                    param,
+                    "Auto gain",
+                    &auto_gain_hover(on, self.telemetry.make_up()),
+                    &setter,
+                    0.0,
+                );
             }
             Leaf::SideChain => {
                 if let Some(slot) = selected {
@@ -1258,19 +1305,24 @@ impl EqApp {
                         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &reading)
                     });
             }
-            Leaf::SideChainView => {
+            Leaf::External => self.paint_external(ui, tokens),
+            Leaf::Collisions => {
                 let mut settings = self.params.view.get();
-                let changed = navigation::at(ui, "side chain view", |ui| {
-                    mxm_ui::control::toggle_sized(
-                        ui,
-                        tokens,
-                        "Side chain",
-                        "Side chain view",
-                        &mut settings.side_chain,
-                        false,
-                        SIDE_CHAIN_VIEW_DESCRIPTION,
-                        0.0,
-                    )
+                let offered = self.external_shown(&settings);
+                let changed = navigation::at(ui, "collisions", |ui| {
+                    ui.add_enabled_ui(offered, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Collisions",
+                            "Collisions",
+                            &mut settings.collisions,
+                            false,
+                            COLLISIONS_DESCRIPTION,
+                            0.0,
+                        )
+                    })
+                    .inner
                 });
                 if changed {
                     self.set_view(settings);
@@ -1434,6 +1486,50 @@ impl EqApp {
         response
             .on_hover_text(MOVING_DESCRIPTION)
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &reading));
+    }
+
+    /// The External selector (plan §7.8): Off, the side chain on a layout with the port, every
+    /// other track, and a chosen track not found; one at a time.
+    fn paint_external(&mut self, ui: &mut Ui, tokens: &Tokens) {
+        use super::external::{Choice, choices, choose, chosen};
+        let settings = self.params.view.get();
+        let all = choices(&self.instance, self.telemetry.side_chain_port(), &settings);
+        let current = chosen(&settings);
+        let mut index = all
+            .iter()
+            .position(|(choice, _)| match (choice, &current) {
+                (Choice::Missing(id), Choice::Track(chosen)) => id == chosen,
+                (choice, current) => choice == current,
+            })
+            .unwrap_or(0);
+        let detail = match &all[index].0 {
+            Choice::Off => "None now.".to_owned(),
+            Choice::SideChain => SIDE_CHAIN_VIEW_DESCRIPTION.to_owned(),
+            Choice::Track(_) => format!(
+                "Now {}'s output, read through this analyser's settings.",
+                all[index].1
+            ),
+            Choice::Missing(_) => {
+                "The track chosen is not in this session; it is shown again when it is.".to_owned()
+            }
+        };
+        let description = format!("{EXTERNAL_DESCRIPTION} {detail}");
+        let names: Vec<&str> = all.iter().map(|(_, name)| name.as_str()).collect();
+        let changed = navigation::at(ui, "external", |ui| {
+            mxm_ui::control::selector(
+                ui,
+                tokens,
+                "External",
+                &names,
+                &mut index,
+                None,
+                None,
+                &description,
+            )
+        });
+        if changed && let Some((choice, _)) = all.get(index) {
+            self.set_view(choose(settings, choice));
+        }
     }
 
     fn paint_setting(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf) {

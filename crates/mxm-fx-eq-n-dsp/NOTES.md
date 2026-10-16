@@ -247,3 +247,31 @@ Found building it: the kernel's response at each bin is exactly the sampled magn
 designs alone, within 0.1 dB between bins for bands wider than eight bins
 (`the_drawn_curve_is_what_the_kernel_does`); a kernel change is within −90 dB of a fresh
 convolution of the whole input once its fade is done.
+
+**Changes and resets in full** (plan §7.7):
+
+- **Changes**: a moved setting makes a request at the next control interval, asked for at the next
+  update boundary (every 4 partitions); the design thread designs it into a free bank; the audio
+  thread takes the newest finished one at a boundary and crossfades over one interval, both banks
+  on the one frequency-domain delay line. **It never waits in realtime**; offline
+  (`Engine::set_offline`) it waits at the boundary after asking, so bounces repeat.
+- **A reset** asks at once for the settings' kernel if the one heard is not theirs
+  (`Linear::restart`): offline it waits, so the first sample hears it; in realtime it is taken the
+  first partition it is ready, unfaded while only silence has been convolved since — then exactly
+  as if primed — else faded in at the next boundary.
+
+## Auto gain, measured (F7, 2026-10-16)
+
+**The weighting** (`loudness.rs`, decision 39): the corpus mean mix per FFT bin (−5.79 dB an octave
+above 94 Hz, a 12 dB-an-octave fall below it, the latter a model) under BS.1770's K-weighting, at
+points a 24th of an octave apart, 239 at 44.1 kHz and 240 from 48 kHz. Computed for the plan: 5.4 %
+of the weight lies above 4 kHz (pink noise would put 42.6 % there), so a +6 dB step above 4 kHz is
+made up by 0.65 dB and one below 100 Hz by 1.50 dB; with pink noise 3.56 and 0.72. A flat +6 dB is
+made up by 6.0 under either. The K-weighting is evaluated from the standard's 48 kHz biquads at
+`ω = 2πf/48,000` whatever the session rate, so it is the standard's at every rate
+(`the_k_weighting_is_the_standards`: within 0.02 dB of the research's figures).
+
+**The cost**, `eq_n_cost` in release, one machine: the gliding load (every band redesigned every
+block) with auto gain on takes 6.9 % of real time at 48 kHz and 18.1 % at 192 kHz, against 6.0 %
+and 17.2 % without: an estimate every 10 ms, 24 bands at 240 points, adds under a point. A settled
+EQ costs nothing.

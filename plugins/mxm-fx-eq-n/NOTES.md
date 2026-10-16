@@ -189,6 +189,16 @@ and `audition.rs`'s tests hold the lifecycle.
   stays inside the graph (`graph::peak_marker`), so a peak above 0 dB under Tilt is still grabbed. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
+- **Find in short** (plan §7.5, decisions 27–30): the Resonances card's toggle, offered only
+  with the analyser on; Find and Freeze each end the other, the analyser off or the editor closed
+  ends it, and it is never saved. It listens to the pre-EQ input (`finder.rs`) and proposes static
+  cut bells, never a continuous curve: dashed curve and labelled downward triangles on the graph;
+  a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
+  all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
+  **Amount** (whole percent, 20 % by default) is view state, saved, a change marking the project
+  dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
+  the GUI thread pays only for listening and a copy of the evidence, inside
+  `spectrum::BUDGET_MS` (`finder_cost`).
 - **Find, the resonance finder** (plan §7.5, `editor/finder.rs`), in the order the work goes:
   - *Listening.* The analyser's pre-EQ blocks, while Find is on, into three rungs: the input
     decimated to at most 64 kHz, then a quarter and a sixteenth of that, each a frequency's only
@@ -246,6 +256,14 @@ and `audition.rs`'s tests hold the lifecycle.
     hard-edged notes smear lines tens of hertz wide, and a tempered scale shares harmonics between
     half its notes, which no persistence test can tell from a resonance (research §8.2). Under the
     melody a broadband bed at −10 dB; at −30 dB the bump is mostly seen through lines.
+- **Match in short** (plan §7.6, decisions 31–34): the Match card's toggle, under
+  Resonances, offered only with the analyser on and the side-chain port; Find, Match and Freeze
+  each end the others; it is never saved. It listens to the side chain and the pre-EQ input
+  (`matcher.rs`, the key copied while it listens) and proposes bells and shelves for the free
+  slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on the graph; **Apply**
+  writes them all, every field, one undo step, only on the basis they were fitted on. **Amount**
+  (40 %) and **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job
+  at a time (`editor::Task`); listening stays inside `spectrum::BUDGET_MS` (`match_cost`).
 - **Match, the EQ match to a reference** (plan §7.6, `editor/matcher.rs`):
   - *Listening.* The side chain (the reference) and the pre-EQ input (the source) on F4's rungs
     (`finder::rung_specs`), width frames only. **Every frame enters the long-term power means**; only
@@ -293,6 +311,40 @@ and `audition.rs`'s tests hold the lifecycle.
   - *The Output card.* Phase and Resolution side by side were 333 px in a 308 px column, so they
     stack; the window opens at `REFERENCE`, the second column grown by the two rows.
 
+- **Auto gain** (plan §7.8, decisions 38–40): `autogain`, the 293rd parameter, off by default and
+  automatable; the DSP estimates the make-up from the drawn curve (`loudness.rs`; the DSP's
+  `NOTES.md` has the weighting and the cost) and applies it with the output gain, each held within
+  ±24 dB; the shell publishes it (`Telemetry::make_up`) for the switch's hover. *Its row*: the plan
+  gave it a row of its own under Output gain, but then the second column needed 1,005 px of 934,
+  a window 1,081 px tall, one over the budget; on Phase's row, as Bypass shares Placement's, the
+  window opens at 1,532 × 1,045.
+- **Other tracks** (plan §7.8, decisions 41–43; `instances.rs`, `editor/external.rs`):
+  - *The registry* is one per process; an instance joins when made and leaves when dropped. Its
+    second tap (post only, `instances::SHARE_BLOCKS`) copies only while its count of watchers is
+    above none, and a watch from none starts a new generation and drops the held blocks, so audio
+    from before reads as nothing. Viewers drain the one consumer into the entry's last
+    `instances::HELD_BLOCKS` and take the blocks newer than they have seen; one that fell behind
+    gets a gap, which its analyser restarts on.
+  - *Identity*: a random 64-bit id in the host's state (`IdentityField`), restored with it; of two
+    holding one id the earlier keeps it. The External choice saves the id (`ViewSettings::external`,
+    0 for none, exclusive with `side_chain`); a chosen track not in the session reads "Track not
+    found" and draws nothing until it appears.
+  - *Names*: the host's track name through mxm-kit's `Panel::track_info_changed` (nice-plug hands
+    CLAP's track-info to the editor object, which lives while the window is closed), else
+    "Track n" in the order made; repeats get " 2", " 3"; the list alphabetical, without its own.
+  - *Collisions*: only while both analysers hold sound (`Spectrum::live`: a whole window, audio
+    within the staleness), at frequencies where both levels are above −80 dB as drawn, each
+    smoothed to a third of an octave in power; strength `clamp((E − O + 12)/6) · clamp((O − (peak −
+    30))/6)`; drawn as diagonal hatching along the bottom 10 px, each stroke as opaque as the
+    strength under it; never on a freeze. Collisions read this track's post spectrum even when
+    Show is Pre.
+  - *Costs* (release, 2026-10-16): `analyser_cost` with another track's spectrum, worst 0.400 ms a
+    frame against 2 ms (192 kHz, High, both); `share_cost`, a watched instance's audio thread at
+    192 kHz with 8 bells, 1.21 % of real time against 1.17 % unwatched.
+  - *The validator* passes with one warning, `process-audio-denormals`: about 2.7 times longer
+    with denormal input, at Init, where the engine leaves the buffer untouched; not explained
+    (a build from before F7 was not compared).
+
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.
 The probe's band curves (owner: "mostly visual noise") are not drawn.
@@ -327,7 +379,7 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
 ## The slower checks
 
 - The analyser's cost: `cargo test -p mxm-fx-eq-n --release --lib analyser_cost -- --ignored
-  --nocapture`; the finder's, `finder_cost` the same way.
+  --nocapture`; the finder's, `finder_cost` the same way; the share tap's, `share_cost`.
 - The pictures: `cargo test -p mxm-fx-eq-n --lib pictures`, into `target/layout-tree/mxm-fx-eq-n/`.
 - The factory set: `cargo test -p mxm-fx-eq-n --lib write_the_factory_presets -- --ignored`.
 - The validator's random parameter fuzz once found a subnormal output, now flushed in the DSP.

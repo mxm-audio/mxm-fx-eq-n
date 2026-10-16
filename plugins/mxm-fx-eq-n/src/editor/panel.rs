@@ -37,6 +37,8 @@ impl EqApp {
             self.forget_listen();
             self.matcher = super::matcher::Matcher::new(rate);
             self.forget_match();
+            // Another track's analyser too, built again below at the new rate.
+            self.other = None;
         }
         // Back on, it starts from silence: what was drawn before it went off is not what plays.
         if settings.analyser && !self.analyser_on {
@@ -57,6 +59,26 @@ impl EqApp {
                     }
                 }
             }
+        }
+    }
+
+    /// Another track's blocks (plan §7.8): watched while it is chosen, the analyser on and the
+    /// window open, and not while Match shows the side chain; a track gone is dropped, and found
+    /// again when it comes back.
+    fn drain_other(&mut self, settings: &ViewSettings, now: f64) {
+        let wanted = (settings.analyser && settings.external != 0 && !self.matching)
+            .then_some(settings.external);
+        if self.other.as_ref().map(|other| other.id) != wanted {
+            let rate = self.telemetry.sample_rate();
+            self.other = wanted
+                .and_then(crate::instances::find)
+                .filter(|entry| !std::sync::Arc::ptr_eq(entry, &self.instance))
+                .map(|entry| super::external::Other::new(&entry, rate));
+        }
+        if let Some(other) = &mut self.other
+            && !other.feed(now, settings)
+        {
+            self.other = None;
         }
     }
 
@@ -106,6 +128,7 @@ impl EqApp {
             .set_side_chain_view(settings.side_chain || self.matching);
         let now = ctx.input(|input| input.time);
         self.drain_analyser(&settings, now);
+        self.drain_other(&settings, now);
         self.end_stale_freeze(&settings);
         self.take_done();
         self.update_find(now, &settings);
@@ -377,6 +400,13 @@ impl mxm_editor::Panel for EqApp {
 
     fn closed(&mut self, _host: &GuiContext) {
         self.detach();
+        // A closed window watches nothing (plan §7.8).
+        self.other = None;
+    }
+
+    /// The host's name for this instance's track (plan §7.8), whether or not the window is open.
+    fn track_info_changed(&mut self, info: &nice_plug::prelude::TrackInfo) {
+        self.instance.set_track(info.name());
     }
 }
 

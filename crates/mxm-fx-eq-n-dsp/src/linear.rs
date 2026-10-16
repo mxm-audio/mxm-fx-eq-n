@@ -185,7 +185,12 @@ impl Layout {
 /// Each stage's magnitude at `freq`, zero phase (plan §7.3): the channel stage's left and right,
 /// then the mid/side stage's mid and side.
 pub fn stage_magnitudes(heard: &Heard, freq: f64, sample_rate: f64) -> [f64; 4] {
-    let t = tan_half(freq, sample_rate);
+    stage_powers_at(heard, tan_half(freq, sample_rate)).map(f64::sqrt)
+}
+
+/// Each stage's power gain at the frequency whose `tan(π·f/fs)` is `t`, in
+/// [`stage_magnitudes`]'s order.
+pub fn stage_powers_at(heard: &Heard, t: f64) -> [f64; 4] {
     let mut power = [1.0f64; 4];
     for (cascade, placement) in heard.bands.iter().flatten() {
         let p: f64 = cascade
@@ -204,7 +209,7 @@ pub fn stage_magnitudes(heard: &Heard, freq: f64, sample_rate: f64) -> [f64; 4] 
             power[index] *= p;
         }
     }
-    power.map(f64::sqrt)
+    power
 }
 
 /// The kernels' real gains from the stages' magnitudes: one; left and right; or the matrix

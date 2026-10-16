@@ -21,6 +21,7 @@
 //!   others.
 
 pub mod column;
+pub mod external;
 pub mod finder;
 pub mod grab;
 pub mod graph;
@@ -48,7 +49,7 @@ use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_532, 1_010);
+pub const REFERENCE: (u32, u32) = (1_532, 1_045);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
@@ -92,6 +93,9 @@ pub struct Handles {
     pub audition: Arc<Audition>,
     pub history: history::Shared,
     pub analyser: Option<rtrb::Consumer<Block>>,
+    /// This instance's registry entry (plan §7.8): its track's name goes there, and the others are
+    /// found through it.
+    pub instance: Arc<crate::instances::Instance>,
 }
 
 /// The window, its setup (`mxm_ui::shell::install`) and the host context's lifecycle are
@@ -237,6 +241,14 @@ pub struct EqApp {
     pub(crate) audition: Arc<Audition>,
     pub(crate) history: history::Shared,
     analyser: Option<rtrb::Consumer<Block>>,
+    /// This instance's registry entry, and another track's spectrum while it is chosen and the
+    /// window open (plan §7.8).
+    pub(crate) instance: Arc<crate::instances::Instance>,
+    pub(crate) other: Option<external::Other>,
+    /// The last frame's collision strengths per drawn frequency and the external spectrum's name,
+    /// for the hover over the marks; empty while none are drawn.
+    pub(crate) collision_marks: Vec<f32>,
+    pub(crate) external_name: String,
     /// The host's own context: undo and redo write through it, unrecorded.
     host: Option<GuiContext>,
     /// The recorded context every edit writes through.
@@ -363,6 +375,10 @@ impl EqApp {
             audition: handles.audition,
             history: handles.history,
             analyser: handles.analyser,
+            instance: handles.instance,
+            other: None,
+            collision_marks: Vec::new(),
+            external_name: String::new(),
             host: None,
             gui: None,
             pointers,
@@ -918,6 +934,27 @@ impl EqApp {
     }
 
     /// The pre, post and side-chain lines as drawn: a freeze's while frozen, else the live ones.
+    /// The External selector's names (plan §7.8): Off, the side chain on a layout with the port,
+    /// every other track, and a chosen track not found.
+    pub(crate) fn external_names(&self) -> Vec<String> {
+        external::choices(
+            &self.instance,
+            self.telemetry.side_chain_port(),
+            &self.params.view.get(),
+        )
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+    }
+
+    /// Whether an external spectrum is drawn (plan §7.8): the side chain's on a layout with the
+    /// port (Match's while it listens), or another track found.
+    pub(crate) fn external_shown(&self, settings: &crate::view::ViewSettings) -> bool {
+        self.matching
+            || (settings.side_chain && self.telemetry.side_chain_port())
+            || self.other.is_some()
+    }
+
     pub(crate) fn shown_spectra(&self) -> [&[f32]; 3] {
         match &self.frozen {
             Some(frozen) => [&frozen.pre, &frozen.post, &frozen.key],

@@ -140,6 +140,8 @@ enum Chain {
     LeftCut,
     /// The empty EQ in Linear phase at Low (plan §7.7): the dry render, delayed by the latency.
     Linear,
+    /// A low and a high shelf, +6 dB each at 1 kHz, with auto gain on (plan §7.8): the dry level.
+    AutoGain,
 }
 
 /// Linear phase's latency at Low at the harness's 48 kHz: the kernel's centre and a partition.
@@ -150,7 +152,7 @@ const LINEAR_LOW_LATENCY: usize = 2_048 + 256;
 fn restore_high_cut(instance: &mut PluginInstance<MxmHost>) {
     let mut state = save_state(instance);
     let params = state["params"].as_object_mut().expect("parameter map");
-    assert_eq!(params.len(), 292);
+    assert_eq!(params.len(), 293);
     assert_eq!(
         params["type_1"],
         json!({"i32": 0}),
@@ -223,7 +225,7 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
         if chain == Chain::LeftCut {
             let mut state = save_state(&mut effect.instance);
             let params = state["params"].as_object_mut().expect("parameter map");
-            assert_eq!(params.len(), 292);
+            assert_eq!(params.len(), 293);
             params.insert("type_1".into(), json!({"i32": 5}));
             params.insert("slope_1".into(), json!({"i32": 7}));
             params.insert("freq_1".into(), json!({"f32": 50.0}));
@@ -245,6 +247,21 @@ fn render(chain: Chain, bypassed: bool) -> Option<Vec<f32>> {
             load_state(&mut effect.instance, &state);
             assert_eq!(text(&mut effect.instance, "Phase"), "Linear phase");
             assert_eq!(text(&mut effect.instance, "Resolution"), "Low");
+        }
+        if chain == Chain::AutoGain {
+            let mut state = save_state(&mut effect.instance);
+            let params = state["params"].as_object_mut().expect("parameter map");
+            assert_eq!(params["autogain"], json!({"bool": false}), "Init is off");
+            for (slot, kind) in [(1, 2), (2, 3)] {
+                params.insert(format!("type_{slot}"), json!({"i32": kind}));
+                params.insert(format!("freq_{slot}"), json!({"f32": 1_000.0}));
+                params.insert(format!("gain_{slot}"), json!({"f32": 6.0}));
+                params.insert(format!("q_{slot}"), json!({"f32": 0.71}));
+            }
+            params.insert("autogain".into(), json!({"bool": true}));
+            load_state(&mut effect.instance, &state);
+            assert_eq!(text(&mut effect.instance, "Band 1 type"), "Low shelf");
+            assert_eq!(text(&mut effect.instance, "Auto gain"), "On");
         }
         effect.bypassed.store(bypassed, Ordering::Relaxed);
     }
@@ -397,7 +414,7 @@ fn an_older_state_restores_every_band_static_through_the_host() {
         ]
         .iter()
         .any(|field| id.starts_with(field))
-            && !["phase", "resolution"].contains(&id.as_str())
+            && !["phase", "resolution", "autogain"].contains(&id.as_str())
     });
     assert_eq!(params.len(), 146);
     load_state(instance, &older);
@@ -441,4 +458,39 @@ fn a_restored_linear_phase_eq_delays_the_render_by_its_latency() {
     let shift = LINEAR_LOW_LATENCY * CHANNELS;
     assert!(wet[..shift].iter().all(|sample| *sample == 0.0));
     assert_eq!(&wet[shift..], &dry[..dry.len() - shift]);
+}
+
+/// **Auto gain through the host** (plan §7.8): a restored low and high shelf, +6 dB each, with auto
+/// gain on, renders within 0.1 dB of the dry level.
+#[test]
+fn a_restored_broadband_boost_with_auto_gain_renders_at_the_dry_level() {
+    let Some(dry) = render(Chain::Dry, false) else {
+        return;
+    };
+    let wet = render(Chain::AutoGain, false).expect("the bundle existed above");
+    let change = 20.0 * (rms(&wet) / rms(&dry)).log10();
+    assert!(change.abs() < 0.1, "{change} dB");
+}
+
+/// **The instance id is the host's state, never a preset's** (plan §7.8): restored, it is saved
+/// again as it came.
+#[test]
+fn the_instance_id_survives_the_hosts_state() {
+    let Some(effect) = eq_n() else {
+        return;
+    };
+    let source = source();
+    let mut harness = Harness::with_fx(&source, SOURCE_ID, 1, &[(effect.as_path(), EFFECT_ID)])
+        .expect("the chain builds");
+    let instance = &mut harness.fx[0].instance;
+    let mut state = save_state(instance);
+    let fields = state["fields"].as_object_mut().expect("persisted fields");
+    assert!(fields.contains_key("instance"), "{fields:?}");
+    fields.insert("instance".into(), json!("1234567890123"));
+    load_state(instance, &state);
+    assert_eq!(
+        save_state(instance)["fields"]["instance"],
+        json!("1234567890123")
+    );
+    harness.shutdown();
 }

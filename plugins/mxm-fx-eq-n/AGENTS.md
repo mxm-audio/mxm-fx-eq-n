@@ -12,8 +12,9 @@ surface, the preset seam, solo's command path, the analyser and the meter (E2), 
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
 and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's per-band stereo placement
 (plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan §7.5), F5's EQ
-match (plan §7.6) and F6's phase modes (plan §7.7). DAW and listening checks are E5's, F1.5's,
-SC.4's, F2.4's, F3.4's, F4.3's, F5.3's and F6.4's. No control map (plan §6): no collection role fits on-demand bands.
+match (plan §7.6), F6's phase modes (plan §7.7) and F7's auto gain and other tracks' spectra
+(plan §7.8). DAW and listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's,
+F6.4's and F7.5's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -23,13 +24,16 @@ SC.4's, F2.4's, F3.4's, F4.3's, F5.3's and F6.4's. No control map (plan §6): no
 - `presets/`: the factory set, generated from that design, never hand-edited.
 - `src/audition.rs`: band solo, the transient command.
 - `src/telemetry.rs`: the editor link and the Out meter, two of mxm-kit's `PeakMeter`s.
-- `src/analyser.rs`: the analyser's audio half.
+- `src/analyser.rs`: the analyser's audio half, and the share tap's (`Tap::capture_post`).
+- `src/instances.rs`: the registry other tracks' editors read this instance through, its id and
+  names (plan §7.8).
 - `src/view.rs`: the analyser's settings, persisted view state.
 - `src/editor/`: the editor. `mod.rs` its state, writes and keyboard commands; `panel.rs` the frame;
   `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs` the
   analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
   finder, the rungs and the worker, its tests in `finder/tests.rs`; `matcher.rs` F5's EQ match,
-  its tests in `matcher/tests.rs`; `tests.rs` the editor's tests.
+  its tests in `matcher/tests.rs`; `external.rs` F7's external spectrum and collisions; `tests.rs`
+  the editor's tests.
 - `src/tests.rs`: the shell's tests.
 - `host-tests/`: the slow tier, the release bundle through MXM Player.
 
@@ -44,7 +48,7 @@ SC.4's, F2.4's, F3.4's, F4.3's, F5.3's and F6.4's. No control map (plan §6): no
   plain stereo and mono, which MXM Player selects. A Stereo band treats both channels alike; a
   placed band works on its own channel (plan §7.3). No note port, so no developer channel
   (`plugins/AGENTS.md`, *A developer channel*).
-- **292 permanent parameters** (`params.rs`):
+- **293 permanent parameters** (`params.rs`):
   - 24 slots, nested, each with `type`, `bypass`, `freq`, `gain`, `q` and `slope`; their ids are
     `<field>_<slot>`, `type_1` … `slope_24`, and their host names carry the slot number ("Band 7
     frequency"), never the shape;
@@ -60,11 +64,14 @@ SC.4's, F2.4's, F3.4's, F4.3's, F5.3's and F6.4's. No control map (plan §6): no
     Stereo), from `params::PLACE_BASE`;
   - F6's phase last (plan §7.7), **not automatable**: `phase` stepped 0–7 (0 Zero latency,
     1 Linear phase, the rest heard as Zero latency) and `resolution` 0–7 (0 Low, 1 Medium,
-    2 High, the rest heard as Medium), at `params::PHASE_INDEX` and `RESOLUTION_INDEX`.
+    2 High, the rest heard as Medium), at `params::PHASE_INDEX` and `RESOLUTION_INDEX`;
+  - F7's `autogain` last (plan §7.8), on or off, automatable, off by default, at
+    `params::AUTO_GAIN_INDEX`.
 
-  `the_ids_are_complete_unique_permanent_and_292` holds them.
+  `the_ids_are_complete_unique_permanent_and_293` holds them.
 - **A state or preset from before F1, §7.2 or §7.3 leaves every band static, on its own input, in
-  Stereo**: a preset through `default_missing_legacy_parameter`, a host state through `filter_state`
+  Stereo** (one from before F6 or F7: Zero latency, Medium, auto gain off): a preset through
+  `default_missing_legacy_parameter`, a host state through `filter_state`
   (`preset::add_missing_at_defaults`), which also extends a loaded preset's baseline so it stays
   clean.
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
@@ -132,6 +139,11 @@ transaction.
   block spends a sequence number, a break starts a generation, a block carries its rate; nothing is
   copied with the editor closed or the analyser off; `process` works in pieces of one block
   (`a_hosts_block_sizes_change_nothing`). The consumer goes to the editor once (`MxmFxEqN::editor`).
+- **Other tracks** (`instances.rs`, plan §7.8; NOTES, *Other tracks*): a second tap, post-EQ only,
+  copies into its own ring only while another track's editor watches (an atomic count, the audio
+  thread's one read); the ring's consumer lives in the instance's registry entry, which editors
+  drain under a mutex the audio thread never takes. The instance id is host state
+  (`#[persist = "instance"]`), never a preset's; a duplicated id is renewed for the later instance.
 - **Out meter** (`telemetry.rs`): mxm-kit's `PeakMeter` per channel, through the field; the shell
   publishes nothing with no editor connected, and opening or closing the editor clears it; a
   non-finite sample reaches it and latches the clip.
@@ -186,33 +198,28 @@ transaction.
 - **The analyser** (`spectrum.rs`, mxm-kit's `mxm-fft`): band power per twelfth of an octave, a
   decimated long window for the lows; with no audio for `spectrum::STALE_SECONDS` the display
   falls to the floor and the next audio restarts both windows; settings are view state (`view.rs`),
-  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`). The **Side
-  chain** view (plan §7.4), offered only on a layout with the port (`Telemetry::side_chain_port`),
-  draws the key's spectrum dashed and lettered "SC"; the audio thread copies the key only then.
+  persisted, dirty-only; within `spectrum::BUDGET_MS` of a frame (`analyser_cost`). The
+  **External** selector (plan §7.4, §7.8) draws one other spectrum, dashed and lettered: the side
+  chain's on a layout with the port ("SC"; the audio thread copies the key only then) or another
+  track's by name (`external.rs`, a second analyser, post only); **Collisions** hatch the bottom
+  edge where both carry sound (NOTES, *Other tracks*).
   **Freeze** holds two seconds' highest levels and marks peaks a drag grabs (NOTES, *Freeze*).
-- **Find** (plan §7.5, decisions 27–30; NOTES, *Find*): the Resonances card's toggle, offered only
-  with the analyser on; Find and Freeze each end the other, the analyser off or the editor closed
-  ends it, and it is never saved. It listens to the pre-EQ input (`finder.rs`) and proposes static
-  cut bells, never a continuous curve: dashed curve and labelled downward triangles on the graph;
-  a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
-  all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
-  **Amount** (whole percent, 20 % by default) is view state, saved, a change marking the project
-  dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
-  the GUI thread pays only for listening and a copy of the evidence, inside
+- **Find** (plan §7.5, decisions 27–30; NOTES, *Find*): the Resonances card's toggle; it proposes
+  static cut bells from the pre-EQ input, never a continuous curve, written as ordinary bands, one
+  undo step each; never saved; its search on `finder::Worker`, listening inside
   `spectrum::BUDGET_MS` (`finder_cost`).
 - **Phase** (plan §7.7, decisions 35–37; NOTES, *Phase*): the Output card's **Phase** and
   **Resolution** selectors, each change one undo step, Resolution offered only in Linear phase;
   their hovers give the latency and say when a change waits for the host's restart. **The drawn
   curve follows the phase in force** (`Telemetry::phase`): in Linear phase the kernel's own
   magnitude (`linear::heard_lines`), and a dynamic band shows no reach there, being held.
-- **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, under
-  Resonances, offered only with the analyser on and the side-chain port; Find, Match and Freeze
-  each end the others; it is never saved. It listens to the side chain and the pre-EQ input
-  (`matcher.rs`, the key copied while it listens) and proposes bells and shelves for the free
-  slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on the graph; **Apply**
-  writes them all, every field, one undo step, only on the basis they were fitted on. **Amount**
-  (40 %) and **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job
-  at a time (`editor::Task`); listening stays inside `spectrum::BUDGET_MS` (`match_cost`).
+- **Auto gain** (plan §7.8, decisions 38–40; NOTES, *Auto gain*): the Output card's switch, on
+  Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it in force
+  (`Telemetry::make_up`).
+- **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, offered with
+  the analyser on and the side-chain port; it proposes bells and shelves for the free slots, the EQ
+  as heard counted, **Apply** writing them all as one undo step; never saved; its fits on the same
+  worker, listening inside `spectrum::BUDGET_MS` (`match_cost`).
 
 ## The host tests (`host-tests/`)
 
@@ -222,8 +229,9 @@ transaction.
   offered on the player's effect path, Init bit-exact dry in the chain, a restored band heard and
   ringing down to exact silence, a dynamic band cutting the loud note, a state from before F1
   restored static through the wrapper's own `filter_state`, the EQ on the plain stereo
-  configuration, a restored Linear phase delaying the render by its latency to the bit, and the
-  player's bypass bit-exact dry. They read this repository's own
+  configuration, a restored Linear phase delaying the render by its latency to the bit, auto gain
+  on a restored broadband boost at the dry level, the instance id kept through the host's state,
+  and the player's bypass bit-exact dry. They read this repository's own
   `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle there first).
 
 # Work Guidance

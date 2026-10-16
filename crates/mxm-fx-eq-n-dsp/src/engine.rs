@@ -35,6 +35,7 @@ use crate::design::{
 use crate::dynamics::{Ballistics, Dynamics, law};
 use crate::filter::Filter;
 use crate::linear::{Heard, Linear, Phase};
+use crate::loudness::AutoGain;
 use crate::{
     FREQ_MIN, GAIN_RANGE, GAIN_SCALE_MAX, OUTPUT_GAIN_RANGE_DB, Q_MAX, Q_MIN, SLOTS,
     usable_sample_rate,
@@ -732,6 +733,8 @@ pub struct Engine {
     keep: f64,
     bands: [BandEngine; SLOTS],
     gain_scale: Glide,
+    /// The output gain as its control has it; the output's target is it times the make-up.
+    output_gain: f64,
     output: f64,
     output_target: f64,
     output_step: f64,
@@ -755,7 +758,19 @@ pub struct Engine {
     linear_dirty: bool,
     linear_wanted: Option<Heard>,
     linear_seq: u64,
+    /// Auto gain (plan §7.8): its points, whether it is on, whether the curve moved since the last
+    /// estimate, the frames before another may run, and the make-up in force as a factor and in
+    /// dB (1 and 0 while off).
+    auto_gain: AutoGain,
+    auto_on: bool,
+    auto_dirty: bool,
+    auto_wait: usize,
+    make_up: f64,
+    make_up_db: f64,
 }
+
+/// At most one auto-gain estimate in this long while the curve keeps moving (plan §7.8).
+const AUTO_GAIN_SECONDS: f64 = 0.010;
 
 impl Engine {
     /// An engine for `sample_rate`, every slot Off. A rate below [`crate::MIN_SAMPLE_RATE`] or not
@@ -776,6 +791,7 @@ impl Engine {
             keep: (-(interval as f64) / (SMOOTHING_SECONDS * sample_rate)).exp(),
             bands,
             gain_scale: Glide::at(1.0),
+            output_gain: 1.0,
             output: 1.0,
             output_target: 1.0,
             output_step: 0.0,
@@ -789,6 +805,12 @@ impl Engine {
             linear_dirty: false,
             linear_wanted: None,
             linear_seq: 0,
+            auto_gain: AutoGain::new(sample_rate),
+            auto_on: false,
+            auto_dirty: false,
+            auto_wait: 0,
+            make_up: 1.0,
+            make_up_db: 0.0,
         }
     }
 
@@ -855,14 +877,20 @@ impl Engine {
         }
     }
 
-    /// What Linear phase's kernel hears (plan §7.7): every band the settings put in the sound, at
-    /// its targets — the gain held inside ±30 dB, then under the gain scale's target — a dynamic
-    /// band at its drawn gain, and in mono only Stereo bands; with the next sequence number.
+    /// What Linear phase's kernel hears (plan §7.7), with the next sequence number.
     fn linear_heard(&mut self) -> Heard {
         self.linear_seq += 1;
+        let mut heard = self.curve();
+        heard.seq = self.linear_seq;
+        heard
+    }
+
+    /// The drawn curve (plan §7.7, §7.8): every band the settings put in the sound, at its targets
+    /// — the gain held inside ±30 dB, then under the gain scale's target — a dynamic band at its
+    /// drawn gain, and in mono only Stereo bands.
+    fn curve(&self) -> Heard {
         let scale = self.gain_scale.target;
         let mut heard = Heard::EMPTY;
-        heard.seq = self.linear_seq;
         for (slot, band) in self.bands.iter().enumerate() {
             let Some(structure) = band.wanted() else {
                 continue;
@@ -916,7 +944,7 @@ impl Engine {
             if !same {
                 engine.target = band;
                 engine.changed = true;
-                self.linear_dirty = true;
+                self.curve_moved();
             }
         }
     }
@@ -960,7 +988,7 @@ impl Engine {
         if let Some(band) = self.bands.get_mut(slot) {
             if band.placement != placement {
                 band.placement = placement;
-                self.linear_dirty = true;
+                self.curve_moved();
             }
         }
     }
@@ -999,19 +1027,64 @@ impl Engine {
     /// The output gain as a linear factor, held inside ±24 dB. It ramps over a fade.
     pub fn set_output_gain(&mut self, gain: f32) {
         let limit = 10f64.powf(OUTPUT_GAIN_RANGE_DB / 20.0);
-        let gain = if gain.is_finite() {
+        self.output_gain = if gain.is_finite() {
             f64::from(gain).clamp(1.0 / limit, limit)
         } else {
             1.0
         };
-        if gain != self.output_target {
-            self.output_target = gain;
+        self.retarget_output();
+    }
+
+    /// The output's target, the output gain times the make-up, ramped to over a fade from this
+    /// sample when it changes.
+    fn retarget_output(&mut self) {
+        let target = self.output_gain * self.make_up;
+        if target != self.output_target {
+            self.output_target = target;
             self.output_left = self.fade;
-            self.output_step = (gain - self.output) / f64::from(self.fade);
+            self.output_step = (target - self.output) / f64::from(self.fade);
             // The ramp starts at this sample, so the interval in progress can no longer be left
             // untouched.
             self.dry = false;
         }
+    }
+
+    /// Auto gain on or off (plan §7.8). On, an estimate runs at the next control interval and the
+    /// output ramps to it; off, the make-up ramps back to 0 dB.
+    pub fn set_auto_gain(&mut self, on: bool) {
+        if on == self.auto_on {
+            return;
+        }
+        self.auto_on = on;
+        if on {
+            self.auto_dirty = true;
+            self.auto_wait = 0;
+        } else {
+            self.auto_dirty = false;
+            self.make_up = 1.0;
+            self.make_up_db = 0.0;
+            self.retarget_output();
+        }
+    }
+
+    /// The make-up in force, in dB: 0 while auto gain is off.
+    pub fn make_up_db(&self) -> f64 {
+        self.make_up_db
+    }
+
+    /// A new make-up from the curve as it stands (plan §7.8).
+    fn estimate_make_up(&mut self) {
+        let db = self.auto_gain.make_up_db(&self.curve());
+        self.make_up_db = db;
+        self.make_up = 10f64.powf(db / 20.0);
+        self.auto_dirty = false;
+        self.auto_wait = ((self.sample_rate * AUTO_GAIN_SECONDS).round() as usize).max(1);
+    }
+
+    /// A setting the drawn curve hears moved: Linear phase's kernel and auto gain's make-up follow.
+    fn curve_moved(&mut self) {
+        self.linear_dirty = true;
+        self.auto_dirty = true;
     }
 
     /// The gain scale as a factor, 0 to 2. It glides.
@@ -1022,7 +1095,7 @@ impl Engine {
             1.0
         };
         if scale != self.gain_scale.target {
-            self.linear_dirty = true;
+            self.curve_moved();
         }
         self.gain_scale.retarget(scale);
     }
@@ -1086,6 +1159,12 @@ impl Engine {
                 });
         }
         self.solo = Solo::OFF;
+        // The make-up for the curve as it stands, at once, as the bands are (plan §7.8).
+        if self.auto_on {
+            self.estimate_make_up();
+            self.auto_wait = 0;
+        }
+        self.output_target = self.output_gain * self.make_up;
         self.output = self.output_target;
         self.output_left = 0;
         self.countdown = 0;
@@ -1191,6 +1270,7 @@ impl Engine {
             && solo.mix == solo_mix_target
             && !solo.filter.is_ramping()
             && self.output_left == 0
+            && !(self.auto_on && self.auto_dirty)
     }
 
     /// The band whose audition should be built: the one asked for, if it is live and offers solo.
@@ -1235,7 +1315,11 @@ impl Engine {
 
     /// Runs the block, starting a control interval wherever the one in progress ends.
     fn run<const C: usize>(&mut self, mut channels: [&mut [f32]; C], key: Option<[&[f32]; C]>) {
-        self.mono = C == 1;
+        if self.mono != (C == 1) {
+            // In mono only Stereo bands are in the curve, so the make-up is the other layout's.
+            self.mono = C == 1;
+            self.auto_dirty = true;
+        }
         let frames = channels[0].len();
         let mut start = 0;
         while start < frames {
@@ -1413,6 +1497,13 @@ impl Engine {
             self.linear_dirty = false;
             let heard = self.linear_heard();
             self.linear_wanted = Some(heard);
+        }
+        // Auto gain's make-up (plan §7.8): at the first interval after the curve moved, then at
+        // most every `AUTO_GAIN_SECONDS` while it keeps moving; the output ramps to it.
+        self.auto_wait = self.auto_wait.saturating_sub(frames);
+        if self.auto_on && self.auto_dirty && self.auto_wait == 0 {
+            self.estimate_make_up();
+            self.retarget_output();
         }
     }
 

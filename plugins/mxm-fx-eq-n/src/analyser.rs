@@ -62,7 +62,13 @@ pub struct Tap {
 
 /// The ring, split: the [`Tap`] stays with the plugin and the consumer goes to the editor.
 pub fn ring() -> (Tap, rtrb::Consumer<Block>) {
-    let (producer, consumer) = rtrb::RingBuffer::new(RING_BLOCKS);
+    ring_with(RING_BLOCKS)
+}
+
+/// A ring of `blocks` blocks: the analyser's, or the share tap's another track's editor reads
+/// (plan §7.8).
+pub fn ring_with(blocks: usize) -> (Tap, rtrb::Consumer<Block>) {
+    let (producer, consumer) = rtrb::RingBuffer::new(blocks);
     (
         Tap {
             producer,
@@ -101,6 +107,34 @@ impl Tap {
         self.sample_rate = sample_rate;
     }
 
+    /// Appends post-EQ frames alone, pre and key left silent: the share tap's (plan §7.8). Each
+    /// slice is the same length; mono passes its channel twice.
+    pub fn capture_post(&mut self, channels: u8, post: [&[f32]; 2]) {
+        if !self.wanted {
+            return;
+        }
+        for (&left, &right) in post[0].iter().zip(post[1]) {
+            self.block.post[0][self.fill] = left;
+            self.block.post[1][self.fill] = right;
+            self.fill += 1;
+            if self.fill == BLOCK_FRAMES {
+                self.push(channels);
+            }
+        }
+    }
+
+    /// The full block out, numbered; a full ring drops it, its sequence number spent anyway, so
+    /// the editor sees the gap.
+    fn push(&mut self, channels: u8) {
+        self.block.seq = self.seq;
+        self.block.generation = self.generation;
+        self.block.sample_rate = self.sample_rate;
+        self.block.channels = channels;
+        self.seq = self.seq.wrapping_add(1);
+        let _ = self.producer.push(*self.block);
+        self.fill = 0;
+    }
+
     /// Appends frames. Each slice is the same length; mono passes its channel twice. `key` is the
     /// side chain's, or none, which is silence.
     pub fn capture(
@@ -123,15 +157,7 @@ impl Tap {
             }
             self.fill += 1;
             if self.fill == BLOCK_FRAMES {
-                self.block.seq = self.seq;
-                self.block.generation = self.generation;
-                self.block.sample_rate = self.sample_rate;
-                self.block.channels = channels;
-                self.seq = self.seq.wrapping_add(1);
-                // A full ring drops the block; its sequence number is spent anyway, so the editor
-                // sees the gap.
-                let _ = self.producer.push(*self.block);
-                self.fill = 0;
+                self.push(channels);
             }
         }
     }

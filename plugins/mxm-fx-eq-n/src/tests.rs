@@ -260,6 +260,9 @@ fn solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell() {
 fn with_an_editor_open_processing_never_allocates() {
     let mut plugin = prepared(2);
     plugin.telemetry.connect(true);
+    // Another track's editor watches it, and auto gain follows the bands (plan §7.8).
+    let _watch = plugin.instance.watch();
+    set_bool(&plugin.params.auto_gain, true);
     let consumer = plugin.analyser.take();
     let mut consumer = consumer.expect("the ring's editor half, once");
     for (slot, band) in plugin.params.bands.iter().enumerate() {
@@ -843,4 +846,155 @@ fn activation_records_the_phase_asked() {
     assert!(plugin.prepare(48_000.0, 2, false));
     assert_eq!(plugin.phase_change(), None);
     assert_eq!(plugin.asked_phase, plugin.params.phase_mode());
+}
+
+/// **Auto gain through its parameter** (plan §7.8): a low and a high shelf, +6 dB each at 1 kHz,
+/// come out at the input's level within 0.2 dB, and the make-up reaches an editor.
+#[test]
+fn auto_gain_makes_up_a_broadband_boost_through_the_shell() {
+    let mut plugin = prepared(2);
+    set_band(
+        &plugin.params.bands[0],
+        Some(Shape::LowShelf),
+        1_000.0,
+        6.0,
+        0.71,
+        Slope::Db12,
+    );
+    set_band(
+        &plugin.params.bands[1],
+        Some(Shape::HighShelf),
+        1_000.0,
+        6.0,
+        0.71,
+        Slope::Db12,
+    );
+    set_bool(&plugin.params.auto_gain, true);
+    plugin.telemetry.connect(true);
+    let mut seed = 11;
+    let input: Vec<f32> = (0..48_000).map(|_| noise(&mut seed) * 0.25).collect();
+    let mut buffers = [input.clone(), input.clone()];
+    for at in (0..input.len()).step_by(512) {
+        let end = (at + 512).min(input.len());
+        let (l, r) = buffers.split_at_mut(1);
+        let mut channels: [&mut [f32]; 2] = [&mut l[0][at..end], &mut r[0][at..end]];
+        plugin.process_block(&mut channels);
+    }
+    let rms = |signal: &[f32]| {
+        (signal.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() / signal.len() as f64).sqrt()
+    };
+    let half = input.len() / 2;
+    let change = 20.0 * (rms(&buffers[0][half..]) / rms(&input[half..])).log10();
+    assert!(change.abs() < 0.2, "{change} dB");
+    assert!(
+        (plugin.telemetry.make_up() + 6.02).abs() < 0.1,
+        "{}",
+        plugin.telemetry.make_up()
+    );
+}
+
+/// **The share tap** (plan §7.8): nothing while no editor watches; with a watch, post-EQ blocks
+/// alone, pre silent; a watch from none starts a new generation.
+#[test]
+fn the_share_tap_copies_post_only_while_watched() {
+    let mut plugin = prepared(1);
+    set_band(
+        &plugin.params.bands[0],
+        Some(Shape::Bell),
+        1_000.0,
+        -12.0,
+        1.0,
+        Slope::Db12,
+    );
+    let input: Vec<f32> = (0..4_096)
+        .map(|i| (0.5 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+        .collect();
+    let mut after = None;
+    let mut blocks: Vec<analyser::Block> = Vec::new();
+    run(&mut plugin, &mut [input.clone()]);
+    plugin
+        .instance
+        .read(&mut after, |block| blocks.push(*block));
+    assert!(blocks.is_empty(), "unwatched, nothing");
+
+    let watch = plugin.instance.watch();
+    let mut buffers = vec![input.clone()];
+    run(&mut plugin, &mut buffers);
+    plugin
+        .instance
+        .read(&mut after, |block| blocks.push(*block));
+    assert_eq!(blocks.len(), 4_096 / analyser::BLOCK_FRAMES);
+    assert_eq!(
+        &blocks[0].post[0][..],
+        &buffers[0][..analyser::BLOCK_FRAMES]
+    );
+    assert_eq!(blocks[0].post[0], blocks[0].post[1], "mono in both");
+    assert!(blocks[0].pre.iter().flatten().all(|x| *x == 0.0));
+    let generation = blocks[0].generation;
+
+    drop(watch);
+    blocks.clear();
+    run(&mut plugin, &mut [input.clone()]);
+    plugin
+        .instance
+        .read(&mut after, |block| blocks.push(*block));
+    assert!(blocks.is_empty(), "the watch ended");
+    let _watch = plugin.instance.watch();
+    run(&mut plugin, &mut [input]);
+    plugin
+        .instance
+        .read(&mut after, |block| blocks.push(*block));
+    assert!(!blocks.is_empty() && blocks.iter().all(|b| b.generation != generation));
+}
+
+/// The share tap's cost on the audio thread (plan §7.8), at 192 kHz, watched and not, as a share
+/// of real time: `cargo test -p mxm-fx-eq-n --release --lib share_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "a release measurement, run by hand"]
+fn share_cost() {
+    let rate = 192_000.0;
+    let measure = |watched: bool| {
+        let mut plugin = MxmFxEqN::default();
+        assert!(plugin.prepare(rate, 2, false));
+        for (slot, band) in plugin.params.bands.iter().enumerate().take(8) {
+            set_band(
+                band,
+                Some(Shape::Bell),
+                100.0 * (slot + 1) as f32,
+                3.0,
+                1.0,
+                Slope::Db12,
+            );
+        }
+        let watch = watched.then(|| plugin.instance.watch());
+        let mut after = None;
+        let mut seed = 5;
+        let mut buffers = vec![vec![0.0f32; 1_024], vec![0.0f32; 1_024]];
+        let seconds = 10.0;
+        let calls = (seconds * f64::from(rate) / 1_024.0) as usize;
+        let mut spent = std::time::Duration::ZERO;
+        for _ in 0..calls {
+            for buffer in &mut buffers {
+                for sample in buffer.iter_mut() {
+                    *sample = noise(&mut seed) * 0.25;
+                }
+            }
+            let (left, right) = buffers.split_at_mut(1);
+            let mut channels: [&mut [f32]; 2] = [&mut left[0], &mut right[0]];
+            let start = std::time::Instant::now();
+            plugin.process_block(&mut channels);
+            spent += start.elapsed();
+            // The watching editor drains it, as each frame does.
+            plugin.instance.read(&mut after, |block| {
+                std::hint::black_box(block);
+            });
+        }
+        drop(watch);
+        spent.as_secs_f64() / seconds * 100.0
+    };
+    let (quiet, watched) = (measure(false), measure(true));
+    println!(
+        "192 kHz, 8 bells: {quiet:.2} % unwatched, {watched:.2} % watched, {:+.2} points",
+        watched - quiet
+    );
 }

@@ -11,8 +11,9 @@ use mxm_fx_eq_n_dsp::SLOTS;
 pub use mxm_preset::{Category, Preset, PresetIdentity};
 
 use crate::params::{
-    DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, PHASE_IDS, band_ids, dynamics_ids,
-    is_dynamics_id, is_key_id, is_phase_id, is_place_id, key_ids, place_ids,
+    AUTO_GAIN_ID, DYNAMICS_FIELDS, DynamicsParams, EqParams, GLOBAL_IDS, PHASE_IDS, band_ids,
+    dynamics_ids, is_auto_gain_id, is_dynamics_id, is_key_id, is_phase_id, is_place_id, key_ids,
+    place_ids,
 };
 
 impl mxm_preset::Instrument for EqParams {
@@ -43,15 +44,21 @@ impl mxm_preset::Instrument for EqParams {
         }
         out.push((PHASE_IDS[0], &self.phase));
         out.push((PHASE_IDS[1], &self.resolution));
+        out.push((AUTO_GAIN_ID, &self.auto_gain));
         out
     }
 
     /// **F1's dynamics are older presets' defaults** (plan §7.1): a preset written before them
     /// leaves every band static, not keeping a Range the instance had.
     /// The side-chain switches and placements too (plan §7.2, §7.3): an older preset leaves every
-    /// band on its own input, in Stereo; and the phase (plan §7.7): Zero latency, Medium.
+    /// band on its own input, in Stereo; the phase (plan §7.7): Zero latency, Medium; and auto gain
+    /// (plan §7.8): off.
     fn default_missing_legacy_parameter(&self, id: &str) -> bool {
-        is_dynamics_id(id) || is_key_id(id) || is_place_id(id) || is_phase_id(id)
+        is_dynamics_id(id)
+            || is_key_id(id)
+            || is_place_id(id)
+            || is_phase_id(id)
+            || is_auto_gain_id(id)
     }
 
     fn identity(&self) -> &RwLock<PresetIdentity> {
@@ -63,8 +70,9 @@ impl mxm_preset::Instrument for EqParams {
     }
 }
 
-/// **A host state from before F1, §7.2, §7.3 or F6 restores every band static, on its own input, in
-/// Stereo, the EQ in Zero latency** (Medium resolution), for `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each
+/// **A host state from before F1, §7.2, §7.3, F6 or F7 restores every band static, on its own input,
+/// in Stereo, the EQ in Zero latency** (Medium resolution) **and auto gain off**, for
+/// `Plugin::filter_state`: nice-plug restores only the ids a state holds, so each
 /// missing dynamics, side-chain or placement id is written at its default, and a loaded preset's
 /// baseline that lacks it gains its normalised default, so the preset keeps its clean or Modified
 /// meaning (`mxm_preset::add_switches_off`'s rule, at each field's own default).
@@ -104,6 +112,8 @@ pub fn add_missing_at_defaults(state: &mut nice_plug::prelude::PluginState) {
                 ParamValue::I32(1),
                 1.0 / crate::params::RESOLUTION_MAX as f32,
             ));
+            // F7's auto gain off (plan §7.8).
+            all.push((AUTO_GAIN_ID, ParamValue::Bool(false), 0.0));
             all
         });
     for (id, plain, _) in DEFAULTS.iter() {
@@ -719,6 +729,15 @@ mod dynamics_migration {
     use nice_plug::params::persist::{deserialize_field, serialize_field};
     use nice_plug::plugin::ParamValue;
 
+    /// **No preset carries the instance id** (plan §7.8): presets are parameters only, the id the
+    /// host's state.
+    #[test]
+    fn no_preset_carries_the_instance_id() {
+        for (name, json) in FACTORY_FILES {
+            assert!(!json.contains("\"instance\""), "{name}");
+        }
+    }
+
     /// **A preset written before F1 restores every band static**: resolving it writes each
     /// dynamics id at its default and names no problem.
     #[test]
@@ -726,7 +745,11 @@ mod dynamics_migration {
         let params = EqParams::default();
         let mut older = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
         older.params.retain(|id, _| {
-            !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id) && !is_phase_id(id)
+            !is_dynamics_id(id)
+                && !is_key_id(id)
+                && !is_place_id(id)
+                && !is_phase_id(id)
+                && !is_auto_gain_id(id)
         });
         assert_eq!(older.params.len(), 146);
         let (writes, problems) = older.resolve(&params);
@@ -745,8 +768,9 @@ mod dynamics_migration {
         );
         // And one from F1, before the side chain: every band on its own input.
         let mut f1 = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
-        f1.params
-            .retain(|id, _| !is_key_id(id) && !is_place_id(id) && !is_phase_id(id));
+        f1.params.retain(|id, _| {
+            !is_key_id(id) && !is_place_id(id) && !is_phase_id(id) && !is_auto_gain_id(id)
+        });
         assert_eq!(f1.params.len(), 242);
         let (writes, problems) = f1.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -760,7 +784,7 @@ mod dynamics_migration {
         let mut keyed = Preset::parse(FACTORY_FILES[1].1, crate::CLAP_ID).unwrap();
         keyed
             .params
-            .retain(|id, _| !is_place_id(id) && !is_phase_id(id));
+            .retain(|id, _| !is_place_id(id) && !is_phase_id(id) && !is_auto_gain_id(id));
         assert_eq!(keyed.params.len(), 266);
         let (writes, problems) = keyed.resolve(&params);
         assert!(problems.is_empty(), "{problems:?}");
@@ -784,7 +808,11 @@ mod dynamics_migration {
             .into_iter()
             .map(|(id, _)| id)
             .filter(|id| {
-                !is_dynamics_id(id) && !is_key_id(id) && !is_place_id(id) && !is_phase_id(id)
+                !is_dynamics_id(id)
+                    && !is_key_id(id)
+                    && !is_place_id(id)
+                    && !is_phase_id(id)
+                    && !is_auto_gain_id(id)
             })
             .collect();
         let identity = PresetIdentity {

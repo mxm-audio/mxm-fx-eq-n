@@ -31,6 +31,8 @@
 //!   Side, so four kernels run on the delay line.
 //! - **linear, moving**: the same with every band's frequency moved every block, so a kernel is
 //!   asked for at every update boundary and two banks run through most fades.
+//! - **auto gain, gliding** (plan §7.8): the gliding load with auto gain on, so an estimate of the
+//!   make-up runs every 10 ms on top of every band redesigning.
 //! - **a bank's design**: the design thread's time for one bank of four kernels at High, as
 //!   activation's `Engine::prime` takes it.
 
@@ -51,6 +53,8 @@ enum Load {
     Mid,
     LinearSteady,
     LinearMoving,
+    /// The gliding load with auto gain on (plan §7.8).
+    AutoGliding,
 }
 
 /// Linear phase at High with 24 bells across the four placements: four kernels.
@@ -166,6 +170,7 @@ fn measure(load: Load, rate: f64) -> f64 {
             );
         }
     }
+    engine.set_auto_gain(matches!(load, Load::AutoGliding));
     engine.reset();
     let block = match load {
         // One fade, rounded up to whole control intervals, so each block starts a new fade at
@@ -239,7 +244,7 @@ fn measure(load: Load, rate: f64) -> f64 {
                         engine.set_band(slot, linear_bell(slot, wobble));
                     }
                 }
-                Load::Gliding => {
+                Load::Gliding | Load::AutoGliding => {
                     let wobble = if index % 2 == 0 { 1.5 } else { 0.7 };
                     for slot in 0..SLOTS {
                         engine.set_band(
@@ -282,6 +287,7 @@ fn main() {
         ("24 mid bells", Load::Mid),
         ("linear, steady", Load::LinearSteady),
         ("linear, moving", Load::LinearMoving),
+        ("auto gain, gliding", Load::AutoGliding),
     ] {
         print!("{label:<18}");
         for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {

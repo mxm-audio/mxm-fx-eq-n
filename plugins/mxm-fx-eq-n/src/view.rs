@@ -140,8 +140,12 @@ pub struct ViewSettings {
     pub speed: Speed,
     pub tilt: Tilt,
     /// The side chain's spectrum as a third line, the reference overlay (plan §7.4): offered only
-    /// on a layout with the port.
+    /// on a layout with the port. One external spectrum at a time: never with `external`.
     pub side_chain: bool,
+    /// Another track's spectrum instead (plan §7.8): that instance's id, 0 for none.
+    pub external: u64,
+    /// Marks where this track's sound and the external spectrum may collide (plan §7.8).
+    pub collisions: bool,
     /// The resonance finder's Amount (plan §7.5), in whole percent: the share of each resonance's
     /// prominence a proposed cut takes. Not part of what the display shows, so a change ends no
     /// freeze ([`ViewSettings::display`]).
@@ -154,14 +158,16 @@ pub struct ViewSettings {
 }
 
 impl ViewSettings {
-    /// The settings that decide what the display shows: every one but the Amounts and Detail. A
-    /// freeze is held on these (plan §7.4).
+    /// The settings that decide what the display shows: every one but the Amounts and Detail,
+    /// another track and Collisions. A freeze is held on these (plan §7.4, §7.8).
     pub fn display(self) -> ViewSettings {
         let defaults = ViewSettings::default();
         ViewSettings {
             amount: defaults.amount,
             match_amount: defaults.match_amount,
             match_detail: defaults.match_detail,
+            external: defaults.external,
+            collisions: defaults.collisions,
             ..self
         }
     }
@@ -192,6 +198,8 @@ impl Default for ViewSettings {
             speed: Speed::default(),
             tilt: Tilt::default(),
             side_chain: false,
+            external: 0,
+            collisions: false,
             amount: crate::editor::finder::DEFAULT_AMOUNT,
             match_amount: crate::editor::matcher::DEFAULT_AMOUNT,
             match_detail: crate::editor::matcher::DEFAULT_DETAIL,

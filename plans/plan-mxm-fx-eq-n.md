@@ -4,7 +4,8 @@
 (2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
 (2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
 blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
-and its other findings, all accepted and applied here; round 2's two MINORs applied after it. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions 38–43 as proposed, with 42 the push to mxm-kit's `main`); F7.0 done. **Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
+and its other findings, all accepted and applied here; round 2's two MINORs applied after it. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions 38–43 as proposed, with 42 the push to mxm-kit's `main`); F7.0 done. **F7.1–F7.4 built**
+(2026-10-16; F7.2's `mxm-editor` addition is mxm-kit `5f34311`); their code review is next. **Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
 35–37). **Its design approved by the agent-loop in round 2** (2026-10-15): round 1's four blockers
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its
@@ -1587,9 +1588,11 @@ off, automatable, saved with presets and projects, **off by default**: Init, the
 on and every band moving, so an estimate every 10 ms on top of F6's moving load; within A6, or the
 plan says what does not fit.
 
-**In the editor**: an **Auto gain** switch in the Output card, its own row under Output gain; its
-hover says what it does and gives the make-up in force, which the shell publishes in `Telemetry`.
-The graph draws the curve as before: the make-up is a level, not a shape. The card grows by a row.
+**In the editor**: an **Auto gain** switch in the Output card, on Phase's row as Bypass shares
+Placement's (a row of its own put the window 1 px over the budget, found building it); its hover
+says what it does and gives the make-up in force, which the shell publishes in `Telemetry`. The
+graph draws the curve as before: the make-up is a level, not a shape. The window opens at
+1,532 × 1,045, the External selector's row added.
 
 #### Other tracks' spectra
 
@@ -1705,10 +1708,10 @@ External selector and Collisions in the keyboard's reach; the opening size. In m
 | Step | Delivers | Gate |
 |---|---|---|
 | **F7.0** | Decisions 38–43, signed; with 42, the push to mxm-kit's `main`. **Done** (2026-10-16) | Owner |
-| **F7.1** | Auto gain: `loudness.rs` and the engine's make-up (the DSP's `AGENTS.md`, `NOTES.md` with the cost); `autogain` (293 parameters), older states and presets, the factory set regenerated, the make-up in `Telemetry`; the Output card's switch and hover; the host test of auto gain | Unit and host tests at the end; `eq_n_cost` within A6 |
-| **F7.2** | mxm-kit: `mxm-editor`'s `Panel::track_info_changed`, its test and `AGENTS.md`, pushed with the owner's approval; this repository relocked on it | The kit's own checks |
-| **F7.3** | Other tracks: the registry, ids and names, the share tap; the External selector, the external spectrum, Collisions and their hovers; the host test of the id's state round trip | Unit and host tests at the end; `analyser_cost` and `share_cost` within their budgets |
-| **F7.4** | The DOX: the plugin's `AGENTS.md` (the host's state now holds the instance id beside the view settings; presets still parameters only) and `NOTES.md`, the DSP's, the index rows (293), this plan's status | On Windows: `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n -p mxm-fx-eq-n-dsp -p mxm-fx-eq-n-host-tests --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n-dsp`, `cargo +1.87.0 test -p mxm-fx-eq-n-dsp`, `cargo test -p mxm-fx-eq-n`; `cargo xtask bundle mxm-fx-eq-n --release` into this repository's own `target/bundled`, `clap-validator validate target/bundled/mxm-fx-eq-n.clap`, `cargo test -p mxm-fx-eq-n-host-tests`; one agent-loop review of F7.1–F7.4 |
+| **F7.1** | Auto gain: `loudness.rs` and the engine's make-up (the DSP's `AGENTS.md`, `NOTES.md` with the cost); `autogain` (293 parameters), older states and presets, the factory set regenerated, the make-up in `Telemetry`; the Output card's switch and hover; the host test of auto gain. **Built** (2026-10-16): `eq_n_cost`'s gliding load with auto gain 18.1 % at 192 kHz against 17.2 % without | Unit and host tests at the end; `eq_n_cost` within A6 |
+| **F7.2** | mxm-kit: `mxm-editor`'s `Panel::track_info_changed`, its test and `AGENTS.md`, pushed with the owner's approval; this repository relocked on it. **Built** (2026-10-16), mxm-kit `5f34311` | The kit's own checks |
+| **F7.3** | Other tracks: the registry, ids and names, the share tap; the External selector, the external spectrum, Collisions and their hovers; the host test of the id's state round trip. **Built** (2026-10-16): `analyser_cost` worst 0.400 ms of 2 with another track; `share_cost` +0.03 points at 192 kHz | Unit and host tests at the end; `analyser_cost` and `share_cost` within their budgets |
+| **F7.4** | The DOX: the plugin's `AGENTS.md` (the host's state now holds the instance id beside the view settings; presets still parameters only) and `NOTES.md`, the DSP's, the index rows (293), this plan's status. **Built** (2026-10-16) | On Windows: `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n -p mxm-fx-eq-n-dsp -p mxm-fx-eq-n-host-tests --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n-dsp`, `cargo +1.87.0 test -p mxm-fx-eq-n-dsp`, `cargo test -p mxm-fx-eq-n`; `cargo xtask bundle mxm-fx-eq-n --release` into this repository's own `target/bundled`, `clap-validator validate target/bundled/mxm-fx-eq-n.clap`, `cargo test -p mxm-fx-eq-n-host-tests`; one agent-loop review of F7.1–F7.4 |
 | **F7.5** | The owner in Bitwig: auto gain against the host's bypass; EQs on two tracks, the external spectrum and collisions | Owner sign-off |
 
 ## 8. What must not break

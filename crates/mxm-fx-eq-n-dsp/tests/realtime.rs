@@ -1,5 +1,5 @@
 //! `process` allocates and frees nothing, with every slot in use, every structure changing and
-//! values, the gain scale, the output gain, solo and every band's dynamics all moving.
+//! values, the gain scale, the output gain, auto gain, solo and every band's dynamics all moving.
 
 use mxm_fx_eq_n_dsp::{Band, Dynamics, Engine, Placement, SLOTS, Shape, Slope};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -81,6 +81,8 @@ fn processing_allocates_and_frees_nothing() {
         engine.set_solo((block % 3 == 0).then_some(block % SLOTS));
         engine.set_gain_scale((block % 5) as f32 * 0.5);
         engine.set_output_gain(0.5 + (block % 4) as f32 * 0.5);
+        // Auto gain on most blocks, its make-up estimated as the bands move (plan §7.8).
+        engine.set_auto_gain(block % 7 != 0);
         for (index, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
             *l = ((index * 31 + block) % 200) as f32 / 100.0 - 1.0;
             *r = -*l;

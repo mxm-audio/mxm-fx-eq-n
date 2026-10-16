@@ -101,6 +101,10 @@
       "v": 0.49156553,
       "text": "10 ms"
     },
+    "autogain": {
+      "v": 0.0,
+      "text": "Off"
+    },
     "bypass_1": {
       "v": 0.0,
       "text": "Off"

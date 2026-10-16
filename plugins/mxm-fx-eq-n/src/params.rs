@@ -1,13 +1,14 @@
 //! The permanent host surface (`docs/briefs/mxm-fx-eq-n.md` A1 and A4; plan §2.1).
 //!
 //! **Twenty-four band slots, two globals, each slot's dynamics, side-chain switch and placement,
-//! and the phase mode and its resolution: 292 parameters.** The slots are
+//! the phase mode and its resolution, and auto gain: 293 parameters.** The slots are
 //! nested, so their ids are `<field>_<slot>`: `type_1`, `bypass_1`, `freq_1`, `gain_1`, `q_1`,
 //! `slope_1`, through `slope_24`. The globals are `output` and `gainscale`. F1's dynamics (plan
 //! §7.1) come after them, four per slot: `range_1`, `threshold_1`, `attack_1`, `release_1`, through
 //! `release_24`, so no v1 id moved, the side-chain switches after those (plan §7.2), `key_1`
-//! through `key_24`, the placements after those (plan §7.3), `place_1` through `place_24`, and last
-//! F6's `phase` and `resolution` (plan §7.7), not automatable. Every id is permanent. A host keeps its parameter names from
+//! through `key_24`, the placements after those (plan §7.3), `place_1` through `place_24`, then
+//! F6's `phase` and `resolution` (plan §7.7), not automatable, and last F7's `autogain` (plan §7.8).
+//! Every id is permanent. A host keeps its parameter names from
 //! load, so a slot is named by its number ("Band 7 frequency"), never by its shape.
 //!
 //! **The stepped parameters reserve a fixed domain from this first release** (plan §2.1). Projects
@@ -77,9 +78,11 @@ pub const PLACE_BASE: usize = KEY_BASE + SLOTS;
 /// Where the phase mode sits in [`EqParams::erased`]'s order, its resolution after it (plan §7.7).
 pub const PHASE_INDEX: usize = PLACE_BASE + SLOTS;
 pub const RESOLUTION_INDEX: usize = PHASE_INDEX + 1;
+/// Where auto gain sits, last (plan §7.8).
+pub const AUTO_GAIN_INDEX: usize = RESOLUTION_INDEX + 1;
 
 /// Every host parameter.
-pub const PARAMETERS: usize = RESOLUTION_INDEX + 1;
+pub const PARAMETERS: usize = AUTO_GAIN_INDEX + 1;
 
 /// The phase mode's stepped domain, reserved: 0 Zero latency, 1 Linear phase, 2–7 unassigned,
 /// heard as Zero latency (plan §7.7).
@@ -515,11 +518,19 @@ pub struct EqParams {
     /// Linear phase's resolution: its kernel's length, and so its latency.
     #[id = "resolution"]
     pub resolution: IntParam,
+    /// Auto gain, last (plan §7.8): the loudness the curve adds or takes, estimated from it and
+    /// undone at the output. Off by default.
+    #[id = "autogain"]
+    pub auto_gain: BoolParam,
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
     #[persist = "view"]
     pub view: crate::view::ViewField,
+    /// The instance's id (plan §7.8): host state beside the view settings, never a preset's, so an
+    /// editor showing this track finds it again after a reload.
+    #[persist = "instance"]
+    pub identity: crate::instances::IdentityField,
 }
 
 impl Default for EqParams {
@@ -577,8 +588,10 @@ impl Default for EqParams {
             .non_automatable()
             .with_value_to_string(stepped_text(&RESOLUTION_NAMES))
             .with_string_to_value(stepped_parse(&RESOLUTION_NAMES)),
+            auto_gain: BoolParam::new("Auto gain", false),
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
+            identity: crate::instances::IdentityField::default(),
         }
     }
 }
@@ -606,6 +619,7 @@ impl EqParams {
         }
         all.push(&self.phase);
         all.push(&self.resolution);
+        all.push(&self.auto_gain);
         all
     }
 
@@ -632,7 +646,8 @@ impl EqParams {
             index if index < PLACE_BASE => &self.keys[index - KEY_BASE].side_chain,
             index if index < PHASE_INDEX => &self.places[index - PLACE_BASE].placement,
             PHASE_INDEX => &self.phase,
-            _ => &self.resolution,
+            RESOLUTION_INDEX => &self.resolution,
+            _ => &self.auto_gain,
         }
     }
 
@@ -667,6 +682,7 @@ impl EqParams {
         }
         all.push(self.phase.as_ptr());
         all.push(self.resolution.as_ptr());
+        all.push(self.auto_gain.as_ptr());
         all
     }
 }
@@ -737,6 +753,14 @@ pub const PHASE_IDS: [&str; 2] = ["phase", "resolution"];
 /// not hold.
 pub fn is_phase_id(id: &str) -> bool {
     PHASE_IDS.contains(&id)
+}
+
+/// Auto gain's id (plan §7.8), which a preset or state from before F7 does not hold.
+pub const AUTO_GAIN_ID: &str = "autogain";
+
+/// Whether `id` is auto gain's.
+pub fn is_auto_gain_id(id: &str) -> bool {
+    id == AUTO_GAIN_ID
 }
 
 /// Frequency: 10 Hz to 30 kHz, skewed so the middle of the travel is near 1 kHz, as a log axis
@@ -879,7 +903,7 @@ mod tests {
     use nice_plug::params::Param;
 
     #[test]
-    fn the_ids_are_complete_unique_permanent_and_292() {
+    fn the_ids_are_complete_unique_permanent_and_293() {
         let params = EqParams::default();
         let ids: Vec<String> = params
             .param_map()
@@ -893,13 +917,14 @@ mod tests {
         want.extend(key_ids());
         want.extend(place_ids());
         want.extend(PHASE_IDS);
-        assert_eq!(want.len(), 292);
+        want.push(AUTO_GAIN_ID);
+        assert_eq!(want.len(), 293);
         // In the host's order: every v1 id where it was, the dynamics after them.
         assert_eq!(ids[..DYNAMICS_BASE], want[..DYNAMICS_BASE]);
         assert_eq!(ids[DYNAMICS_BASE..KEY_BASE], want[DYNAMICS_BASE..KEY_BASE]);
         assert_eq!(ids[KEY_BASE..PLACE_BASE], want[KEY_BASE..PLACE_BASE]);
         assert_eq!(ids[PLACE_BASE..PHASE_INDEX], want[PLACE_BASE..PHASE_INDEX]);
-        assert_eq!(ids[PHASE_INDEX..], ["phase", "resolution"]);
+        assert_eq!(ids[PHASE_INDEX..], ["phase", "resolution", "autogain"]);
         for id in &want {
             assert!(ids.iter().any(|other| other == id), "missing {id}");
         }
@@ -947,6 +972,7 @@ mod tests {
         assert_eq!(params.param(PLACE_BASE + 6).name(), "Band 7 placement");
         assert_eq!(params.param(PHASE_INDEX).name(), "Phase");
         assert_eq!(params.param(RESOLUTION_INDEX).name(), "Resolution");
+        assert_eq!(params.param(AUTO_GAIN_INDEX).name(), "Auto gain");
         assert_eq!(params.pointers().len(), PARAMETERS);
     }
 

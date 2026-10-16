@@ -463,6 +463,12 @@ impl Spectrum {
         self.short.ready()
     }
 
+    /// Whether it holds sound now: a whole window, and audio within [`STALE_SECONDS`] (plan §7.8's
+    /// collisions are drawn only then).
+    pub fn live(&self) -> bool {
+        self.ready() && !self.stale
+    }
+
     /// Whether the lows are read from the long window now.
     pub fn long_ready(&self) -> bool {
         self.long.as_ref().is_some_and(|long| long.window.ready())
@@ -536,8 +542,8 @@ mod tests {
     use super::*;
     use crate::view::{Speed, Tilt};
 
-    /// **The analyser's cost, every resolution × pre/post/both × side chain × rate** (plan §4, §7.4
-    /// and §8), on the GUI
+    /// **The analyser's cost, every resolution × pre/post/both × the side chain or another track's
+    /// spectrum (a second analyser, post only) × rate** (plan §4, §7.4, §7.8 and §8), on the GUI
     /// thread: one 60 Hz frame of blocks ingested and the curves analysed at 450 points, a graph
     /// about 900 points wide. Release only; the figures are in the plugin's `AGENTS.md`.
     ///
@@ -551,10 +557,13 @@ mod tests {
         let mut worst = 0.0f64;
         for rate in [44_100.0f32, 48_000.0, 96_000.0, 192_000.0] {
             for resolution in Resolution::ALL {
-                for (show, side_chain) in Show::ALL
-                    .into_iter()
-                    .flat_map(|show| [(show, false), (show, true)])
-                {
+                for (show, side_chain, track) in Show::ALL.into_iter().flat_map(|show| {
+                    [
+                        (show, false, false),
+                        (show, true, false),
+                        (show, false, true),
+                    ]
+                }) {
                     let settings = ViewSettings {
                         resolution,
                         show,
@@ -563,6 +572,12 @@ mod tests {
                     };
                     let mut spectrum = Spectrum::new(rate);
                     spectrum.set_resolution(resolution);
+                    let mut other = track.then(|| {
+                        let mut other = Spectrum::new(rate);
+                        other.set_resolution(resolution);
+                        other
+                    });
+                    let other_settings = crate::editor::external::Other::settings(&settings);
                     let mut source = noise();
                     let mut seq = 0u64;
                     let per_frame = (rate / 60.0) as usize / BLOCK_FRAMES + 1;
@@ -587,9 +602,15 @@ mod tests {
                                 block.key[1][index] = -value * 0.75;
                             }
                             spectrum.ingest(&block);
+                            if let Some(other) = &mut other {
+                                other.ingest(&block);
+                            }
                             seq += 1;
                         }
                         spectrum.analyse(&freqs, time, &settings);
+                        if let Some(other) = &mut other {
+                            other.analyse(&freqs, time, &other_settings);
+                        }
                     };
                     // Warm: two seconds, so the long window is full.
                     for n in 0..120 {
@@ -602,7 +623,13 @@ mod tests {
                     }
                     let ms = start.elapsed().as_secs_f64() * 1_000.0 / f64::from(frames);
                     worst = worst.max(ms);
-                    let key = if side_chain { "+SC" } else { "" };
+                    let key = if side_chain {
+                        "+SC"
+                    } else if track {
+                        "+TR"
+                    } else {
+                        ""
+                    };
                     println!(
                         "{rate:>7} Hz  {resolution:<6?} {show:<4?}{key:<3}  {ms:.3} ms a frame"
                     );
