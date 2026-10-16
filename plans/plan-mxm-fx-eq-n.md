@@ -1,6 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
+**Revision 31 — F8, working with several bands, designed for the owner's approval** (2026-10-16;
+§7.9, decisions 44–47). **Its design approved by the agent-loop in round 3** (2026-10-16): round 1's
+three blockers — the selection's primary and order, the shortcuts against the shared keymap, F8.3's
+gate — and round 2's, a point's menu against the selection, with their other findings, all
+accepted and applied here. **Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
 (2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
 (2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
 blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
@@ -79,6 +83,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
+| 31 | **F8 designed** (2026-10-16), §7.9, for the owner's approval: a selection of bands and its primary, by Shift-click, a rectangle on the background, SELECT and Select all (decision 44); a group moving by one ratio, offset and factor, stopping at its first member's limit (45); copy, cut and paste through a clipboard in the process (46); global transforms from the selection and Invert gain, no Shift parameter (47) |
 | 28 | **F5 designed** (2026-10-15), §7.6, for the owner's approval: the side-chain input is the reference (decision 31); the fit writes only into free slots, the EQ as heard counted (decision 32), through the source's covariance; one Amount, 40 % by default (decision 33); the Match card (decision 34), signed with 33 and 34's alternatives, a Detail control and the card under Resonances; power-mean long-term spectra of both inputs before the EQ, smoothed by the wider of a third of an octave and an ERB, the level taken out after the Amount so the loudness is kept, Ramos & López's greedy fit refined by Levenberg–Marquardt on the actual responses |
 | 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
 | 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
@@ -147,6 +152,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 41 | **Instances meet in one process**, through a registry; under Bitwig's *Individually* hosting none are listed; the alternative shares spectra across processes through shared memory, a platform layer per system (§7.8) | **Settled** (owner, 2026-10-16) | F7.3 |
 | 42 | **Tracks are named by the host's track names, through a small addition to mxm-kit's `mxm-editor` pushed to its public `main`** (signing approves the push); the alternative leaves the kit alone and numbers the instances, "Track 1", "Track 2" (§7.8) | **Settled** (owner, 2026-10-16) | F7.2 |
 | 43 | **One external spectrum, the side chain or one other track, and a Collisions switch** marking, hatched, where the two may collide; the alternative is Pro-Q 4's Instance List, every instance's spectrum and curve in one view, each editable from any (§7.8) | **Settled** (owner, 2026-10-16) | F7.3 |
+| 44 | **The selection by Shift-click (adding or taking out one band) and a rectangle dragged on the background**, SELECT with the arrows and Ctrl/Cmd+A, the primary band the one the card shows and solo plays; the alternative is Pro-Q's own: Ctrl/Cmd-click adds or takes out one band and Shift-click selects a consecutive range, which takes the modifier this EQ holds for solo on a point (§5.2), so solo would move to another (§7.9) | Proposed | F8.1 |
+| 45 | **A group moves by one ratio in frequency, one offset in gain, one factor in Q, and stops at its first member's limit**, keeping the curve's shape; the alternative is Pro-Q's gain scaling, each gain multiplied by the dragged band's ratio, so 0 dB bands never move and cuts and boosts spread apart (§7.9) | Proposed | F8.1 |
+| 46 | **Copy and paste through a clipboard in the process**, shared by every instance as the registry is, pasting into free slots and never over a band; the alternative uses the system clipboard as text, which also reaches other processes and programs, through each system's clipboard in the window library (§7.9) | Proposed | F8.2 |
+| 47 | **Global transforms come from the selection**: Select all, then drag or the arrows, and Invert gain on the menu; no Shift parameter; the alternative adds Bitwig's and DMG's **Shift**, an automatable parameter moving every band by one ratio in the DSP, a host able to ride it (§7.9) | Proposed | F8.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
@@ -612,7 +621,7 @@ the band pool and the analysis layer, not beside them.
 | F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands. Designed in §7.6 | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | Decisions 31–34 |
 | F6 | **Phase modes**: linear, perhaps analogue-matched. Designed in §7.7 | Research §5: 100–400 ms pre-ring on narrow low cuts | Decisions 35–37 |
 | F7 | **Auto gain and other tracks' spectra**, the owner's two of four candidates (character or saturation and band modulation set aside, 2026-10-16). Designed in §7.8 | Research §12, §19; FabFilter's Pro-Q 4 help; Bitwig's user guide | Decisions 38–43 |
-| F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
+| F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies). Designed in §7.9 | Research §17.2–§17.4: established across the surveyed products; FabFilter's Pro-Q 4 help | Decisions 44–47 |
 
 **Kit follow-up, not a phase**: mxm-kit's shared binding (`mxm_params::binding::Bound`) reads a
 parameter itself, so in any editor a control pressed within one host buffer of another write to
@@ -1717,6 +1726,147 @@ External selector and Collisions in the keyboard's reach; the opening size. In m
 | **F7.3** | Other tracks: the registry, ids and names, the share tap; the External selector, the external spectrum, Collisions and their hovers; the host test of the id's state round trip. **Built** (2026-10-16): `analyser_cost` worst 0.400 ms of 2 with another track; `share_cost` +0.03 points at 192 kHz | Unit and host tests at the end; `analyser_cost` and `share_cost` within their budgets |
 | **F7.4** | The DOX: the plugin's `AGENTS.md` (the host's state now holds the instance id beside the view settings; presets still parameters only) and `NOTES.md`, the DSP's, the index rows (293), this plan's status. **Built** (2026-10-16) | On Windows: `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n -p mxm-fx-eq-n-dsp -p mxm-fx-eq-n-host-tests --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n-dsp`, `cargo +1.87.0 test -p mxm-fx-eq-n-dsp`, `cargo test -p mxm-fx-eq-n`; `cargo xtask bundle mxm-fx-eq-n --release` into this repository's own `target/bundled`, `clap-validator validate target/bundled/mxm-fx-eq-n.clap`, `cargo test -p mxm-fx-eq-n-host-tests`; one agent-loop review of F7.1–F7.4 |
 | **F7.5** | The owner in Bitwig: auto gain against the host's bypass; EQs on two tracks, the external spectrum and collisions | Owner sign-off |
+
+### 7.9 F8 — working with several bands (revision 31, for the owner's approval)
+
+The last phase in the owner's order (decision 9): §7's F8 row, **multi-band selection with
+relative editing, copy and paste of bands, global transforms**, what research §17.2–§17.4 found
+established across the products surveyed. v1 kept the door open for it (§5.2: "Selection is a set
+of bands, even though v1 selects one at a time. Commands take their target set, and an undo action
+may span several bands"). What F8 needs decided first, the row says, are the selection gestures
+and what a transform keeps.
+
+**Pro-Q 4, the benchmark** (FabFilter, *Pro-Q 4 help, EQ display*, read 2026-10-16): "Click and
+drag on the display background to select adjacent bands by dragging a rectangle around them";
+"Hold down Ctrl (Command on macOS) and click another dot to select multiple bands"; "Hold down
+Shift and click a dot to select a consecutive range"; dragging a selected dot moves them all, and
+"the gain of all selected bands will be scaled relative to each other"; the wheel and Ctrl/Cmd-drag
+change every selected band's Q; Copy from a dot's or the background's menu, Paste from the
+background's. Kirchhoff has Paste In Place and Paste Inverted, Melda Invert; Bitwig and DMG a global
+Shift; Pro-Q, EQ Eight, Bitwig and DMG a gain scale, which this EQ has had since v1 (research §17.4).
+
+**The selection** (decision 44) is a set of bands and its **primary**, the one the Band card shows,
+solo plays and the keyboard's MOVE edge takes. Editor state, never saved, never a parameter.
+**Bands are ordered along the axis** by frequency, equal frequencies by slot number.
+- **Mouse**: a click on a point selects it alone (as now); **Shift-click** adds a point to the
+  selection, the primary moving to it, or takes it out, the primary then the selected band nearest
+  it along the axis (of two as near, the lower); a **drag on the background** (not on the line, a point, a proposal or a
+  peak, where the press already means something) draws a rectangle and selects the bands whose
+  points it takes in, Shift adding them to the selection; a click on the background selects none
+  (as now). **A click is egui's**: a press released before egui's drag threshold
+  (`Response::clicked`, not `drag_started`); so a Shift-click toggles membership and writes no
+  parameter and no undo step, and a Shift-drag past the threshold is a fine drag of the group, a
+  tenth of the speed, as Shift on one band is now.
+- **Keyboard**: **SELECT** with ← → adds the next band along the axis that is not selected yet,
+  from the primary in that direction (with nothing selected, from the keyboard's place on the
+  line), the primary moving to it; with none left that way it does nothing. So reversing direction
+  passes over the bands already selected. The language's own meaning ("the selection, by extending
+  it", mxm-keys). **Ctrl/Cmd+A** selects every band in use. **MENU** opens the primary's menu (as
+  now) or, with nothing selected, the background's at the keyboard's place on the line.
+- **A point's menu acts on the selection**: a right-click on a selected point makes it the primary
+  and its menu acts on the whole selection; on a point not selected, it first selects that point
+  alone, as a click would, so the menu acts on it and nothing else is touched. Every item applies to
+  the selection: a shape set on every band (the card's rule), Delete, Copy, Cut, Paste and Invert
+  gain.
+- **Standard shortcuts, not the keymap's**: Ctrl/Cmd+A, C, X and V are, as in newDAWn, standard
+  shortcuts outside the shared keymap (newDAWn's `crates/newdawn-ui/AGENTS.md`: "Ctrl/Cmd+C, X, V
+  work on parts and notes"; its tests press "standard shortcuts" as keys), so the keyboard language
+  and its one keymap are unchanged and nothing lands in one and not the other. The plugin's window
+  (egui-baseview) delivers them as keys, as it does Ctrl/Cmd+Z, so the editor reads them where it
+  reads undo (`handle_shortcuts`). **While a value is being typed** (`inert`) they are the text
+  field's, not the selection's; a value typed into the Band card, entered, is a card edit like any
+  other and moves the group (below).
+- **The primary after a gesture**: it stays if it is still selected; else, after a rectangle or
+  Select all, the first selected band along the axis; after SELECT, the band added; after DUPLICATE
+  or a paste, the copy of the primary that was copied.
+- **Drawn**: every selected point ringed as the selected one is now, the primary's ring twice as
+  thick; the rectangle a dashed outline. Never a hue. The Band card's title reads "Band 3 + 2" with
+  two more selected, its hover naming them.
+
+**Relative editing** (decision 45): an edit of the primary, by drag, wheel, arrows or the Band
+card, moves every selected band with it, so the curve keeps its shape:
+- **frequency** by one ratio (the same distance on the log axis), **gain** by one offset in dB,
+  **Q** by one factor; the change is the primary's, and **a band moves in a field only if it has
+  that field**: gain the gain shapes, Q a band whose shape and slope have one (`has_q`). A gesture
+  in a field the primary lacks (a vertical drag on a cut, the wheel on a slope without Q) moves
+  nothing, as on one band now;
+- **the group stops where its first member meets a limit** (10 Hz, this rate's top, ±30 dB, Q's
+  range), so no member is squeezed against an end while the others go on;
+- from the card, a **discrete** field is set on every selected band it applies to: shape and
+  bypass on every one; slope on those whose shape has one; placement in a stereo layout; the
+  side-chain switch on the dynamic shapes. The dynamics move as the continuous fields do, on the
+  bands with dynamics (the gain shapes): **Range** and **Threshold** by one offset within their
+  ranges (Range ±30 dB, Threshold its own), **Attack** and **Release** by one factor within theirs,
+  the group stopping at its first member's limit;
+- **§7.5's proposal pairs become a group**: a drag that applies a pair selects both, the dragged
+  one primary, and they move as any group, by one gain offset, which is what `Drag.partner` does
+  now (it goes, the selection doing its work);
+- **one gesture is one undo step** however many bands it moves (§5.4's history already takes
+  several writes in one gesture).
+- What stays one band's: solo (the primary's), the keyboard's MOVE on an edge, F3's grab, the
+  dynamic meter (the primary's).
+
+**Delete and duplicate**: DELETE, Backspace or the menu's Delete removes every selected band, one
+undo step; DUPLICATE copies every selected band into the lowest Off slots, refused when not all
+fit, the copies selected so the arrows take them, as one band's copy is now.
+
+**Copy and paste** (decision 46): **Ctrl/Cmd+C** copies the selected bands, every field (shape,
+bypass, frequency, gain, Q, slope, the four dynamics, the side-chain switch, placement), in slot
+order, and which of them was the primary; **Ctrl/Cmd+X** copies and deletes; **Ctrl/Cmd+V** pastes
+them into the lowest Off slots, the copied bands in their slot order onto the free slots in theirs,
+at their own values, the pasted bands then the selection, the copy of the primary its primary; one
+undo step. **All or nothing**: when they do not all fit nothing is pasted, and the clipboard, the
+selection and the history are as they were; the menu's Paste says why on its hover. DUPLICATE maps
+its copies the same way and is refused the same way. The point's menu gains Copy, Cut, Paste and
+Invert gain; a right-click on the background (or MENU with nothing selected) opens a menu with Paste
+and Select all. With nothing selected, Copy, Cut and Invert gain are disabled, their hover saying
+no band is selected; with nothing copied, Paste is, saying so. **The clipboard is the process's**
+(a mutex-guarded static, editor threads only), shared by every instance as the registry is
+(decision 41), so a band copied on one track pastes on another; a copy holds no slot numbers, so
+pasting never overwrites.
+
+**Global transforms** (decision 47) **come from the selection**: Select all, then a drag or the
+arrows shift every frequency by one ratio (Bitwig's and DMG's Shift), move every gain by one offset
+or every Q by one factor, keeping their relations, with the group's limits above; the gain scale
+(§2.1) stays the one automatable global. The point's menu gains **Invert gain**, the selected bands'
+gains turned over (Melda's Invert, Kirchhoff's Paste Inverted), one undo step. No Shift parameter.
+
+**Costs**: none on the audio thread: a group's gesture writes more parameters, each one the host
+already takes, the DSP gliding each as it does now.
+
+**Not in F8**: soloing several bands at once (users' wish, research §17.3; the DSP's audition is one
+band); snapshots; a library of band presets; a saved selection; the system clipboard; Paste
+Inverted as its own command (Invert gain after Paste does it).
+
+**Tests** (written at the end): a rectangle selects the points inside, Shift adding, the primary
+by the rule above; Shift-click adding and taking out, the primary following (the lower of two as
+near), writing nothing and no undo step; a Shift-drag a fine group drag; SELECT with ← → adding the
+next unselected band along the axis (equal frequencies by slot), the primary the band added,
+reversing passing over the selected, from the keyboard's place with nothing selected, nothing at
+the end; a right-click on a selected point acting on the selection with it primary, and on an
+unselected one selecting it alone first, its Delete and shapes touching nothing else; Ctrl/Cmd+A every band in use; a background click
+selecting none; MENU with nothing selected opening the background's menu; a group's drag moving
+every frequency by one ratio and every gain by one offset, stopping all at the first member's limit;
+mixed shapes, a cut in a group keeping its gain and a 6 dB/oct cut its Q; the wheel, EXTENT and the
+card's Q by one factor; the card's discrete fields on every selected band that has them, the
+dynamics by offset and factor within their ranges; a proposal pair dragged as a group; each gesture
+one undo step; DELETE and DUPLICATE on a selection, the copies in slot order onto free slots in
+theirs, the copy of the primary primary, refused whole when they do not fit with the selection and
+history unchanged; copy, cut and paste exact in every field, the same mapping, refused whole, one
+undo step, from one editor into another in the process and from two threads at once; Invert gain;
+the menus' disabled items and their hovers; Ctrl/Cmd+C, X, V, A doing nothing to the bands while a
+value is typed, and a typed value moving the group; the selected and primary rings, the rectangle
+and the title; the menus' items in the keyboard's reach; the opening size unchanged.
+
+**Delivery** (tests at the end, one review over F8.1–F8.3):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F8.0** | Decisions 44–47, signed | Owner |
+| **F8.1** | The selection: the set and its primary, the mouse and keyboard gestures, the rings, the rectangle and the title; relative editing from the graph, the keyboard and the card, the group's limits; DELETE and DUPLICATE on a selection | Unit tests at the end |
+| **F8.2** | Copy, cut and paste through the process's clipboard; Invert gain; the point's and the background's menus | Unit tests at the end |
+| **F8.3** | The DOX: the plugin's `AGENTS.md` and `NOTES.md`, the index rows, this plan's status | On Windows, the editor's change alone (no parameter, state, DSP or audio path moves, so neither the DSP's suites nor the host tests, the slow tier for audible changes): `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n`, the layout and painting tests among them; the bundle installed for F8.4; one agent-loop review of F8.1–F8.3 |
+| **F8.4** | The owner in Bitwig: selecting, moving and copying several bands, between two tracks | Owner sign-off |
 
 ## 8. What must not break
 
