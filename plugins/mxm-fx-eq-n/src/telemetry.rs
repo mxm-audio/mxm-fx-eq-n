@@ -33,7 +33,8 @@ pub struct Telemetry {
     gains: [[AtomicU32; 2]; mxm_fx_eq_n_dsp::SLOTS],
     /// The gain scale the gains are heard under now, as `f32` bits.
     heard_scale: AtomicU32,
-    /// Auto gain's make-up in force, in dB, as `f32` bits: 0 while off (plan §7.8).
+    /// Auto gain's make-up in dB, as `f32` bits, the output at it or ramping to it within one fade:
+    /// 0 while off (plan §7.8).
     make_up: AtomicU32,
     /// The phase in force (plan §7.7), set at activation: 0 Zero latency, else 1 + the
     /// resolution's place. A change asked for waits for the host's restart; the editor draws

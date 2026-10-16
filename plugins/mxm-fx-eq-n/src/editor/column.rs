@@ -558,7 +558,8 @@ pub fn output_tree(app: &EqApp) -> Node<Leaf> {
 
 const LINEAR_RESOLUTIONS: [&str; 3] = ["Low", "Medium", "High"];
 
-/// Auto gain's hover (plan §7.8): what it does, and the make-up in force while it is on.
+/// Auto gain's hover (plan §7.8): what it does, and the make-up while it is on, the output at it
+/// or ramping to it within one fade.
 pub(super) fn auto_gain_hover(on: bool, make_up_db: f32) -> String {
     let mut text = String::from(AUTO_GAIN_DESCRIPTION);
     if on {

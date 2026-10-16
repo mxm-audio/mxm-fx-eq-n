@@ -214,8 +214,8 @@ transaction.
   curve follows the phase in force** (`Telemetry::phase`): in Linear phase the kernel's own
   magnitude (`linear::heard_lines`), and a dynamic band shows no reach there, being held.
 - **Auto gain** (plan §7.8, decisions 38–40; NOTES, *Auto gain*): the Output card's switch, on
-  Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it in force
-  (`Telemetry::make_up`).
+  Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it
+  (`Telemetry::make_up`), the output at it or ramping to it within one fade.
 - **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, offered with
   the analyser on and the side-chain port; it proposes bells and shelves for the free slots, the EQ
   as heard counted, **Apply** writing them all as one undo step; never saved; its fits on the same

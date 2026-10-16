@@ -326,7 +326,11 @@ and `audition.rs`'s tests hold the lifecycle.
     `instances::HELD_BLOCKS` and take the blocks newer than they have seen; one that fell behind
     gets a gap, which its analyser restarts on.
   - *Identity*: a random 64-bit id in the host's state (`IdentityField`), restored with it; of two
-    holding one id the earlier keeps it. The External choice saves the id (`ViewSettings::external`,
+    holding one id the earlier keeps it, the check and the store under the registry's lock, so two
+    restores at once never both take one (code review, 2026-10-16). A watched track whose id
+    changes is let go and looked for again.
+  - *Watches* begin and end under the feed's lock, so a last watch ending as a new one begins never
+    interleaves (code review, 2026-10-16). The External choice saves the id (`ViewSettings::external`,
     0 for none, exclusive with `side_chain`); a chosen track not in the session reads "Track not
     found" and draws nothing until it appears.
   - *Names*: the host's track name through mxm-kit's `Panel::track_info_changed` (nice-plug hands

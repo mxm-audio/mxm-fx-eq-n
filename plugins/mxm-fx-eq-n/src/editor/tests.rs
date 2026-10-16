@@ -3856,6 +3856,17 @@ fn another_track_is_listed_watched_and_collides() {
         rig.app.collision_marks.iter().any(|s| *s > 0.5),
         "both carry sound at one level"
     );
+    let on = rig.app.params.view.get();
+    rig.app.set_view(crate::view::ViewSettings {
+        analyser: false,
+        ..on
+    });
+    rig.press(Vec::new());
+    assert!(
+        rig.app.collision_marks.is_empty() && rig.app.external_name.is_empty(),
+        "the analyser off leaves nothing under the hover"
+    );
+    rig.app.set_view(on);
     for _ in 0..40 {
         collide_frame(&mut rig, &mut own, None, &mut seed);
     }

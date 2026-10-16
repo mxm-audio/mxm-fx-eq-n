@@ -111,9 +111,9 @@ impl Other {
     }
 
     /// The frame's blocks into the analyser, after it has observed the frame's time; false once
-    /// the track is gone.
+    /// the track is gone, or holds another id now (a restore renewed it), so it is looked for again.
     pub fn feed(&mut self, now: f64, settings: &ViewSettings) -> bool {
-        let Some(entry) = self.entry.upgrade() else {
+        let Some(entry) = self.entry.upgrade().filter(|entry| entry.id() == self.id) else {
             return false;
         };
         self.spectrum.set_resolution(settings.resolution);
@@ -231,6 +231,21 @@ mod tests {
             smoothed[200]
         );
         assert!((smoothed[100] + 40.0).abs() < 1e-3);
+    }
+
+    /// **A watched track whose id changes is let go** (plan §7.8): a restore that renews it leaves
+    /// the choice looking for the id it saved.
+    #[test]
+    fn a_watched_track_whose_id_changes_is_let_go() {
+        use nice_plug::params::persist::PersistentField;
+        let identity = instances::IdentityField::default();
+        let (_tap, consumer) = crate::analyser::ring_with(instances::SHARE_BLOCKS);
+        let entry = Instance::join(identity.shared(), consumer);
+        let mut other = Other::new(&entry, 48_000.0);
+        let settings = ViewSettings::default();
+        assert!(other.feed(0.0, &settings));
+        PersistentField::set(&identity, entry.id() ^ 0x77);
+        assert!(!other.feed(1.0 / 60.0, &settings));
     }
 
     /// The selector's choices map to the settings and back, one external spectrum at a time.

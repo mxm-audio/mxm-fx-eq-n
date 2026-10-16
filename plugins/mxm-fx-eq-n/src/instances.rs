@@ -77,13 +77,17 @@ impl IdentityField {
 
 impl<'a> PersistentField<'a, u64> for IdentityField {
     /// A host's restore: the id saved with the project, unless a live instance already holds it.
+    /// The registry stays locked from the check to the store, so two restores at once never both
+    /// take one id.
     fn set(&self, new_value: u64) {
+        let all = registry();
         let taken = new_value == 0
-            || registry().iter().filter_map(Weak::upgrade).any(|other| {
+            || all.iter().filter_map(Weak::upgrade).any(|other| {
                 !Arc::ptr_eq(&other.id, &self.id) && other.id.load(Ordering::Acquire) == new_value
             });
         let id = if taken { fresh_id() } else { new_value };
         self.id.store(id, Ordering::Release);
+        drop(all);
     }
 
     fn map<F, R>(&self, f: F) -> R
@@ -161,14 +165,16 @@ impl Instance {
     }
 
     /// A watch, held while an editor shows this track; dropped, the count goes back. The first
-    /// drops whatever was buffered before it.
+    /// drops whatever was buffered before it: the check, the clearing and the count all under the
+    /// feed's lock, so a second watch at once never clears what the first has begun to read.
     pub fn watch(self: &Arc<Self>) -> Watch {
+        let mut feed = self.feed();
         if self.watchers.load(Ordering::Acquire) == 0 {
-            let mut feed = self.feed();
             while feed.consumer.pop().is_ok() {}
             feed.held.clear();
         }
         self.watchers.fetch_add(1, Ordering::AcqRel);
+        drop(feed);
         Watch {
             instance: Arc::downgrade(self),
         }
@@ -205,8 +211,12 @@ pub struct Watch {
 }
 
 impl Drop for Watch {
+    /// Under the feed's lock, as [`Instance::watch`] counts, so a last watch ending and a new one
+    /// beginning never interleave: the new one either finds the old still counted or starts from
+    /// none and clears.
     fn drop(&mut self) {
         if let Some(instance) = self.instance.upgrade() {
+            let _feed = instance.feed();
             instance.watchers.fetch_sub(1, Ordering::AcqRel);
         }
     }
@@ -228,7 +238,8 @@ pub struct Listed {
 }
 
 /// Every live instance's name, in the order they were made: the host's track name, else
-/// "Track n" by that order; two of one name get " 2", " 3" in that order.
+/// "Track n" by that order; a name already shown gets the lowest free " 2", " 3", so no two read
+/// alike.
 pub fn names() -> Vec<Listed> {
     let mut live: Vec<Arc<Instance>> = registry().iter().filter_map(Weak::upgrade).collect();
     live.sort_by_key(|instance| instance.made);
@@ -240,14 +251,14 @@ pub fn names() -> Vec<Listed> {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
             .unwrap_or_else(|| format!("Track {}", place + 1));
-        let before = listed
-            .iter()
-            .filter(|other| other.name == base || suffix_of(&other.name, &base).is_some())
-            .count();
-        let name = if before == 0 {
-            base
+        let used = |name: &str| listed.iter().any(|other| other.name == name);
+        let name = if used(&base) {
+            (2..)
+                .map(|n| format!("{base} {n}"))
+                .find(|name| !used(name))
+                .unwrap_or(base)
         } else {
-            format!("{base} {}", before + 1)
+            base
         };
         listed.push(Listed {
             id: instance.id(),
@@ -256,15 +267,6 @@ pub fn names() -> Vec<Listed> {
         });
     }
     listed
-}
-
-/// The number `name` carries after `base` and a space, if it is one of `base`'s suffixed copies.
-fn suffix_of(name: &str, base: &str) -> Option<u32> {
-    name.strip_prefix(base)?
-        .strip_prefix(' ')?
-        .parse()
-        .ok()
-        .filter(|n| *n >= 2)
 }
 
 /// The instances an editor lists: every one but `own`, alphabetically.
@@ -363,6 +365,17 @@ mod tests {
         };
         assert_eq!(name(&a), "zz-names Bass");
         assert_eq!(name(&b), "zz-names Bass 2");
+        // A host's own "Drum 2" made first: the next two read "Drum" and "Drum 3", never alike.
+        let (d, _td, _id) = joined();
+        let (e, _te, _ie) = joined();
+        let (f, _tf, _if) = joined();
+        d.set_track("zz-names Drum 2");
+        e.set_track("zz-names Drum");
+        f.set_track("zz-names Drum");
+        assert_eq!(
+            [name(&d), name(&e), name(&f)],
+            ["zz-names Drum 2", "zz-names Drum", "zz-names Drum 3"]
+        );
         let fallback = name(&c);
         let number: usize = fallback.strip_prefix("Track ").unwrap().parse().unwrap();
         assert!(number >= 1, "{fallback}");
@@ -373,6 +386,108 @@ mod tests {
         assert!(listed.iter().any(|listed| listed.id == b.id()));
         let keys: Vec<String> = listed.iter().map(|l| l.name.to_lowercase()).collect();
         assert!(keys.windows(2).all(|pair| pair[0] <= pair[1]), "{keys:?}");
+    }
+
+    /// **Restores at once never share an id** (plan §7.8): eight instances restoring the same id
+    /// in parallel, exactly one holds it.
+    #[test]
+    fn restores_at_once_never_share_an_id() {
+        let all: Vec<_> = (0..8).map(|_| joined()).collect();
+        let wanted = fresh_id();
+        let barrier = std::sync::Barrier::new(all.len());
+        let identities: Vec<&IdentityField> = all.iter().map(|(_, _, identity)| identity).collect();
+        std::thread::scope(|scope| {
+            for identity in identities {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    PersistentField::set(identity, wanted);
+                });
+            }
+        });
+        let holders = all
+            .iter()
+            .filter(|(instance, _, _)| instance.id() == wanted)
+            .count();
+        assert_eq!(holders, 1);
+    }
+
+    /// **Watches made at once all count** (plan §7.8), and what comes after them reaches a viewer.
+    #[test]
+    fn watches_made_at_once_all_count() {
+        let (instance, mut tap, _identity) = joined();
+        let barrier = std::sync::Barrier::new(8);
+        let watches: Vec<Watch> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let (instance, barrier) = (&instance, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        instance.watch()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+        assert_eq!(instance.watchers.load(Ordering::Acquire), 8);
+        let frames = [0.25f32; BLOCK_FRAMES];
+        tap.set_wanted(true);
+        for _ in 0..4 {
+            tap.capture_post(2, [&frames, &frames]);
+        }
+        let mut seen = 0;
+        instance.read(&mut None, |_| seen += 1);
+        assert_eq!(seen, 4);
+        drop(watches);
+        assert!(!instance.watched());
+    }
+
+    /// **A watch ends under the feed's lock** (plan §7.8), as one begins: while the lock is held
+    /// elsewhere, a watch dropped on another thread cannot lower the count, so a new watch can never
+    /// see an old one's count and then lose it.
+    #[test]
+    fn a_watch_ends_under_the_feeds_lock() {
+        let (instance, _tap, _identity) = joined();
+        let watch = instance.watch();
+        let feed = instance.feed();
+        std::thread::scope(|scope| {
+            let ending = scope.spawn(move || drop(watch));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            assert!(!ending.is_finished(), "the drop waits for the lock");
+            assert_eq!(instance.watchers.load(Ordering::Acquire), 1);
+            drop(feed);
+            ending.join().unwrap();
+        });
+        assert!(!instance.watched());
+    }
+
+    /// **A last watch ending as a new one begins** (plan §7.8): over many handoffs from two threads
+    /// at once, the count is always the watches held.
+    #[test]
+    fn a_last_watch_ending_as_a_new_one_begins_keeps_count() {
+        let (instance, _tap, _identity) = joined();
+        for _ in 0..200 {
+            let old = instance.watch();
+            let barrier = std::sync::Barrier::new(2);
+            let new = std::thread::scope(|scope| {
+                let ending = scope.spawn(|| {
+                    barrier.wait();
+                    drop(old);
+                });
+                let beginning = scope.spawn(|| {
+                    barrier.wait();
+                    instance.watch()
+                });
+                ending.join().unwrap();
+                beginning.join().unwrap()
+            });
+            assert_eq!(instance.watchers.load(Ordering::Acquire), 1);
+            drop(new);
+            assert!(!instance.watched());
+        }
     }
 
     /// **Viewers share what they read** (plan §7.8): what was buffered before the first watch is

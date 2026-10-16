@@ -1266,6 +1266,11 @@ impl EqApp {
         if !settings.analyser && (self.freezing() || self.hold_basis.is_some()) {
             self.unfreeze();
         }
+        // No analyser, no collisions: nothing left under the hover (plan §7.8).
+        if !settings.analyser {
+            self.collision_marks.clear();
+            self.external_name.clear();
+        }
         if settings.analyser {
             let now = ui.input(|input| input.time);
             // A freeze holds one source and one representation (plan §7.4): a setting, the size or

@@ -4,8 +4,12 @@
 (2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
 (2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
 blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
-and its other findings, all accepted and applied here; round 2's two MINORs applied after it. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions 38–43 as proposed, with 42 the push to mxm-kit's `main`); F7.0 done. **F7.1–F7.4 built**
-(2026-10-16; F7.2's `mxm-editor` addition is mxm-kit `5f34311`); their code review is next. **Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
+and its other findings, all accepted and applied here; round 2's two MINORs applied after it. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions 38–43 as proposed, with 42 the push to mxm-kit's `main`); F7.0 done. **F7.1–F7.4 built
+and reviewed** (2026-10-16; F7.2's `mxm-editor` addition is mxm-kit `5f34311`; the agent-loop's code
+review READY in round 4: a restore's id check and store under one lock, a watched track whose id
+changes let go, shown names never alike, the make-up documented as the output's target, watches
+begun and ended under the feed's lock, no collision marks with the analyser off); F7.5, Bitwig, is
+the owner's. **Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
 35–37). **Its design approved by the agent-loop in round 2** (2026-10-15): round 1's four blockers
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its

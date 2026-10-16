@@ -1067,7 +1067,8 @@ impl Engine {
         }
     }
 
-    /// The make-up in force, in dB: 0 while auto gain is off.
+    /// The make-up in dB the output is at, or ramps to within one fade (a new estimate or the
+    /// switch): 0 while auto gain is off.
     pub fn make_up_db(&self) -> f64 {
         self.make_up_db
     }
