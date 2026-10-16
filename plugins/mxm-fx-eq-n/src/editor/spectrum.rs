@@ -14,6 +14,9 @@
 //!   blended in dB across [`BLEND_OCTAVES`] about it**: a transient reads louder in the short
 //!   window than averaged over the long one, and a switch at one frequency would draw that
 //!   difference as a cliff. Steady sound reads alike in both, so the blend changes nothing there.
+//!   **What is blended is the line each side draws**, with the ballistics below: between two
+//!   transients the short window's reading falls to nothing, and blended raw it would pull the
+//!   points inside the blend under both sides' lines.
 //! - **Coherent windows.** A dropped block or a new generation restarts both windows, never splicing
 //!   across the gap; a block recorded at another rate is ignored. **A silence is a gap too**: with
 //!   no audio for [`STALE_SECONDS`] the windows' readings go, the display falls to the floor, and
@@ -319,6 +322,9 @@ pub struct Spectrum {
     pub post_db: Vec<f32>,
     /// The side chain's spectrum, while the Side chain view is on (plan §7.4).
     pub key_db: Vec<f32>,
+    /// Inside the blend about [`CROSSOVER_HZ`], the line each side of it draws, of each output,
+    /// long then short, under the display's ballistics: the drawn line there is their blend.
+    window_db: [[Vec<f32>; OUTPUTS]; 2],
     /// The next analysis starts the lines from their readings ([`Spectrum::snap`]).
     snap: bool,
     last_time: Option<f64>,
@@ -355,6 +361,7 @@ impl Spectrum {
             pre_db: Vec::new(),
             post_db: Vec::new(),
             key_db: Vec::new(),
+            window_db: Default::default(),
             snap: false,
             last_time: None,
             fresh: false,
@@ -398,6 +405,9 @@ impl Spectrum {
         self.pre_db.iter_mut().for_each(|db| *db = FLOOR_DB);
         self.post_db.iter_mut().for_each(|db| *db = FLOOR_DB);
         self.key_db.iter_mut().for_each(|db| *db = FLOOR_DB);
+        for line in self.window_db.iter_mut().flatten() {
+            line.iter_mut().for_each(|db| *db = FLOOR_DB);
+        }
     }
 
     /// Plans the long window a resolution needs. Allocates, on the GUI thread, only on a change.
@@ -488,6 +498,8 @@ impl Spectrum {
             self.pre_db = vec![FLOOR_DB; freqs.len()];
             self.post_db = vec![FLOOR_DB; freqs.len()];
             self.key_db = vec![FLOOR_DB; freqs.len()];
+            self.window_db =
+                std::array::from_fn(|_| std::array::from_fn(|_| vec![FLOOR_DB; freqs.len()]));
         }
         let elapsed = self
             .last_time
@@ -519,28 +531,38 @@ impl Spectrum {
                 (1, &mut self.post_db),
                 (2, &mut self.key_db),
             ] {
-                let read = |window: &Window| {
-                    let power = window.band(out, freq / half, freq * half);
-                    10.0 * power.max(1.0e-14).log10() as f32
+                let reading = |window: Option<&Window>| {
+                    window.filter(|window| window.analysed[out]).map(|window| {
+                        let power = window.band(out, freq / half, freq * half);
+                        let db = 10.0 * power.max(1.0e-14).log10() as f32;
+                        (db + tilt * (freq / 1_000.0).log2()).max(FLOOR_DB)
+                    })
                 };
-                let long = long.filter(|long| share > 0.0 && long.analysed[out]);
-                let short = Some(short).filter(|short| short.analysed[out]);
-                let db = match (long, short) {
-                    (Some(long), Some(short)) if share < 1.0 => {
-                        Some(share * read(long) + (1.0 - share) * read(short))
-                    }
-                    (Some(long), _) => Some(read(long)),
-                    (None, short) => short.map(read),
+                let follow = |line: &mut f32, reading: Option<f32>| {
+                    *line = match reading {
+                        Some(db) if snap => db,
+                        None if snap => FLOOR_DB,
+                        Some(db) if db >= *line => db,
+                        Some(db) => (*line - fall).max(db),
+                        None => (*line - fall).max(FLOOR_DB),
+                    };
                 };
-                let current = &mut shown[index];
-                let reading = db.map(|db| (db + tilt * (freq / 1_000.0).log2()).max(FLOOR_DB));
-                *current = match reading {
-                    Some(db) if snap => db,
-                    None if snap => FLOOR_DB,
-                    Some(db) if db >= *current => db,
-                    Some(db) => (*current - fall).max(db),
-                    None => (*current - fall).max(FLOOR_DB),
-                };
+                // Each side's window: the long side reads the short window until the long one has
+                // analysed, after a gap or a silence too, and at a resolution without one.
+                let long_side = long.filter(|long| long.analysed[out]).or(Some(short));
+                if share > 0.0 && share < 1.0 {
+                    // Inside the blend, each side's line as that side draws it, then their blend:
+                    // the drawn line always lies between its neighbours below and above.
+                    let [long_lines, short_lines] = &mut self.window_db;
+                    let (long_line, short_line) =
+                        (&mut long_lines[out][index], &mut short_lines[out][index]);
+                    follow(long_line, reading(long_side));
+                    follow(short_line, reading(Some(short)));
+                    shown[index] = share * *long_line + (1.0 - share) * *short_line;
+                } else {
+                    let window = if share >= 1.0 { long_side } else { Some(short) };
+                    follow(&mut shown[index], reading(window));
+                }
             }
         }
     }
@@ -772,12 +794,21 @@ mod tests {
     /// 2026-10-16): clicks four times a second read several dB louder in the short window than
     /// averaged over the long one, and two points either side of [`CROSSOVER_HZ`] still read within
     /// a small share of that difference; with a switch at one frequency they differed by all of it.
+    /// **Nor does it dip between the clicks**: a point just inside the blend never falls under the
+    /// point just below it, where the long window alone is read; blending the raw readings, the
+    /// short window's silence between clicks pulled it down several dB.
     #[test]
     fn a_transient_slopes_across_the_crossover_and_never_steps() {
         assert_eq!(long_share(CROSSOVER_HZ / 2.0), 1.0);
         assert_eq!(long_share(CROSSOVER_HZ), 0.5);
         assert_eq!(long_share(CROSSOVER_HZ * 2.0), 0.0);
-        let freqs = [CROSSOVER_HZ * 0.97, CROSSOVER_HZ * 1.03];
+        let edge = CROSSOVER_HZ / 2f32.powf(BLEND_OCTAVES / 2.0);
+        let freqs = [
+            CROSSOVER_HZ * 0.97,
+            CROSSOVER_HZ * 1.03,
+            edge * 0.95,
+            edge * 1.05,
+        ];
         for resolution in [Resolution::Medium, Resolution::High] {
             let mut spectrum = Spectrum::new(48_000.0);
             spectrum.set_resolution(resolution);
@@ -787,6 +818,7 @@ mod tests {
             feed(&mut spectrum, &mut seq, 3.0, &mut clicks);
             let (mut short, mut long) = (FLOOR_DB, FLOOR_DB);
             let (mut below, mut above) = (FLOOR_DB, FLOOR_DB);
+            let mut dip = 0.0f32;
             for frame in 0..40 {
                 feed(&mut spectrum, &mut seq, 0.05, &mut clicks);
                 spectrum.analyse(&freqs, frame as f64 * 0.05, &flat());
@@ -799,6 +831,7 @@ mod tests {
                 long = long.max(db(&spectrum.long.as_ref().expect("a long window").window));
                 below = below.max(spectrum.pre_db[0]);
                 above = above.max(spectrum.pre_db[1]);
+                dip = dip.max(spectrum.pre_db[2] - spectrum.pre_db[3]);
             }
             let gap = short - long;
             assert!(
@@ -810,7 +843,71 @@ mod tests {
                 step < 0.25 * gap,
                 "{resolution:?}: {step:.2} dB across the crossover, the windows {gap:.1} dB apart"
             );
+            assert!(
+                dip < 1.0,
+                "{resolution:?}: just inside the blend {dip:.2} dB under just outside it"
+            );
         }
+    }
+
+    /// **A gap or a silence leaves no stale line in the blend**: quiet noise read by both windows,
+    /// a dropped block, then noise 40 dB louder for less than the long window needs. Below the blend
+    /// the display reads the short window until the long one is ready again, and so does the blend's
+    /// long side: a point just inside the blend reads the short window, never a blend with the quiet
+    /// long line from before the gap.
+    #[test]
+    fn a_gap_leaves_no_stale_line_in_the_blend() {
+        let inside = CROSSOVER_HZ / 2f32.powf(BLEND_OCTAVES / 2.0) * 1.05;
+        let mut spectrum = Spectrum::new(48_000.0);
+        spectrum.set_resolution(Resolution::High);
+        let mut seq = 0;
+        let mut quiet = noise();
+        feed(&mut spectrum, &mut seq, 3.0, &mut |n| quiet(n) * 0.01);
+        spectrum.analyse(&[inside], 0.0, &flat());
+        assert!(spectrum.long_ready());
+        seq += 3;
+        let mut loud = noise();
+        feed(&mut spectrum, &mut seq, 0.3, &mut loud);
+        assert!(!spectrum.long_ready());
+        spectrum.analyse(&[inside], 0.1, &flat());
+        let half = 2f32.powf(BAND_OCTAVES / 2.0);
+        let power = spectrum.short.band(0, inside / half, inside * half);
+        let short = 10.0 * power.max(1.0e-14).log10() as f32;
+        let shown = spectrum.pre_db[0];
+        assert!(
+            (shown - short).abs() < 0.5,
+            "{shown:.1} dB drawn just inside the blend, the short window reading {short:.1} dB"
+        );
+    }
+
+    /// **A restart forgets the blend's lines too**: loud noise read by both windows, a restart, then
+    /// quiet noise for less than the long window needs, and the point at [`CROSSOVER_HZ`] reads the
+    /// short window alone, as the display does before the long window is ready, never a blend with
+    /// the loud long line from before.
+    #[test]
+    fn a_restart_forgets_the_blend_s_lines_too() {
+        let mut spectrum = Spectrum::new(48_000.0);
+        spectrum.set_resolution(Resolution::High);
+        let mut seq = 0;
+        let mut loud = noise();
+        feed(&mut spectrum, &mut seq, 3.0, &mut loud);
+        spectrum.analyse(&[CROSSOVER_HZ], 0.0, &flat());
+        assert!(spectrum.long_ready());
+        spectrum.restart();
+        let mut quiet = noise();
+        feed(&mut spectrum, &mut seq, 0.3, &mut |n| quiet(n) * 0.01);
+        assert!(!spectrum.long_ready());
+        spectrum.analyse(&[CROSSOVER_HZ], 0.1, &flat());
+        let half = 2f32.powf(BAND_OCTAVES / 2.0);
+        let power = spectrum
+            .short
+            .band(0, CROSSOVER_HZ / half, CROSSOVER_HZ * half);
+        let short = 10.0 * power.max(1.0e-14).log10() as f32;
+        let shown = spectrum.pre_db[0];
+        assert!(
+            (shown - short).abs() < 0.5,
+            "{shown:.1} dB drawn, the short window reading {short:.1} dB"
+        );
     }
 
     #[test]
