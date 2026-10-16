@@ -1,6 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
+**Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
+(2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
+(2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
+blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
+and its other findings, all accepted and applied here; round 2's two MINORs applied after it. **Revision 29 — F6, phase modes, designed for the owner's approval** (2026-10-15; §7.7, decisions
 35–37). **Its design approved by the agent-loop in round 2** (2026-10-15): round 1's four blockers
 — the kernel designed off the audio thread into preallocated banks, old and new banks on one
 delay line, the editor following the mode in force, the window and centring exact — and its
@@ -69,6 +73,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 14 | **Round 11 (5 standing, 7 filed).** The gain scale's 0 % leaves gainless shapes as drawn; solo's meaning per shape joins the E0 table, and its lifetime is the editor's, never offline or saved; identity bands park only when their ring time is under the re-entry fade; text entry is a separate mode that makes the command layer inert; E0 declares a worst-case DSP budget; echoing hosts are handled by matching echoes to pending writes, with the identical-value coincidence as owner decision 11. |
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
+| 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
 | 28 | **F5 designed** (2026-10-15), §7.6, for the owner's approval: the side-chain input is the reference (decision 31); the fit writes only into free slots, the EQ as heard counted (decision 32), through the source's covariance; one Amount, 40 % by default (decision 33); the Match card (decision 34), signed with 33 and 34's alternatives, a Detail control and the card under Resonances; power-mean long-term spectra of both inputs before the EQ, smoothed by the wider of a third of an octave and an ERB, the level taken out after the Amount so the loudness is kept, Ramos & López's greedy fit refined by Levenberg–Marquardt on the actual responses |
 | 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
 | 26 | **F3 designed** (2026-10-15), §7.4, for the owner's approval: an explicit Freeze holding the last two seconds' maximum, no hover entry (decision 23); peaks by prominence, spacing and count (decision 24); a grab makes a static bell, Q from the peak's width (decision 25); the side-chain spectrum as the reference overlay (decision 26) |
@@ -131,6 +136,12 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 37 | **Dynamic bands are held at their drawn gain in Linear phase**, coming back in Zero latency; the alternative lets them move through the kernel, as Pro-Q allows up to High: a new kernel every 21 ms, their detector on the input delayed by the latency so it hears what the output plays, the gain then acting at least one update interval later still (a bank designed, taken at a boundary and faded in) and an Attack under 21 ms acting as 21 ms, at the cost of a kernel design every interval while any band moves (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
+| 38 | **Auto gain estimates the loudness change from the curve**, as Pro-Q does: no latency, no pumping, a bounce the same each time; the alternative measures the input's and output's loudness (BS.1770 over a few seconds) and matches them, following the music but moving with it, and wrong for seconds after a change (§7.8) | Proposed | F7.1 |
+| 39 | **The estimate weighs the curve by the corpus mean mix** (research §10.6) under K-weighting, 5 % of the weight above 4 kHz; the alternative weighs it by pink noise, the usual test signal, 43 % above 4 kHz, so treble boosts are made up about five times as much (§7.8) | Proposed | F7.1 |
+| 40 | **Auto gain is a parameter, off by default**, so Init, the factory set and older states keep their level; the alternative is on by default for a new instance (§7.8) | Proposed | F7.1 |
+| 41 | **Instances meet in one process**, through a registry; under Bitwig's *Individually* hosting none are listed; the alternative shares spectra across processes through shared memory, a platform layer per system (§7.8) | Proposed | F7.3 |
+| 42 | **Tracks are named by the host's track names, through a small addition to mxm-kit's `mxm-editor` pushed to its public `main`** (signing approves the push); the alternative leaves the kit alone and numbers the instances, "Track 1", "Track 2" (§7.8) | Proposed | F7.2 |
+| 43 | **One external spectrum, the side chain or one other track, and a Collisions switch** marking, hatched, where the two may collide; the alternative is Pro-Q 4's Instance List, every instance's spectrum and curve in one view, each editable from any (§7.8) | Proposed | F7.3 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
 | 17 | **Solo plays what the band listens to**, so a keyed band solos the band-limited key (Pro-Q's audition); the alternative keeps solo on the main input for every band (§7.2) | **Settled** (owner, 2026-10-14) | SC.1 |
@@ -595,7 +606,7 @@ the band pool and the analysis layer, not beside them.
 | F4 | **Resonance finder**, writing ordinary cut bands. Designed in §7.5 | Research §8–§9: prominence, persistence and decay tests; professionals removed about a fifth of the excess; a cut does not shorten a ring | Decisions 27–30. Continuous spectral suppression must first clear oeksound's active patent, US 10,587,238 (research §9.6): a legal and product decision, outside F4 |
 | F5 | **EQ match to a reference**: gated, level-aligned long-term ratio, smoothed, applied as an amount, fitted to bands. Designed in §7.6 | Research §10: 15–20 fitted bands were indistinguishable from a 2,048-tap FIR; makers advise under 50 % | Decisions 31–34 |
 | F6 | **Phase modes**: linear, perhaps analogue-matched. Designed in §7.7 | Research §5: 100–400 ms pre-ring on narrow low cuts | Decisions 35–37 |
-| F7 | **Candidates**: character/saturation, auto-gain, band modulation, cross-instance collision | Research §13–§15, §12 | Each one is the owner's call |
+| F7 | **Auto gain and other tracks' spectra**, the owner's two of four candidates (character or saturation and band modulation set aside, 2026-10-16). Designed in §7.8 | Research §12, §19; FabFilter's Pro-Q 4 help; Bitwig's user guide | Decisions 38–43 |
 | F8 | **Workflow**: multi-band selection with relative editing, copy and paste of bands, global transforms (scale all gains, shift all frequencies) | Research §17.2–§17.4: established across the surveyed products | Selection gestures; what a transform keeps |
 
 **Kit follow-up, not a phase**: mxm-kit's shared binding (`mxm_params::binding::Bound`) reads a
@@ -1512,6 +1523,193 @@ card's row in the opening size and the keyboard; the cost at 192 kHz.
 | **F6.2** | The shell: `phase` and `resolution` (292 parameters), activation's report, the change reported from `process`, the mode in force published, the tail, old states and presets, the factory set regenerated; the host test of a linear-phase EQ through MXM Player. **Built** (2026-10-15), with the shell's tests and the host test | Unit and host tests at the end |
 | **F6.3** | The editor: the Output card's row, the drawn curve in Linear phase as in force, the hovers; the DOX: the plugin's `AGENTS.md` and `NOTES.md`; the root `AGENTS.md`'s MSRV row (the DSP's one runtime dependency) and the parameter count in its and `plugins/AGENTS.md`'s index rows; this plan's status. **Built** (2026-10-15), with the editor's tests | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, its DSP and host tests, `cargo test` on both; one agent-loop review of F6.1–F6.3 |
 | **F6.4** | The owner by ear, in Bitwig: Linear phase on a low cut and on a Mid band, the restart on a change | Owner sign-off |
+
+### 7.8 F7 — auto gain and other tracks' spectra (revision 30, for the owner's approval)
+
+The next phase in the owner's order (decision 9). §7's F7 row listed four candidates, each the
+owner's call; **the owner chose two** (2026-10-16): **auto gain** and **other tracks' spectra**,
+with Pro-Q 4's collisions. Set aside: character or saturation (research §15: a nonlinear effect
+beside the curve, no measured study, oversampling against aliasing) and band modulation (research
+§14: Pro-Q has none and its maker declined it; a host's modulators already ride the band
+parameters).
+
+#### Auto gain
+
+An EQ that boosts sounds better partly because it is louder, so a comparison with the EQ off
+judges the level, not the curve. Seven of the fifteen EQs surveyed have auto gain (research §19's
+table). **Pro-Q's is an estimate from the curve**: "an educated guess based on the current EQ
+settings", "not a dynamic process based on actually measured levels" (FabFilter, *Pro-Q 4 help,
+Output*, read 2026-10-16; no formula published).
+
+**The estimate** (decision 38): the loudness change the drawn curve makes on an average mix,
+undone at the output. At the points `f_k = 20·2^(k/24)` Hz, k = 0…K, `K = ⌊24·log₂(f_max/20)⌋`,
+`f_max` the lower of 20 kHz and 0.45 of the rate (239 points at 44.1 kHz, 240 from 48 kHz up),
+the curve's power gain P(f) is weighed by `w(f) = S(f)·K(f)²·f` — S the average mix's power per
+hertz, K BS.1770's K-weighting, f because the points are log-spaced — and the make-up is
+`−10·log₁₀(Σ w·P / Σ w)` dB, held inside ±24 dB; an empty EQ sums nothing and is exactly 0 dB:
+- **The average mix** (decision 39) is the research's corpus mean (§10.6): per FFT bin, falling
+  5.79 dB an octave from 94 Hz up (Elowsson & Friberg's straight line to 15.7 kHz, held on above
+  it), and below 94 Hz falling 12 dB an octave towards 20 Hz, a model of Pestana's rise to
+  90–100 Hz and low cut round 60 Hz, not a measurement. Computed (2026-10-16): 5 % of the weight
+  lies above 4 kHz, so a +6 dB step above 4 kHz is made up by 0.65 dB, and the same step below
+  100 Hz by 1.5 dB; pink noise, the alternative, puts 43 % of the weight above 4 kHz and makes up
+  the treble step by 3.6 dB. A broadband +6 dB is made up by exactly 6 dB under either.
+- **K-weighting** is BS.1770's two stages as a magnitude (`research:listening/perceptual-measures.md`
+  §9: −13.3 dB at 20 Hz, −1.1 at 100 Hz, +0.7 at 1 kHz, +4.0 from 4 kHz up): the standard's
+  48 kHz biquads' response at `e^{jω}`, `ω = 2π·f/48,000`, whatever the session rate (every point
+  lies below 24 kHz), so the weighting is the standard's at every rate; it weighs frequencies and
+  filters nothing.
+- **The curve** is what Linear phase's kernel hears (§7.7): every band in the sound at its
+  targets, the gain held to ±30 dB, then the gain scale's target; a dynamic band at its drawn
+  gain, so the make-up never moves with a detector; in mono only Stereo bands. **Placed bands**
+  count by their share of an uncorrelated stereo signal: with the channel stage's magnitudes l, r
+  and the mid/side stage's m, s, `P = ((l² + r²)/2)·((m² + s²)/2)`, so a Left band or a Mid band
+  acts on half the power; in mono `P = l²`.
+- **When**: at the first control interval after a setting the curve hears has moved, then at
+  most every 10 ms while it keeps moving; the output gain's ramp (20 ms, §3.4) carries each new
+  make-up, so a drag is followed in steps without a click. A settled EQ costs nothing; while one
+  moves, 24 bands at 240 points every 10 ms, which `eq_n_cost` measures at 192 kHz.
+- **Where**: the DSP, `crates/mxm-fx-eq-n-dsp/src/loudness.rs`, its points and weights computed
+  when the engine is built; the engine applies the make-up with the output gain, after the bands
+  or the convolution, in both phase modes, so the host's bypass compares at the same loudness.
+- **The make-up and Output gain are separate factors**, each held inside ±24 dB, so ±48 dB
+  together, the output's bound (`OUTPUT_BOUND`, +24 dBFS) clipping after them as now: Output gain
+  stays what its control says. **Switching auto gain on or off** — by hand, by automation or by a
+  state restored while active — ramps the make-up from 0 dB to the estimate, or back, over one
+  fade, as a new estimate does; a reset or an activation starts at the estimate at once (§3.4).
+
+**A parameter** (decision 40): `autogain`, appended after `resolution` (293 parameters), on or
+off, automatable, saved with presets and projects, **off by default**: Init, the factory set
+(regenerated) and every state or preset from before F7 load off. An empty EQ's make-up is exactly
+0 dB, so Init stays bit-exact dry either way.
+
+**Cost** (brief A6's 35 % steady, 70 % moving, at 192 kHz): `eq_n_cost` gains a load with auto gain
+on and every band moving, so an estimate every 10 ms on top of F6's moving load; within A6, or the
+plan says what does not fit.
+
+**In the editor**: an **Auto gain** switch in the Output card, its own row under Output gain; its
+hover says what it does and gives the make-up in force, which the shell publishes in `Telemetry`.
+The graph draws the curve as before: the make-up is a level, not a shape. The card grows by a row.
+
+#### Other tracks' spectra
+
+Seeing where this track's sound sits against another's is the users' repeated wish (research §19:
+"other tracks' spectra in the analyser"), and Pro-Q 4 marks where the two may collide (research
+§12). Its SC/Ext menu shows one external spectrum, the side chain or another instance's post-EQ
+spectrum, and Show Collisions marks it; FabFilter: "merely an indication, and not exact science.
+Always use your ears" (*Pro-Q 4 help, Analyzer*, read 2026-10-16). Its Instance List shows every
+instance and edits them (research §12).
+
+**One external spectrum** (decision 43): the Analyser card's **Side chain** switch becomes an
+**External** selector: **Off**, **Side chain** (on a layout with the port, as now) and every other
+mxm-fx-eq-n instance in this process, by name. The one chosen is drawn as the side chain is now, a
+dashed line lettered with its name, its post-EQ spectrum read through this editor's own analyser
+settings (resolution, speed, tilt). While Match listens (§7.6) the side chain is shown, as now.
+**Collisions**, a switch beside it enabled while an external spectrum is shown, marks along the
+graph's bottom edge where this track's post-EQ spectrum and the external one may collide:
+- both as drawn (tilted, §4) and smoothed to a third of an octave, so comb ripple marks nothing:
+  at each drawn frequency the mean **power** (not dB) of the drawn points within a sixth of an
+  octave either side, a window cut short by the graph's edges rather than padded;
+- **only while both hold sound**: each analyser has read a window and is not stale (§4: a gap,
+  a new generation or 0.3 s without audio restarts it and drops its reading), and only at
+  frequencies where both levels are above −80 dB as drawn; silence, a stopped transport or a
+  source gone marks nothing;
+- strength `clamp((E − O + 12)/6, 0, 1) · clamp((O − (peak − 30))/6, 0, 1)`, O and E this track's
+  and the external level, peak this track's loudest drawn level: full where the other is within
+  6 dB of this track or above it while this track is within 24 dB of its peak (sound that matters
+  here, with something near enough to mask it), nothing where the other is 12 dB under or this
+  track 30 dB under its peak;
+- drawn as diagonal hatching whose opacity is the strength, never a hue; its hover names the
+  track and says it is an indication, to listen before cutting.
+The External choice and Collisions are view state (`ViewSettings`, saved with the project, no
+undo), and not part of what a freeze holds (§7.4).
+
+**How instances meet** (decision 41): **in one process**, through a registry every instance joins
+when it is made and leaves when dropped (`plugins/mxm-fx-eq-n/src/instances.rs`). One process
+covers Bitwig's default hosting, *Together*, and *Within Bitwig*, *By manufacturer* and *By
+plug-in* (Bitwig user guide, *Plug-in handling*, read 2026-10-16), REAPER's default and newDAWn;
+under Bitwig's *Individually* each instance is alone and the list is empty, which the selector's
+hover says. Sharing across processes is not in F7.
+- **The audio thread never waits on another instance.** Each instance has a second tap, post-EQ
+  only, preallocated at construction (32 blocks), which copies blocks into its own lock-free ring
+  only while an editor watches it (an atomic count of watchers): no lock, no allocation. When the
+  count rises from none, the tap starts a new generation and the entry drops the blocks it held,
+  so audio buffered before a watch never reads as current.
+- **Editors share what they read.** The ring has one consumer, so it lives in the instance's
+  registry entry behind a mutex that only editor threads take. A watching editor drains it each
+  frame into the entry's last 64 blocks (allocated at the first watch, on that editor's thread)
+  and feeds its own second analyser the blocks newer than it has seen; two editors watching one
+  track each see every block, and a gap restarts the window, as the analyser's own handoff does
+  (§4). A watch is counted while the editor is open and that track chosen, and dropped with
+  either.
+- **Identity**: each instance keeps a random 64-bit id (`std`'s per-process random hasher over
+  the time and a counter) in the **host's state**, a persisted field (`#[persist = "instance"]`)
+  beside the view settings, not a parameter: **never in a preset** (presets are parameters only,
+  §5.4), untouched by Init and undo. nice-plug restores it with the host's state; the registry then
+  takes the restored id, and of two instances holding one id (a duplicated track) the one that had
+  it first keeps it and the other gets a new one. An External choice saves the id in the view
+  settings, so a reloaded project finds the same track whichever instance loads first; a choice
+  whose track is not in the session is shown as not found, draws nothing, and is found again when
+  the track appears.
+- **Lifetimes**: the instance and its editor hold its registry entry; the registry and every
+  viewer hold it weakly, a viewer upgrading it for the frame it drains, so an instance removed
+  while watched is gone at the viewer's next frame and nothing outlives it but the frame in
+  progress. A watch is a guard, dropped with the window or the choice, so the count goes back and
+  the share tap stops copying; a name the host changes shows at the next frame.
+
+**Names from the host** (decision 42): an instance is listed by its **track's name**, which
+CLAP's track-info gives (`clap.track-info`; nice-plug hands it to the plugin's editor object,
+which exists while the window is closed). mxm-kit's `mxm-editor` does not pass it on to a plugin's
+panel today, so **F7 adds that to mxm-kit**, a default `Panel::track_info_changed` the app
+forwards, which no other plugin need implement; **pushing mxm-kit's public `main` is the owner's
+to approve, which signing decision 42 does**. With no name from the host an instance is "Track n"
+in the order instances were made; two of one name get " 2", " 3"; the list runs alphabetically and
+never lists the editor's own instance.
+
+**What it costs**: a viewer, one more stream, post only, through a second analyser, within the
+editor's analysis budget (`spectrum::BUDGET_MS`), which `analyser_cost` checks with an external
+spectrum on; the watched instance's audio thread, a copy of its output into a block every 256
+frames, which a new release check beside it, `share_cost`, measures at 192 kHz as a share of
+real time, watched and not, within A6.
+
+**Not in F7**: Pro-Q's Instance List and editing other instances; Match (§7.6) taking another
+instance as its reference; sharing across processes; renaming an instance; a make-up measured
+from the signal; auto gain per channel or per mid/side (DMG keeps the width that way, research §6).
+
+**Tests** (written at the end): the make-up exactly 0 dB for an empty EQ, and within 10⁻⁶ dB of
+0 for bands that cancel (a +6 and a −6 dB bell alike); a flat +6 dB power gain made up by −6 dB
+within 10⁻⁹ dB (the weights normalised), and a +6 dB low shelf with a +6 dB high shelf at 1 kHz,
+Q 0.71, complementary analogue shelves, within 0.1 dB of it; a +6 dB high
+shelf at 4 kHz made up by less than 1 dB and a +6 dB low shelf at 100 Hz by more than 1 dB; held at
+±24 dB; a Mid band of power gain G counting `(1 + G)/2` where the same band in Stereo counts G;
+mono counting only Stereo bands; the make-up ramping over the fade on a new estimate and on
+switching auto gain on and off, no step between samples larger than the ramp's own plus 10⁻⁹ of
+the signal's peak; Output gain and the make-up each held at ±24 dB; a bounce twice bit-identical; no
+allocation with auto gain on and every slot changing; the cost at 192 kHz. Through MXM Player: a
+restored state with auto gain on and a broadband boost rendering within 0.1 dB of the dry level. The parameters 293 and
+permanent; older states and presets off; the factory set regenerated. The registry: instances
+joining and leaving; a duplicate id renewed for the later one; names from track info, the
+fallback and the suffixes; the list alphabetical without its own instance; the share tap copying
+only while watched; two viewers each seeing every block, a gap restarting the window; a choice
+saved and found after a reload whichever instance loads first; an instance dropped while a viewer
+drains it, gone at the next frame; a closed window dropping its watch; a renamed track at the next
+frame; through MXM Player, the host's state round trip keeping the id, and a preset never carrying
+it. The collision strength at its edges on made-up spectra, and nothing marked on silence, stale
+input, a gap or a source gone; the hatching only while Collisions is on and an external spectrum
+shown; the
+External selector and Collisions in the keyboard's reach; the opening size. In mxm-kit:
+`mxm-editor` forwarding track info to the panel.
+
+**Delivery** (tests at the end, one review over F7.1–F7.4):
+
+| Step | Delivers | Gate |
+|---|---|---|
+| **F7.0** | Decisions 38–43, signed; with 42, the push to mxm-kit's `main` | Owner |
+| **F7.1** | Auto gain: `loudness.rs` and the engine's make-up (the DSP's `AGENTS.md`, `NOTES.md` with the cost); `autogain` (293 parameters), older states and presets, the factory set regenerated, the make-up in `Telemetry`; the Output card's switch and hover; the host test of auto gain | Unit and host tests at the end; `eq_n_cost` within A6 |
+| **F7.2** | mxm-kit: `mxm-editor`'s `Panel::track_info_changed`, its test and `AGENTS.md`, pushed with the owner's approval; this repository relocked on it | The kit's own checks |
+| **F7.3** | Other tracks: the registry, ids and names, the share tap; the External selector, the external spectrum, Collisions and their hovers; the host test of the id's state round trip | Unit and host tests at the end; `analyser_cost` and `share_cost` within their budgets |
+| **F7.4** | The DOX: the plugin's `AGENTS.md` (the host's state now holds the instance id beside the view settings; presets still parameters only) and `NOTES.md`, the DSP's, the index rows (293), this plan's status | On Windows: `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n -p mxm-fx-eq-n-dsp -p mxm-fx-eq-n-host-tests --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n-dsp`, `cargo +1.87.0 test -p mxm-fx-eq-n-dsp`, `cargo test -p mxm-fx-eq-n`; `cargo xtask bundle mxm-fx-eq-n --release` into this repository's own `target/bundled`, `clap-validator validate target/bundled/mxm-fx-eq-n.clap`, `cargo test -p mxm-fx-eq-n-host-tests`; one agent-loop review of F7.1–F7.4 |
+| **F7.5** | The owner in Bitwig: auto gain against the host's bypass; EQs on two tracks, the external spectrum and collisions | Owner sign-off |
 
 ## 8. What must not break
 
