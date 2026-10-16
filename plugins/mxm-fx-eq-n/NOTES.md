@@ -260,7 +260,10 @@ The full text of each follows, in *The editor in full*.
   of an octave per drawn point, averaged over the channels, so a full-scale sine reads 0 dB and
   noise reads alike whatever the window. A short window of about 85 ms at the full rate, and below
   300 Hz a long window on a decimated stream (an eighth-order low pass to about 3 kHz), 0.34 s at
-  Medium and 1.4 s at High. A gap or a new generation restarts both windows; a block at another
+  Medium and 1.4 s at High. Across the octave about 300 Hz (212–424 Hz) the two readings are blended
+  in dB: a transient reads louder in the short window than averaged over the long one, and a
+  switch at one frequency drew that difference as a cliff of up to 14 dB, in Bitwig on a retriggered
+  sine (2026-10-16); steady sound reads alike in both. A gap or a new generation restarts both windows; a block at another
   rate is ignored. Rises show at once, falls at the chosen speed; the tilt pivots at 1 kHz.
   **Settings are view state** (`view.rs`): on/off, Show (pre, post, both), Resolution, Speed and
   Tilt, defaulting to 1.5 dB/octave, the research's corpus slope on a band-power display. They

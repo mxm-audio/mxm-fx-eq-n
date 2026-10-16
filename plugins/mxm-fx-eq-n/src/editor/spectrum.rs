@@ -10,7 +10,10 @@
 //!   quarter of it is new. **The lows' long window runs on a decimated signal** (plan §4): an
 //!   eighth-order low pass, then every `factor`-th sample, about 3 kHz whatever the rate, so a
 //!   1.4 s window is 4,096 points rather than 270,000. It is recomputed when an eighth of it is new.
-//!   Below [`CROSSOVER_HZ`] the long window is read once it holds enough audio.
+//!   Below [`CROSSOVER_HZ`] the long window is read once it holds enough audio, **the two
+//!   blended in dB across [`BLEND_OCTAVES`] about it**: a transient reads louder in the short
+//!   window than averaged over the long one, and a switch at one frequency would draw that
+//!   difference as a cliff. Steady sound reads alike in both, so the blend changes nothing there.
 //! - **Coherent windows.** A dropped block or a new generation restarts both windows, never splicing
 //!   across the gap; a block recorded at another rate is ignored. **A silence is a gap too**: with
 //!   no audio for [`STALE_SECONDS`] the windows' readings go, the display falls to the floor, and
@@ -26,8 +29,12 @@ use crate::view::{Resolution, Show, ViewSettings};
 pub const FLOOR_DB: f32 = -120.0;
 /// The share of an octave each drawn frequency reads.
 pub const BAND_OCTAVES: f32 = 1.0 / 12.0;
-/// Below this the long window, once ready, is read instead of the short one.
+/// The middle of the blend from the long window, once ready, to the short one: below it the long
+/// window counts more, above it the short one ([`BLEND_OCTAVES`]).
 pub const CROSSOVER_HZ: f32 = 300.0;
+/// The octaves about [`CROSSOVER_HZ`] over which the display passes from the long window to the
+/// short one: 212–424 Hz.
+pub const BLEND_OCTAVES: f32 = 1.0;
 /// With no audio for this long, what the windows hold is the sound from before: the host stopped
 /// calling the plugin (it sleeps on silence, or its transport stopped). Their readings go, the
 /// display falls to the floor at the chosen speed, and the next audio restarts them as a gap does.
@@ -506,21 +513,27 @@ impl Spectrum {
         let tilt = settings.tilt.db_per_octave();
         let snap = std::mem::take(&mut self.snap);
         for (index, &freq) in self.freqs.iter().enumerate() {
+            let share = long_share(freq);
             for (out, shown) in [
                 (0, &mut self.pre_db),
                 (1, &mut self.post_db),
                 (2, &mut self.key_db),
             ] {
-                let window = match long {
-                    Some(long) if freq < CROSSOVER_HZ && long.analysed[out] => Some(long),
-                    _ => Some(short).filter(|short| short.analysed[out]),
+                let read = |window: &Window| {
+                    let power = window.band(out, freq / half, freq * half);
+                    10.0 * power.max(1.0e-14).log10() as f32
+                };
+                let long = long.filter(|long| share > 0.0 && long.analysed[out]);
+                let short = Some(short).filter(|short| short.analysed[out]);
+                let db = match (long, short) {
+                    (Some(long), Some(short)) if share < 1.0 => {
+                        Some(share * read(long) + (1.0 - share) * read(short))
+                    }
+                    (Some(long), _) => Some(read(long)),
+                    (None, short) => short.map(read),
                 };
                 let current = &mut shown[index];
-                let reading = window.map(|window| {
-                    let power = window.band(out, freq / half, freq * half);
-                    let db = 10.0 * power.max(1.0e-14).log10() as f32;
-                    (db + tilt * (freq / 1_000.0).log2()).max(FLOOR_DB)
-                });
+                let reading = db.map(|db| (db + tilt * (freq / 1_000.0).log2()).max(FLOOR_DB));
                 *current = match reading {
                     Some(db) if snap => db,
                     None if snap => FLOOR_DB,
@@ -531,6 +544,12 @@ impl Spectrum {
             }
         }
     }
+}
+
+/// How much of the long window's reading `freq` takes: all of it below the blend, none above it,
+/// and in between in proportion to the octaves, half at [`CROSSOVER_HZ`].
+fn long_share(freq: f32) -> f32 {
+    (0.5 - (freq / CROSSOVER_HZ).log2() / BLEND_OCTAVES).clamp(0.0, 1.0)
 }
 
 /// The analyser's budget on the GUI thread (plan §4): a 60 Hz frame's ingest and analysis, in the
@@ -745,6 +764,51 @@ mod tests {
             assert!(
                 (difference + 0.26).abs() < 1.0,
                 "{resolution:?}: the long window reads {difference:.2} dB against the short"
+            );
+        }
+    }
+
+    /// **A transient slopes across the crossover, never steps** (the owner's Bitwig check,
+    /// 2026-10-16): clicks four times a second read several dB louder in the short window than
+    /// averaged over the long one, and two points either side of [`CROSSOVER_HZ`] still read within
+    /// a small share of that difference; with a switch at one frequency they differed by all of it.
+    #[test]
+    fn a_transient_slopes_across_the_crossover_and_never_steps() {
+        assert_eq!(long_share(CROSSOVER_HZ / 2.0), 1.0);
+        assert_eq!(long_share(CROSSOVER_HZ), 0.5);
+        assert_eq!(long_share(CROSSOVER_HZ * 2.0), 0.0);
+        let freqs = [CROSSOVER_HZ * 0.97, CROSSOVER_HZ * 1.03];
+        for resolution in [Resolution::Medium, Resolution::High] {
+            let mut spectrum = Spectrum::new(48_000.0);
+            spectrum.set_resolution(resolution);
+            let mut seq = 0;
+            let quarter = spectrum.sample_rate() as usize / 4;
+            let mut clicks = |n: usize| if n.is_multiple_of(quarter) { 1.0 } else { 0.0 };
+            feed(&mut spectrum, &mut seq, 3.0, &mut clicks);
+            let (mut short, mut long) = (FLOOR_DB, FLOOR_DB);
+            let (mut below, mut above) = (FLOOR_DB, FLOOR_DB);
+            for frame in 0..40 {
+                feed(&mut spectrum, &mut seq, 0.05, &mut clicks);
+                spectrum.analyse(&freqs, frame as f64 * 0.05, &flat());
+                let half = 2f32.powf(BAND_OCTAVES / 2.0);
+                let db = |window: &Window| {
+                    let power = window.band(0, CROSSOVER_HZ / half, CROSSOVER_HZ * half);
+                    10.0 * power.max(1.0e-14).log10() as f32
+                };
+                short = short.max(db(&spectrum.short));
+                long = long.max(db(&spectrum.long.as_ref().expect("a long window").window));
+                below = below.max(spectrum.pre_db[0]);
+                above = above.max(spectrum.pre_db[1]);
+            }
+            let gap = short - long;
+            assert!(
+                gap > 3.0,
+                "{resolution:?}: the windows differ by only {gap:.1} dB"
+            );
+            let step = (above - below).abs();
+            assert!(
+                step < 0.25 * gap,
+                "{resolution:?}: {step:.2} dB across the crossover, the windows {gap:.1} dB apart"
             );
         }
     }
