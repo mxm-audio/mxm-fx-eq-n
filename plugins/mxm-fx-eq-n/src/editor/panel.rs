@@ -83,6 +83,8 @@ impl EqApp {
     }
 
     /// Undo and redo, which the keyboard language leaves to the editor: `Command` chords pass it by.
+    /// So do the standard Ctrl/Cmd+A, C, X and V (plan §7.9), as in newDAWn, outside the shared
+    /// keymap; while a value is being typed they are the text field's.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let (undo, redo) = ctx.input_mut(|input| {
             let redo = input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
@@ -94,6 +96,24 @@ impl EqApp {
             self.redo();
         } else if undo {
             self.undo();
+        }
+        if self.inert() {
+            return;
+        }
+        let [all, copy, cut, paste] = ctx.input_mut(|input| {
+            [Key::A, Key::C, Key::X, Key::V].map(|key| input.consume_key(Modifiers::COMMAND, key))
+        });
+        if all {
+            self.select_all();
+        }
+        if copy {
+            self.copy_selection();
+        }
+        if cut {
+            self.cut_selection();
+        }
+        if paste {
+            let _ = self.paste();
         }
     }
 
@@ -146,6 +166,8 @@ impl EqApp {
             self.selected = None;
             self.edge = None;
         }
+        // The selection keeps to bands in use, a primary gone handing over (plan §7.9).
+        self.tidy_selection();
         // A pause in the wheel ends its gesture, and so does a press: a click on the preset bar must
         // not land inside it. (A keyboard gesture the press ends through the language.)
         if self.wheel_until.is_some_and(|until| {

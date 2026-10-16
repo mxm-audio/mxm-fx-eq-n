@@ -5,7 +5,7 @@
 three blockers — the selection's primary and order, the shortcuts against the shared keymap, F8.3's
 gate — and round 2's, a point's menu against the selection, with their other findings, all
 accepted and applied here. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions
-44–47 as proposed); F8.0 done. **Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
+44–47 as proposed); F8.0 done. **F8.1–F8.3 built** (2026-10-16); their code review is next. **Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
 (2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
 (2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
 blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
@@ -1782,7 +1782,8 @@ solo plays and the keyboard's MOVE edge takes. Editor state, never saved, never 
   or a paste, the copy of the primary that was copied.
 - **Drawn**: every selected point ringed as the selected one is now, the primary's ring twice as
   thick; the rectangle a dashed outline. Never a hue. The Band card's title reads "Band 3 + 2" with
-  two more selected, its hover naming them.
+  two more selected (found building it: mxm-ui's card title takes no hover, so none names them;
+  the rings show which).
 
 **Relative editing** (decision 45): an edit of the primary, by drag, wheel, arrows or the Band
 card, moves every selected band with it, so the curve keeps its shape:
@@ -1864,9 +1865,9 @@ and the title; the menus' items in the keyboard's reach; the opening size unchan
 | Step | Delivers | Gate |
 |---|---|---|
 | **F8.0** | Decisions 44–47, signed. **Done** (2026-10-16) | Owner |
-| **F8.1** | The selection: the set and its primary, the mouse and keyboard gestures, the rings, the rectangle and the title; relative editing from the graph, the keyboard and the card, the group's limits; DELETE and DUPLICATE on a selection | Unit tests at the end |
-| **F8.2** | Copy, cut and paste through the process's clipboard; Invert gain; the point's and the background's menus | Unit tests at the end |
-| **F8.3** | The DOX: the plugin's `AGENTS.md` and `NOTES.md`, the index rows, this plan's status | On Windows, the editor's change alone (no parameter, state, DSP or audio path moves, so neither the DSP's suites nor the host tests, the slow tier for audible changes): `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n`, the layout and painting tests among them; the bundle installed for F8.4; one agent-loop review of F8.1–F8.3 |
+| **F8.1** | The selection: the set and its primary, the mouse and keyboard gestures, the rings, the rectangle and the title; relative editing from the graph, the keyboard and the card, the group's limits; DELETE and DUPLICATE on a selection. **Built** (2026-10-16) | Unit tests at the end |
+| **F8.2** | Copy, cut and paste through the process's clipboard; Invert gain; the point's and the background's menus. **Built** (2026-10-16) | Unit tests at the end |
+| **F8.3** | The DOX: the plugin's `AGENTS.md` and `NOTES.md`, the index rows, this plan's status. **Built** (2026-10-16) | On Windows, the editor's change alone (no parameter, state, DSP or audio path moves, so neither the DSP's suites nor the host tests, the slow tier for audible changes): `cargo fmt --all -- --check`; `cargo clippy -p mxm-fx-eq-n --all-targets -- -D warnings`; `cargo test -p mxm-fx-eq-n`, the layout and painting tests among them; the bundle installed for F8.4; one agent-loop review of F8.1–F8.3 |
 | **F8.4** | The owner in Bitwig: selecting, moving and copying several bands, between two tracks | Owner sign-off |
 
 ## 8. What must not break

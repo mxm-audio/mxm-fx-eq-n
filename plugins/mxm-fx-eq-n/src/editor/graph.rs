@@ -88,11 +88,9 @@ impl Axes {
 pub struct Drag {
     pub slot: usize,
     pub pos: Pos2,
-    /// A grab's drag (plan §7.4): the bell stays at its peak and only its gain follows.
+    /// A grab's drag (plan §7.4): the bell stays at its peak and only its gain follows. A
+    /// proposal's pair (plan §7.5) is a group (plan §7.9), its gains moving by one offset.
     pub gain_only: bool,
-    /// A proposal's pair (plan §7.5): the other band, and how far its gain stands from this one's,
-    /// so the two move together.
-    pub partner: Option<(usize, f32)>,
 }
 
 /// Where a proposal's triangle points (plan §7.5): at the spectrum the finder listens to, the
@@ -218,6 +216,26 @@ pub fn peak_label(axes: &Axes, at: Pos2, size: Vec2) -> Rect {
 }
 
 const PEAK_MARKER_RADIUS: f32 = 4.0;
+
+/// The menus' items for the selection (plan §7.9).
+const COPY_DESCRIPTION: &str = "Copies the selected bands, to paste here or on another track.";
+const CUT_DESCRIPTION: &str = "Copies the selected bands and deletes them.";
+const INVERT_DESCRIPTION: &str =
+    "Turns the selected bands' gains over: a boost becomes the same cut.";
+const DELETE_SELECTION_DESCRIPTION: &str = "Deletes the selected bands.";
+const SELECT_ALL_DESCRIPTION: &str = "Selects every band, so a drag or the arrows move them all.";
+const NO_BANDS_DESCRIPTION: &str = "There is no band to select.";
+
+/// Paste's hover: what it does, or why it cannot.
+fn paste_description(refusal: Option<super::selection::PasteRefusal>) -> &'static str {
+    match refusal {
+        None => "Pastes the bands copied into free slots, at their own settings.",
+        Some(super::selection::PasteRefusal::Empty) => "Nothing has been copied.",
+        Some(super::selection::PasteRefusal::Full) => {
+            "Not every band copied fits in the free slots, so none is pasted."
+        }
+    }
+}
 
 /// The collision strip's height and its hatching's spacing (plan §7.8).
 const COLLISION_STRIP: f32 = 10.0;
@@ -965,20 +983,29 @@ impl EqApp {
             response.clone().on_hover_text_at_pointer(text);
         }
 
+        // A right-click on a selected point makes it the primary, on another selects it alone, so
+        // the menu acts on the selection; on the background it opens the background's (plan §7.9).
         if response.secondary_clicked() {
             self.context_slot = pointer.and_then(hit);
             if let Some(slot) = self.context_slot {
-                self.select(slot);
+                self.grab_point(slot);
             }
         }
-        // MENU opens the same menu a right-click does, at the selected band's point.
+        // MENU opens the same menu a right-click does, at the primary's point, or with nothing
+        // selected at the keyboard's place on the line.
         let keys = std::mem::take(&mut self.menu_asked)
-            .then(|| {
-                let slot = self.selected?;
-                positions
+            .then(|| match self.selected {
+                Some(slot) => positions
                     .iter()
                     .find(|(other, _)| *other == slot)
-                    .map(|(_, at)| Rect::from_center_size(*at, Vec2::splat(2.0 * POINT_RADIUS)))
+                    .map(|(_, at)| Rect::from_center_size(*at, Vec2::splat(2.0 * POINT_RADIUS))),
+                None => {
+                    let at = pos2(
+                        axes.x(self.focus_freq),
+                        axes.y(curves.composite_at(self.focus_freq)),
+                    );
+                    Some(Rect::from_center_size(at, Vec2::splat(2.0 * POINT_RADIUS)))
+                }
             })
             .flatten();
         mxm_ui::reach::context_menu(response, keys, |ui| self.context_menu(ui));
@@ -1009,14 +1036,19 @@ impl EqApp {
         {
             // A click on a proposal applies it (plan §7.5); a click on a peak makes nothing (plan
             // §7.4), even where its marker lies on the curve.
+            // Shift-click adds a point to the selection or takes it out (plan §7.9).
             if let Some(slot) = hit(at) {
-                self.select(slot);
+                if modifiers.shift {
+                    self.toggle_selected(slot);
+                } else {
+                    self.select(slot);
+                }
             } else if let Some(index) = self.proposal_at(axes, curves, at) {
                 self.apply_proposals(&[index], false);
             } else if curves.distance(axes, at) <= LINE_HIT && self.peak_at(axes, at).is_none() {
                 self.insert_at(axes.freq(at.x));
             } else {
-                self.selected = None;
+                self.select_none();
                 self.focus_freq = self.clamp_freq(axes.freq(at.x));
             }
         }
@@ -1047,23 +1079,34 @@ impl EqApp {
                     .first()
                     .copied()
                     .or_else(|| peak.and_then(|peak| self.insert_peak(peak, true)));
+                let on_line = curves.distance(axes, origin) <= LINE_HIT;
                 let slot = point.or(grabbed).or_else(|| {
-                    (curves.distance(axes, origin) <= LINE_HIT)
+                    on_line
                         .then(|| self.insert_opened(axes.freq(origin.x)))
                         .flatten()
                 });
-                if let Some(slot) = slot {
-                    self.select(slot);
-                    let band = self.band_now(slot);
-                    let partner = applied
-                        .get(1)
-                        .map(|&other| (other, self.band_now(other).gain_db - band.gain_db));
-                    self.drag = Some(Drag {
-                        slot,
-                        pos: self.point_position(axes, &band),
-                        gain_only: grabbed.is_some(),
-                        partner,
-                    });
+                match slot {
+                    Some(slot) => {
+                        // A selected point drags its group; a proposal's pair is one (plan §7.9).
+                        if point.is_some() {
+                            self.grab_point(slot);
+                        } else if applied.len() > 1 {
+                            self.select_set(&applied, Some(slot));
+                        } else {
+                            self.select(slot);
+                        }
+                        let band = self.band_now(slot);
+                        self.drag = Some(Drag {
+                            slot,
+                            pos: self.point_position(axes, &band),
+                            gain_only: grabbed.is_some(),
+                        });
+                    }
+                    // From the background, a rectangle selects (plan §7.9).
+                    None if peak.is_none() && !on_line => {
+                        self.marquee = Some((origin, modifiers.shift));
+                    }
+                    None => {}
                 }
             }
         }
@@ -1073,30 +1116,43 @@ impl EqApp {
         {
             let fine = if modifiers.shift { 0.1 } else { 1.0 };
             drag.pos += response.drag_delta() * fine;
-            let (slot, pos, gain_only, partner) =
-                (drag.slot, drag.pos, drag.gain_only, drag.partner);
-            if !gain_only {
-                let freq = axes.freq(pos.x).clamp(FREQ_MIN as f32, self.high());
-                let freq_index = band_index(slot, Field::Freq);
-                self.send(freq_index, self.normalised(freq_index, freq));
-                self.focus_freq = freq;
-            }
-            let band = self.band_now(slot);
-            let scale = self
-                .params
-                .gain_scale
-                .preview_plain(self.normalised_now(super::GAIN_SCALE_INDEX));
-            if band.shape.is_some_and(Shape::has_gain) && scale > f32::EPSILON {
-                let range = GAIN_RANGE as f32;
-                let gain = (axes.db(pos.y) / scale).clamp(-range, range);
-                let gain_index = band_index(slot, Field::Gain);
-                self.send(gain_index, self.normalised(gain_index, gain));
-                if let Some((other, offset)) = partner {
-                    let other_index = band_index(other, Field::Gain);
-                    let other_gain = (gain + offset).clamp(-range, range);
-                    self.send(other_index, self.normalised(other_index, other_gain));
+            let (slot, pos, gain_only) = (drag.slot, drag.pos, drag.gain_only);
+            // The group moves with its primary, one ratio and one offset (plan §7.9).
+            self.group_edit(super::selection::Writer::Send, |app| {
+                if !gain_only {
+                    let freq = axes.freq(pos.x).clamp(FREQ_MIN as f32, app.high());
+                    let freq_index = band_index(slot, Field::Freq);
+                    app.send(freq_index, app.normalised(freq_index, freq));
+                    app.focus_freq = freq;
                 }
+                let band = app.band_now(slot);
+                let scale = app
+                    .params
+                    .gain_scale
+                    .preview_plain(app.normalised_now(super::GAIN_SCALE_INDEX));
+                if band.shape.is_some_and(Shape::has_gain) && scale > f32::EPSILON {
+                    let range = GAIN_RANGE as f32;
+                    let gain = (axes.db(pos.y) / scale).clamp(-range, range);
+                    let gain_index = band_index(slot, Field::Gain);
+                    app.send(gain_index, app.normalised(gain_index, gain));
+                }
+            });
+        }
+        // The rectangle ends: the points it takes in, selected or added (plan §7.9).
+        if response.drag_stopped()
+            && let Some((origin, additive)) = self.marquee.take()
+            && let Some(end) = pointer.or_else(|| ui.input(|input| input.pointer.hover_pos()))
+        {
+            let rect = Rect::from_two_pos(origin, end);
+            let mut inside: Vec<usize> = positions
+                .iter()
+                .filter(|(_, at)| rect.contains(*at))
+                .map(|&(slot, _)| slot)
+                .collect();
+            if additive {
+                inside.extend(self.selection());
             }
+            self.select_set(&inside, self.selected);
         }
         if response.drag_stopped() && self.drag.take().is_some() {
             // BACK during the drag cancels it: the band goes back to where the drag began.
@@ -1139,9 +1195,8 @@ impl EqApp {
                 })
                 .sum::<f32>()
         });
-        let target = hit(hover).filter(|&slot| {
-            modifiers.alt || (self.cursor_on_graph() && self.selected == Some(slot))
-        });
+        let target = hit(hover)
+            .filter(|&slot| modifiers.alt || (self.cursor_on_graph() && self.is_selected(slot)));
         let Some(slot) = target.filter(|_| lines != 0.0) else {
             return;
         };
@@ -1153,29 +1208,33 @@ impl EqApp {
         if !self.open.holds(index) || self.wheel_until.is_none() {
             self.close_open();
         }
+        // The point turned becomes the primary, its group's Q moving by one factor (plan §7.9).
+        self.grab_point(slot);
         let travel = (Q_MAX / Q_MIN).ln() as f32;
-        let q = (self.current_plain(index) * (lines * WHEEL_Q_FRACTION * travel).exp())
-            .clamp(Q_MIN as f32, Q_MAX as f32);
-        self.send(index, self.normalised(index, q));
+        self.group_edit(super::selection::Writer::Send, |app| {
+            let q = (app.current_plain(index) * (lines * WHEEL_Q_FRACTION * travel).exp())
+                .clamp(Q_MIN as f32, Q_MAX as f32);
+            app.send(index, app.normalised(index, q));
+        });
         self.wheel_until = Some(ui.input(|input| input.time) + super::panel::WHEEL_GESTURE_SECONDS);
-        self.select(slot);
         ui.input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
     }
 
     fn context_menu(&mut self, ui: &mut Ui) {
         let Some(slot) = self.context_slot.filter(|&slot| self.band_in_use(slot)) else {
-            ui.close();
+            self.background_menu(ui);
             return;
         };
         let current = self.band_now(slot).shape;
-        ui.label(egui::RichText::new(format!("Band {}", slot + 1)).strong());
+        ui.label(egui::RichText::new(super::column::band_title(self)).strong());
         let mut rows = Vec::new();
         let mut current_row = None;
         let mut chosen = false;
+        // Every item acts on the selection (plan §7.9).
         for shape in Shape::ALL {
             let row = ui.radio(current == Some(shape), shape_name(shape));
             if row.clicked() {
-                self.set_shape(slot, shape);
+                self.set_shape_selection(shape);
                 ui.close();
                 chosen = true;
             }
@@ -1185,13 +1244,36 @@ impl EqApp {
             rows.push(row);
         }
         ui.separator();
-        let delete = ui.button("Delete");
-        if delete.clicked() {
-            self.delete(slot);
-            ui.close();
-            chosen = true;
+        let refusal = self.paste_refusal();
+        let items = [
+            ("Copy", true, COPY_DESCRIPTION),
+            ("Cut", true, CUT_DESCRIPTION),
+            ("Paste", refusal.is_none(), paste_description(refusal)),
+            ("Invert gain", true, INVERT_DESCRIPTION),
+            ("Delete", true, DELETE_SELECTION_DESCRIPTION),
+        ];
+        for (label, enabled, description) in items {
+            let row = ui
+                .add_enabled(enabled, egui::Button::new(label))
+                .on_hover_text(description)
+                .on_disabled_hover_text(description);
+            if row.clicked() {
+                match label {
+                    "Copy" => {
+                        self.copy_selection();
+                    }
+                    "Cut" => self.cut_selection(),
+                    "Paste" => {
+                        let _ = self.paste();
+                    }
+                    "Invert gain" => self.invert_selection(),
+                    _ => self.delete_selection(),
+                }
+                ui.close();
+                chosen = true;
+            }
+            rows.push(row);
         }
-        rows.push(delete);
         // The keys walk the menu (the owner, 2026-10-15): an open menu has the keyboard (the
         // shared navigation is inert), and egui moves focus with ↑ ↓ and clicks with Enter or Space
         // only from a focused row. While none of its rows has it, the current shape's takes it.
@@ -1199,6 +1281,37 @@ impl EqApp {
             current_row
                 .unwrap_or_else(|| rows[0].clone())
                 .request_focus();
+        }
+    }
+
+    /// The background's menu (plan §7.9): Paste and Select all.
+    fn background_menu(&mut self, ui: &mut Ui) {
+        let refusal = self.paste_refusal();
+        let any = (0..mxm_fx_eq_n_dsp::SLOTS).any(|slot| self.band_in_use(slot));
+        let paste = ui
+            .add_enabled(refusal.is_none(), egui::Button::new("Paste"))
+            .on_hover_text(paste_description(refusal))
+            .on_disabled_hover_text(paste_description(refusal));
+        if paste.clicked() {
+            let _ = self.paste();
+            ui.close();
+            return;
+        }
+        let all = ui
+            .add_enabled(any, egui::Button::new("Select all"))
+            .on_hover_text(SELECT_ALL_DESCRIPTION)
+            .on_disabled_hover_text(NO_BANDS_DESCRIPTION);
+        if all.clicked() {
+            self.select_all();
+            ui.close();
+            return;
+        }
+        if !paste.has_focus() && !all.has_focus() {
+            if refusal.is_none() {
+                paste.request_focus();
+            } else {
+                all.request_focus();
+            }
         }
     }
 
@@ -1821,11 +1934,18 @@ impl EqApp {
                     painter.circle_stroke(at, POINT_RADIUS + 2.5, ring);
                 }
             }
-            if self.selected == Some(slot) {
+            // Every selected point ringed, the primary's ring twice as thick in a group (plan §7.9).
+            if self.is_selected(slot) {
+                let primary = self.selected == Some(slot) && !self.others.is_empty();
+                let width = if primary {
+                    2.0 * EMPHASIS_STROKE
+                } else {
+                    EMPHASIS_STROKE
+                };
                 painter.circle_stroke(
                     at,
                     POINT_RADIUS + 4.0,
-                    Stroke::new(EMPHASIS_STROKE, faint(tokens.text_primary)),
+                    Stroke::new(width, faint(tokens.text_primary)),
                 );
             }
             let text_color = if band.bypass || !heard {
@@ -1877,6 +1997,26 @@ impl EqApp {
             egui::FontId::monospace(12.0),
             tokens.text_primary,
         );
+
+        // The rectangle being dragged on the background, dashed (plan §7.9).
+        if let Some((origin, _)) = self.marquee
+            && let Some(now) = ui.input(|input| input.pointer.hover_pos())
+        {
+            let marquee = Rect::from_two_pos(origin, now);
+            let corners = [
+                marquee.left_top(),
+                marquee.right_top(),
+                marquee.right_bottom(),
+                marquee.left_bottom(),
+                marquee.left_top(),
+            ];
+            painter.extend(Painted::dashed_line(
+                &corners,
+                Stroke::new(AXIS_STROKE, tokens.text_primary.gamma_multiply(0.7)),
+                4.0,
+                3.0,
+            ));
+        }
 
         // Which view has the keyboard is a border's thickness, not a colour alone.
         painter.rect_stroke(

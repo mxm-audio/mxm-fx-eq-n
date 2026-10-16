@@ -12,9 +12,9 @@ surface, the preset seam, solo's command path, the analyser and the meter (E2), 
 and the factory set and the host tests (E4), and F1's dynamic bands through the shell, the editor
 and two presets (F1.1–F1.4), their side chain (plan §7.2), F2's per-band stereo placement
 (plan §7.3), F3's freeze and grab (plan §7.4), F4's resonance finder (plan §7.5), F5's EQ
-match (plan §7.6), F6's phase modes (plan §7.7) and F7's auto gain and other tracks' spectra
-(plan §7.8). DAW and listening checks are E5's, F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's,
-F6.4's and F7.5's. No control map (plan §6): no collection role fits on-demand bands.
+match (plan §7.6), F6's phase modes (plan §7.7), F7's auto gain and other tracks' spectra
+(plan §7.8) and F8's work with several bands (plan §7.9). DAW and listening checks are E5's,
+F1.5's, SC.4's, F2.4's, F3.4's, F4.3's, F5.3's, F6.4's, F7.5's and F8.4's. No control map (plan §6): no collection role fits on-demand bands.
 
 # Ownership
 
@@ -32,8 +32,8 @@ F6.4's and F7.5's. No control map (plan §6): no collection role fits on-demand 
   `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs` the
   analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
   finder, the rungs and the worker, its tests in `finder/tests.rs`; `matcher.rs` F5's EQ match,
-  its tests in `matcher/tests.rs`; `external.rs` F7's external spectrum and collisions; `tests.rs`
-  the editor's tests.
+  its tests in `matcher/tests.rs`; `external.rs` F7's external spectrum and collisions;
+  `selection.rs` F8's selection, a group's edits and the clipboard; `tests.rs` the editor's tests.
 - `src/tests.rs`: the shell's tests.
 - `host-tests/`: the slow tier, the release bundle through MXM Player.
 
@@ -213,6 +213,10 @@ transaction.
   their hovers give the latency and say when a change waits for the host's restart. **The drawn
   curve follows the phase in force** (`Telemetry::phase`): in Linear phase the kernel's own
   magnitude (`linear::heard_lines`), and a dynamic band shows no reach there, being held.
+- **Several bands** (plan §7.9, decisions 44–47; NOTES, *Several bands*): a selection, its
+  primary the band `selected` names; **every edit of the primary moves the group** (`group_edit`)
+  by one ratio, offset or factor, stopping at its first member's limit, one undo step; Delete,
+  DUPLICATE, copy, cut, paste (a clipboard in the process) and Invert gain take the selection.
 - **Auto gain** (plan §7.8, decisions 38–40; NOTES, *Auto gain*): the Output card's switch, on
   Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it
   (`Telemetry::make_up`), the output at it or ramping to it within one fade.

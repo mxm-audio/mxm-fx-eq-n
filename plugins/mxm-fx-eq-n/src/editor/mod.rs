@@ -28,6 +28,7 @@ pub mod graph;
 pub mod history;
 pub mod matcher;
 pub mod panel;
+pub mod selection;
 pub mod spectrum;
 
 use std::collections::HashMap;
@@ -256,7 +257,15 @@ pub struct EqApp {
     pointers: Vec<ParamPtr>,
     /// The keyboard language's cursor over the graph, the cards and the bars.
     pub(crate) nav: mxm_ui::navigation::State,
+    /// The selection's primary (plan §7.9): the band the Band card shows, solo plays and MOVE's
+    /// edge takes.
     pub(crate) selected: Option<usize>,
+    /// The rest of the selection.
+    pub(crate) others: Vec<usize>,
+    /// DUPLICATE's originals, put back as the selection if BACK takes the copies away.
+    pub(crate) copied_from: Vec<usize>,
+    /// A rectangle being dragged on the background: where it began and whether it adds.
+    pub(crate) marquee: Option<(egui::Pos2, bool)>,
     /// The keyboard's place on the line where no band is selected.
     pub(crate) focus_freq: f32,
     /// The selected band's edge MICRO + ← → took, for MOVE to move alone.
@@ -384,6 +393,9 @@ impl EqApp {
             pointers,
             nav: mxm_ui::navigation::State::default(),
             selected: None,
+            others: Vec::new(),
+            copied_from: Vec::new(),
+            marquee: None,
             focus_freq: 1_000.0,
             edge: None,
             copy: None,
@@ -560,7 +572,14 @@ impl EqApp {
         }
     }
 
+    /// `slot` selected alone (plan §7.9: a click on a point).
     pub(crate) fn select(&mut self, slot: usize) {
+        self.others.clear();
+        self.set_primary(slot);
+    }
+
+    /// `slot` the primary, the rest of the selection kept.
+    pub(crate) fn set_primary(&mut self, slot: usize) {
         if self.selected != Some(slot) {
             self.edge = None;
         }
@@ -1234,7 +1253,7 @@ impl EqApp {
         } else {
             self.instant(&writes);
         }
-        self.selected = slots.first().copied();
+        self.select_set(&slots, slots.first().copied());
         self.edge = None;
         if let Some(band) = bands.first() {
             self.focus_freq = self.clamp_freq(band.freq);
@@ -1418,7 +1437,7 @@ impl EqApp {
         }
         self.close_open();
         self.instant(&writes);
-        self.selected = slots.first().copied();
+        self.select_set(&slots, slots.first().copied());
         self.edge = None;
         if let Some(band) = bands.first() {
             self.focus_freq = self.clamp_freq(band.freq);
@@ -1483,16 +1502,21 @@ impl EqApp {
         } else {
             self.instant(&writes);
         }
+        self.others.clear();
         self.selected = Some(slot);
         self.edge = None;
         self.focus_freq = freq;
         Some(slot)
     }
 
+    /// One band Off, whatever is selected: the editor deletes the selection
+    /// ([`EqApp::delete_selection`]); a test empties one slot here.
+    #[cfg(test)]
     pub(crate) fn delete(&mut self, slot: usize) {
         self.close_open();
         let index = band_index(slot, Field::Type);
         self.instant(&[(index, 0.0)]);
+        self.others.retain(|&other| other != slot);
         if self.selected == Some(slot) {
             self.selected = None;
             self.edge = None;
@@ -1548,7 +1572,7 @@ impl EqApp {
                     .find(|(index, _)| *index == shape_index)
                     .map(|&(_, value)| value);
                 if shape != Some(0.0) {
-                    self.selected = Some(slot);
+                    self.select(slot);
                 }
             }
         }
@@ -1680,26 +1704,23 @@ impl EqApp {
                     }
                 }
             }
-            // The selected band's right-click menu; on the line, with no band, there is none.
+            // The primary's right-click menu; with nothing selected, the background's, at the
+            // keyboard's place on the line (plan §7.9).
             Output::Action(Action::Menu) => {
                 self.end_gesture(true);
-                if let Some(slot) = self.selected {
-                    self.context_slot = Some(slot);
-                    self.menu_asked = true;
-                }
+                self.context_slot = self.selected;
+                self.menu_asked = true;
             }
             Output::Action(Action::Remove | Action::Delete | Action::Ripple) => {
                 self.end_gesture(true);
-                if let Some(slot) = self.selected {
-                    self.delete(slot);
-                }
+                self.delete_selection();
             }
             // BACK with nothing to cancel goes back a level: from an edge to its band, from a band
             // to the line.
             Output::Back => {
                 let had_edge = self.edge.take().is_some();
                 if !had_edge {
-                    self.selected = None;
+                    self.select_none();
                 }
             }
             _ => {}
@@ -1739,10 +1760,12 @@ impl EqApp {
         } else {
             self.revert_open();
             if let Some((_, original)) = self.copy {
-                self.selected = Some(original);
+                let originals = std::mem::take(&mut self.copied_from);
+                self.select_set(&originals, Some(original));
             }
         }
         self.copy = None;
+        self.copied_from.clear();
     }
 
     fn has_q(&self, slot: usize) -> bool {
@@ -1846,8 +1869,7 @@ impl EqApp {
             Some(slot) => self.select(slot),
             None => {
                 let from = index.map_or(self.focus_freq, |index| bands[index].0);
-                self.selected = None;
-                self.edge = None;
+                self.select_none();
                 let factor = if coarse { 2.0 } else { 2f32.powf(1.0 / 12.0) };
                 self.focus_freq =
                     self.clamp_freq(if right { from * factor } else { from / factor });
@@ -1889,12 +1911,32 @@ impl EqApp {
         self.send(index, normalised);
     }
 
-    /// One arrow of a verb's gesture on the selected band.
+    /// One arrow of a verb's gesture: SELECT extends the selection (plan §7.9); the others edit
+    /// the primary, the rest of the selection moving with it, but MOVE on an edge, the primary's
+    /// alone.
     fn step(&mut self, verb: Verb, step: Size, direction: Direction) {
-        // A copy that cannot be made, with every slot in use, moves nothing either.
-        if verb == Verb::Duplicate && self.copy.is_none() && !self.start_copy() {
+        let horizontal = matches!(direction, Direction::Left | Direction::Right);
+        if verb == Verb::Select {
+            if horizontal {
+                self.extend_selection(direction == Direction::Right);
+            }
             return;
         }
+        // A copy that cannot be made, every band not fitting, moves nothing either.
+        if verb == Verb::Duplicate && self.copy.is_none() && !self.start_copy_selection() {
+            return;
+        }
+        if verb == Verb::Move && horizontal && self.edge.is_some() {
+            self.step_one(verb, step, direction);
+        } else {
+            self.group_edit(selection::Writer::Send, |app| {
+                app.step_one(verb, step, direction);
+            });
+        }
+    }
+
+    /// One arrow on the primary.
+    fn step_one(&mut self, verb: Verb, step: Size, direction: Direction) {
         let Some(slot) = self.selected else {
             // No band: MOVE walks the keyboard's place along the line.
             if verb == Verb::Move && matches!(direction, Direction::Left | Direction::Right) {
@@ -1981,30 +2023,6 @@ impl EqApp {
             self.focus_freq = self.clamp_freq(moved);
         }
         self.send_plain(q_index, q);
-    }
-
-    /// DUPLICATE's first arrow: the selected band, copied into the lowest Off slot inside the
-    /// gesture, and the copy selected so the arrows take it. Its end keeps the copy; BACK takes it
-    /// away again. Whether a copy was made.
-    fn start_copy(&mut self) -> bool {
-        let Some(original) = self.selected else {
-            return false;
-        };
-        let Some(slot) = self.free_slot() else {
-            return false;
-        };
-        let band = self.band_now(original);
-        let dynamics = self.dynamics_now(original);
-        let keyed = self.key_now(original);
-        let placement = self.placement_now(original);
-        self.close_open();
-        for (index, value) in self.slot_writes(slot, band, dynamics, keyed, placement) {
-            self.send(index, value);
-        }
-        self.copy = Some((slot, original));
-        self.selected = Some(slot);
-        self.edge = None;
-        true
     }
 
     /// The analyser's settings change: saved with the project, which is marked dirty.

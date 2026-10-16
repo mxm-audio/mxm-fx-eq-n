@@ -2456,10 +2456,11 @@ fn an_unheard_band_has_no_range_line() {
 }
 
 /// **MENU on the graph opens the selected band's menu** (mxm-keys' MENU: the right-click menu of
-/// what the cursor is on), the one a right-click opens; with no band selected it opens none.
+/// what the cursor is on), the one a right-click opens; with no band selected, the background's,
+/// Paste and Select all (plan §7.9).
 #[test]
 fn menu_on_the_graph_opens_the_selected_band_s_menu() {
-    let menu_shown = |rig: &mut Rig| {
+    let menu_shows = |rig: &mut Rig, item: &str| {
         let output = rig.frame(Rig::opening(), Vec::new());
         output
             .platform_output
@@ -2468,7 +2469,7 @@ fn menu_on_the_graph_opens_the_selected_band_s_menu() {
                 update
                     .nodes
                     .iter()
-                    .any(|(_, node)| node.label().is_some_and(|label| label == "Delete"))
+                    .any(|(_, node)| node.label().is_some_and(|label| label == item))
             })
     };
     let mut rig = Rig::new();
@@ -2476,12 +2477,17 @@ fn menu_on_the_graph_opens_the_selected_band_s_menu() {
     rig.press(Vec::new());
     rig.press(Vec::new());
     rig.type_keys(&[job_key(MENU)]);
-    assert!(!menu_shown(&mut rig), "no band, no menu");
+    assert!(
+        menu_shows(&mut rig, "Select all") && !menu_shows(&mut rig, "Delete"),
+        "no band: the background's menu"
+    );
+    rig.type_keys(&[job_key(BACK)]);
+    rig.press(Vec::new());
     rig.type_keys(&[job_key(ADD)]);
     rig.press(Vec::new());
     assert_eq!(rig.app.selected, Some(0));
     rig.type_keys(&[job_key(MENU)]);
-    assert!(menu_shown(&mut rig), "the band's menu");
+    assert!(menu_shows(&mut rig, "Delete"), "the band's menu");
     assert_eq!(rig.app.context_slot, Some(0));
 }
 
@@ -3917,4 +3923,437 @@ fn the_hosts_track_name_names_this_instance() {
 fn the_auto_gain_hover_gives_the_make_up() {
     assert!(column::auto_gain_hover(true, -3.04).ends_with("Now -3.0 dB."));
     assert!(!column::auto_gain_hover(false, 0.0).contains("Now"));
+}
+
+// ---- several bands (plan §7.9) ------------------------------------------------------------
+
+const SELECT: Job = Job::Verb(mxm_keys::Verb::Select);
+
+/// Bells at `bands` (frequency, gain), each in the lowest free slot, the selection then none.
+fn with_bells(rig: &mut Rig, bands: &[(f32, f32)]) -> Vec<usize> {
+    rig.press(Vec::new());
+    let slots: Vec<usize> = bands
+        .iter()
+        .map(|&(freq, gain)| {
+            let slot = rig.app.insert_at(freq).expect("a free slot");
+            let index = band_index(slot, Field::Gain);
+            let value = rig.app.normalised(index, gain);
+            rig.app.instant(&[(index, value)]);
+            slot
+        })
+        .collect();
+    rig.app.select_none();
+    rig.press(Vec::new());
+    slots
+}
+
+/// A pointer event with `modifiers` held, as a host's window sends one.
+fn pointer_with(
+    at: egui::Pos2,
+    pressed: Option<bool>,
+    modifiers: egui::Modifiers,
+) -> Vec<egui::Event> {
+    let mut events = vec![
+        egui::Event::ModifiersChanged(modifiers),
+        egui::Event::PointerMoved(at),
+    ];
+    if let Some(pressed) = pressed {
+        events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+    }
+    events
+}
+
+/// The clipboard is the process's (decision 46), so the tests that use it take turns, each from
+/// an empty one.
+fn clipboard_turn() -> std::sync::MutexGuard<'static, ()> {
+    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let turn = TURN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    super::selection::clear_clipboard();
+    turn
+}
+
+fn point_of(rig: &Rig, slot: usize) -> egui::Pos2 {
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    rig.app.point_position(&axes, &rig.band(slot))
+}
+
+/// A drag from `from` to `to` in eight steps, then let go.
+fn drag_between(rig: &mut Rig, from: egui::Pos2, to: egui::Pos2) {
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=8 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 8.0), None));
+    }
+    rig.press(pointer(to, Some(false)));
+}
+
+/// **The selection by the mouse** (plan §7.9, decision 44): a click selects one point alone;
+/// Shift-click adds one, the primary moving to it, and takes one out, the primary the nearest
+/// left, writing nothing; a rectangle dragged on the background selects what it takes in; a click
+/// on the background selects none.
+#[test]
+fn the_mouse_selects_several_bands() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(100.0, 3.0), (400.0, -3.0), (1_600.0, 6.0)]);
+    let depth = rig.depth();
+    let shift = egui::Modifiers::SHIFT;
+    rig.press(pointer(point_of(&rig, slots[0]), Some(true)));
+    rig.press(pointer(point_of(&rig, slots[0]), Some(false)));
+    assert_eq!(rig.app.selection(), vec![slots[0]]);
+    rig.press(pointer_with(point_of(&rig, slots[2]), Some(true), shift));
+    rig.press(pointer_with(point_of(&rig, slots[2]), Some(false), shift));
+    assert_eq!(rig.app.selection(), vec![slots[0], slots[2]]);
+    assert_eq!(
+        rig.app.selected,
+        Some(slots[2]),
+        "the primary moves to the one added"
+    );
+    rig.press(pointer_with(point_of(&rig, slots[2]), Some(true), shift));
+    rig.press(pointer_with(point_of(&rig, slots[2]), Some(false), shift));
+    assert_eq!(rig.app.selection(), vec![slots[0]]);
+    assert_eq!(rig.app.selected, Some(slots[0]), "the nearest left");
+    assert_eq!(rig.depth(), depth, "selecting writes nothing");
+
+    // A rectangle from the background's top left past the two lower points.
+    rig.press(pointer_with(rig.app.graph_rect.center(), None, NONE));
+    let corner = rig.app.graph_rect.left_top() + egui::vec2(4.0, 4.0);
+    let past = egui::pos2(
+        point_of(&rig, slots[1]).x + 6.0,
+        rig.app.graph_rect.bottom() - 4.0,
+    );
+    drag_between(&mut rig, corner, past);
+    assert_eq!(rig.app.selection(), vec![slots[0], slots[1]]);
+    assert_eq!(
+        rig.app.selected,
+        Some(slots[0]),
+        "the primary kept, still selected"
+    );
+    assert_eq!(rig.depth(), depth);
+
+    // A click on the background: none.
+    let empty = egui::pos2(
+        rig.app.graph_rect.right() - 10.0,
+        rig.app.graph_rect.top() + 10.0,
+    );
+    rig.press(pointer(empty, Some(true)));
+    rig.press(pointer(empty, Some(false)));
+    assert!(rig.app.selection().is_empty());
+}
+
+/// **The selection by the keyboard** (plan §7.9): SELECT with → and ← adds the next band along
+/// the axis not selected yet, the primary moving to it, passing over the selected; from the
+/// keyboard's place with none selected; nothing past the end. Ctrl/Cmd+A selects every band.
+#[test]
+fn the_keyboard_selects_several_bands() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(100.0, 3.0), (400.0, -3.0), (1_600.0, 6.0)]);
+    rig.app.focus_freq = 50.0;
+    rig.hold(&[SELECT], &[Key::ArrowRight]);
+    assert_eq!(
+        rig.app.selection(),
+        vec![slots[0]],
+        "from the keyboard's place"
+    );
+    rig.hold(&[SELECT], &[Key::ArrowRight, Key::ArrowRight]);
+    assert_eq!(rig.app.selection(), slots);
+    assert_eq!(rig.app.selected, Some(slots[2]));
+    rig.hold(&[SELECT], &[Key::ArrowRight]);
+    assert_eq!(rig.app.selection(), slots, "nothing past the end");
+    rig.app.select(slots[1]);
+    rig.hold(&[SELECT], &[Key::ArrowLeft]);
+    rig.hold(&[SELECT], &[Key::ArrowRight]);
+    assert_eq!(
+        rig.app.selection(),
+        slots,
+        "back the other way past the selected"
+    );
+    rig.app.select_none();
+    rig.press(vec![key(Key::A, true, egui::Modifiers::COMMAND)]);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.selection(), slots, "Ctrl/Cmd+A");
+}
+
+/// **A group moves with its primary** (plan §7.9, decision 45): a drag moves every frequency by
+/// one ratio and every gain by one offset, one undo step; at a member's limit the whole group
+/// stops; a cut in the group keeps its gain.
+#[test]
+fn a_group_moves_by_one_ratio_and_one_offset() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    let cut = rig.app.insert_at(3_000.0).unwrap();
+    rig.app.set_shape(cut, Shape::HighCut);
+    rig.app
+        .select_set(&[slots[0], slots[1], cut], Some(slots[0]));
+    rig.press(Vec::new());
+    let depth = rig.depth();
+    let axes = graph::Axes::new(rig.app.graph_rect, rig.app.high());
+    let from = point_of(&rig, slots[0]);
+    drag_between(&mut rig, from, egui::pos2(axes.x(400.0), axes.y(6.0)));
+    let (a, b, c) = (rig.band(slots[0]), rig.band(slots[1]), rig.band(cut));
+    assert!((a.freq / 400.0 - 1.0).abs() < 0.03, "{}", a.freq);
+    assert!(
+        (b.freq / a.freq / 4.0 - 1.0).abs() < 0.01,
+        "one ratio: {}",
+        b.freq
+    );
+    assert!(
+        (c.freq / a.freq / 15.0 - 1.0).abs() < 0.01,
+        "one ratio: {}",
+        c.freq
+    );
+    assert!(((b.gain_db - a.gain_db) + 9.0).abs() < 0.05, "one offset");
+    assert_eq!(c.gain_db, 0.0, "a cut has no gain to move");
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+    assert!(rig.gestures_balanced());
+
+    // Up past +30 dB: the upper band reaches it first, and the group stops there together.
+    let from = point_of(&rig, slots[1]);
+    drag_between(&mut rig, from, egui::pos2(from.x, axes.y(30.0)));
+    let (a, b) = (rig.band(slots[0]), rig.band(slots[1]));
+    assert!((a.gain_db - 30.0).abs() < 0.05, "{}", a.gain_db);
+    assert!(
+        ((b.gain_db - a.gain_db) + 9.0).abs() < 0.05,
+        "kept apart: {}",
+        b.gain_db
+    );
+}
+
+/// **The keys and the card move the group too** (plan §7.9): EXTENT's Q by one factor on the
+/// bands with a Q, a 6 dB/oct cut keeping its own; a shape from the card set on every band, one
+/// undo step.
+#[test]
+fn the_keys_and_the_card_move_the_group() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    let cut = rig.app.insert_at(3_000.0).unwrap();
+    rig.app.set_shape(cut, Shape::HighCut);
+    rig.app.set_slope(cut, Slope::Db6);
+    rig.app
+        .select_set(&[slots[0], slots[1], cut], Some(slots[0]));
+    rig.press(Vec::new());
+    let (q0, q1, qc) = (rig.band(slots[0]).q, rig.band(slots[1]).q, rig.band(cut).q);
+    let extent = Job::Verb(mxm_keys::Verb::Extent);
+    rig.hold(&[extent], &[Key::ArrowLeft]);
+    let ratio = rig.band(slots[0]).q / q0;
+    assert!(ratio > 1.01, "narrower: {ratio}");
+    assert!((rig.band(slots[1]).q / q1 / ratio - 1.0).abs() < 1e-3);
+    assert_eq!(rig.band(cut).q, qc, "no Q on a 6 dB/oct cut");
+
+    let depth = rig.depth();
+    rig.app
+        .group_edit(super::selection::Writer::Instant, |app| {
+            app.set_shape(slots[0], Shape::LowShelf);
+        });
+    rig.press(Vec::new());
+    for slot in [slots[0], slots[1], cut] {
+        assert_eq!(rig.band(slot).shape, Some(Shape::LowShelf), "{slot}");
+    }
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **DELETE and DUPLICATE take the whole selection** (plan §7.9): DUPLICATE copies the bands in
+/// slot order onto free slots in theirs, the copy of the primary primary; DELETE turns every
+/// selected band Off in one undo step; with too few free slots DUPLICATE copies nothing.
+#[test]
+fn delete_and_duplicate_take_the_whole_selection() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
+    rig.app.select_set(&[slots[0], slots[2]], Some(slots[2]));
+    let duplicate = Job::Verb(mxm_keys::Verb::Duplicate);
+    rig.hold(&[duplicate], &[Key::ArrowUp]);
+    assert_eq!(rig.app.selection().len(), 2);
+    assert_eq!(
+        rig.app.selected,
+        Some(4),
+        "the copy of the primary, in the second free slot"
+    );
+    assert_eq!(rig.band(3).freq, rig.band(slots[0]).freq);
+    assert!((rig.band(4).gain_db - rig.band(slots[2]).gain_db - 0.5).abs() < 0.05);
+
+    let depth = rig.depth();
+    rig.type_keys(&[job_key(DELETE)]);
+    assert!(rig.band(3).shape.is_none() && rig.band(4).shape.is_none());
+    assert!(rig.band(slots[0]).shape.is_some(), "the originals stay");
+    assert_eq!(rig.depth(), depth + 1);
+
+    // One free slot for two bands: refused whole.
+    while rig.app.free_slot_exists() {
+        rig.app.insert_at(5_000.0);
+    }
+    rig.app.delete(23);
+    rig.press(Vec::new());
+    rig.app.select_set(&[slots[0], slots[1]], Some(slots[0]));
+    let depth = rig.depth();
+    rig.hold(&[duplicate], &[Key::ArrowUp]);
+    assert_eq!(rig.app.selection(), vec![slots[0], slots[1]]);
+    assert_eq!(rig.depth(), depth, "nothing copied, no undo step");
+}
+
+/// **Copy, cut and paste** (plan §7.9, decision 46): every field copied, pasted in slot order onto
+/// the free slots in theirs, the copy of the primary primary, one undo step, from one editor into
+/// another in the process; refused whole when they do not fit, the selection and the history as
+/// they were; nothing while a value is being typed; Cut copies and deletes.
+#[test]
+fn copy_cut_and_paste_carry_every_field() {
+    let _turn = clipboard_turn();
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    rig.app
+        .set_placement(slots[1], mxm_fx_eq_n_dsp::Placement::Mid);
+    rig.app.select_set(&slots, Some(slots[1]));
+    rig.press(vec![key(Key::C, true, egui::Modifiers::COMMAND)]);
+    rig.press(Vec::new());
+
+    let mut other = Rig::new();
+    with_bells(&mut other, &[(5_000.0, 1.0)]);
+    let depth = other.depth();
+    other.press(vec![key(Key::V, true, egui::Modifiers::COMMAND)]);
+    other.press(Vec::new());
+    assert_eq!(other.depth(), depth + 1, "one undo step");
+    assert_eq!(other.app.selection(), vec![1, 2]);
+    assert_eq!(other.app.selected, Some(2), "the copy of the primary");
+    for (from, to) in [(slots[0], 1), (slots[1], 2)] {
+        for field in 0..BAND_FIELDS.len() {
+            let (a, b) = (
+                band_index(from, Field::Type) + field,
+                band_index(to, Field::Type) + field,
+            );
+            assert_eq!(
+                rig.app.normalised_now(a),
+                other.app.normalised_now(b),
+                "field {field} of band {from}"
+            );
+        }
+        assert_eq!(rig.app.placement_now(from), other.app.placement_now(to));
+    }
+
+    // Refused whole when they do not fit.
+    while other.app.free_slot_exists() {
+        other.app.insert_at(9_000.0);
+    }
+    other.app.delete(23);
+    other.app.select(0);
+    other.press(Vec::new());
+    let depth = other.depth();
+    assert_eq!(other.app.paste(), Err(super::selection::PasteRefusal::Full));
+    assert_eq!((other.app.selection(), other.depth()), (vec![0], depth));
+
+    // While a value is typed the shortcuts are the text field's.
+    rig.app.text.insert("freq", Some("12".to_owned()));
+    let selection = rig.app.selection();
+    rig.press(vec![key(Key::X, true, egui::Modifiers::COMMAND)]);
+    rig.app.text.insert("freq", None);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.selection(), selection, "typing: nothing cut");
+    rig.press(vec![key(Key::X, true, egui::Modifiers::COMMAND)]);
+    rig.press(Vec::new());
+    assert!(rig.band(slots[0]).shape.is_none() && rig.band(slots[1]).shape.is_none());
+}
+
+/// **Copies from two threads at once** never mix: the clipboard holds one of them whole.
+#[test]
+fn the_clipboard_takes_one_copy_whole_from_two_threads() {
+    let _turn = clipboard_turn();
+    let copies: Vec<Vec<f32>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = [(200.0f32, 2usize), (900.0, 3)]
+            .into_iter()
+            .map(|(freq, count)| {
+                scope.spawn(move || {
+                    let mut rig = Rig::new();
+                    let bands: Vec<(f32, f32)> =
+                        (0..count).map(|n| (freq * (n + 1) as f32, 1.0)).collect();
+                    let slots = with_bells(&mut rig, &bands);
+                    rig.app.select_set(&slots, None);
+                    rig.app.copy_selection();
+                    slots
+                        .iter()
+                        .map(|&slot| rig.band(slot).freq)
+                        .collect::<Vec<f32>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.paste().unwrap();
+    rig.press(Vec::new());
+    let pasted: Vec<f32> = rig
+        .app
+        .selection()
+        .iter()
+        .map(|&slot| rig.band(slot).freq)
+        .collect();
+    assert!(copies.contains(&pasted), "{pasted:?} against {copies:?}");
+}
+
+/// **Invert gain** turns every selected gain over in one undo step; a right-click on a selected
+/// point makes it the primary of the selection; on one not selected, it selects that one alone,
+/// so its Delete touches nothing else.
+#[test]
+fn invert_gain_and_the_point_s_menu_act_on_the_selection() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
+    rig.app.select_set(&[slots[0], slots[1]], Some(slots[0]));
+    let depth = rig.depth();
+    rig.app.invert_selection();
+    rig.press(Vec::new());
+    assert_eq!(
+        (rig.band(slots[0]).gain_db, rig.band(slots[1]).gain_db),
+        (-3.0, 6.0)
+    );
+    assert_eq!(rig.band(slots[2]).gain_db, 2.0);
+    assert_eq!(rig.depth(), depth + 1);
+
+    let right_click = |rig: &mut Rig, at: egui::Pos2| {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: NONE,
+        };
+        rig.press(vec![egui::Event::PointerMoved(at), button(true)]);
+        rig.press(vec![button(false)]);
+    };
+    let at = point_of(&rig, slots[1]);
+    right_click(&mut rig, at);
+    assert_eq!(rig.app.selection(), vec![slots[0], slots[1]]);
+    assert_eq!(
+        rig.app.selected,
+        Some(slots[1]),
+        "the point right-clicked is the primary"
+    );
+    let at = point_of(&rig, slots[2]);
+    right_click(&mut rig, at);
+    assert_eq!(rig.app.selection(), vec![slots[2]], "selected alone first");
+    rig.app.delete_selection();
+    rig.press(Vec::new());
+    assert!(rig.band(slots[2]).shape.is_none());
+    assert!(rig.band(slots[0]).shape.is_some() && rig.band(slots[1]).shape.is_some());
+}
+
+/// **The title counts the selection** (plan §7.9).
+#[test]
+fn the_title_counts_the_selection() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
+    rig.app.select_set(&slots, Some(slots[1]));
+    assert_eq!(
+        column::band_title(&rig.app),
+        format!("Band {} + 2", slots[1] + 1)
+    );
+    rig.app.select(slots[0]);
+    assert_eq!(
+        column::band_title(&rig.app),
+        format!("Band {}", slots[0] + 1)
+    );
 }

@@ -525,10 +525,12 @@ pub fn band_tree(app: &EqApp) -> Node<Leaf> {
     tree::reserve(shown, alternatives)
 }
 
+/// The Band card's title: the primary's number, and how many more are selected (plan §7.9).
 pub fn band_title(app: &EqApp) -> String {
-    match app.selected {
-        Some(slot) => format!("Band {}", slot + 1),
-        None => "Band —".to_owned(),
+    match (app.selected, app.others_selected().len()) {
+        (Some(slot), 0) => format!("Band {}", slot + 1),
+        (Some(slot), more) => format!("Band {} + {more}", slot + 1),
+        (None, _) => "Band —".to_owned(),
     }
 }
 
@@ -879,7 +881,24 @@ impl EqApp {
         .rect
     }
 
+    /// A leaf of a card. A band field's edit moves the rest of the selection with the primary,
+    /// in the same undo step (plan §7.9).
     pub(crate) fn paint_leaf(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf, rect: Rect) {
+        let band_field = match leaf {
+            Leaf::Bypass | Leaf::Shape | Leaf::Slope | Leaf::Placement | Leaf::SideChain => true,
+            Leaf::Slider(slider) => slider.of_the_band(),
+            _ => false,
+        };
+        if band_field {
+            self.group_edit(super::selection::Writer::Instant, |app| {
+                app.paint_leaf_alone(ui, tokens, leaf, rect);
+            });
+        } else {
+            self.paint_leaf_alone(ui, tokens, leaf, rect);
+        }
+    }
+
+    fn paint_leaf_alone(&mut self, ui: &mut Ui, tokens: &Tokens, leaf: Leaf, rect: Rect) {
         let gui = self.gui.clone();
         let Some(gui) = gui else {
             return;
@@ -1136,7 +1155,8 @@ impl EqApp {
                         response.clicked()
                     });
                     if clicked {
-                        self.delete(slot);
+                        let _ = slot;
+                        self.delete_selection();
                     }
                 }
             }
