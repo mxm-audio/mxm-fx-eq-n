@@ -159,7 +159,9 @@ impl EqApp {
         let removed = |app: &Self, slot: Option<usize>| slot.is_some_and(|s| !app.band_in_use(s));
         let dragged = self.drag.as_ref().map(|drag| drag.slot);
         let open = history::lock(&self.history).gesture_open() || !self.open.is_empty();
-        if (removed(self, self.selected) || removed(self, dragged)) && open {
+        // Any band of the selection turned Off takes the group's gesture with it (plan §7.9).
+        let follower_gone = self.others.iter().any(|&slot| !self.band_in_use(slot));
+        if (removed(self, self.selected) || removed(self, dragged) || follower_gone) && open {
             self.abandon_gesture(&ctx);
         }
         if removed(self, self.selected) {

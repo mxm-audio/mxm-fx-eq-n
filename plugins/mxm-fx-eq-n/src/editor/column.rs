@@ -131,6 +131,8 @@ const GAIN_SCALE_UNHEARD: &str = concat!(
     "changes nothing now; cuts, notches and band passes stay as drawn."
 );
 const DELETE_DESCRIPTION: &str = "Removes the band. Undo brings it back.";
+const DELETE_GROUP_DESCRIPTION: &str =
+    "Removes every selected band, the one shown and the others. Undo brings them back.";
 const FREEZE_DESCRIPTION: &str = "Holds the spectrum's highest levels of the last two seconds and \
      marks its peaks. Drag a peak to make a bell there. Any analyser change lets it run again.";
 const SIDE_CHAIN_VIEW_DESCRIPTION: &str = "Shows the side-chain input's spectrum as a dashed line, \
@@ -525,6 +527,23 @@ pub fn band_tree(app: &EqApp) -> Node<Leaf> {
     tree::reserve(shown, alternatives)
 }
 
+/// The title's hover with a group (plan §7.9): every band in it, and which one the card shows.
+pub fn group_names(app: &EqApp) -> Option<String> {
+    let primary = app.selected?;
+    let selection = app.selection();
+    (selection.len() > 1).then(|| {
+        let numbers: Vec<String> = selection
+            .iter()
+            .map(|slot| (slot + 1).to_string())
+            .collect();
+        format!(
+            "Bands {} are selected; the card shows band {}, and an edit moves them all.",
+            numbers.join(", "),
+            primary + 1
+        )
+    })
+}
+
 /// The Band card's title: the primary's number, and how many more are selected (plan §7.9).
 pub fn band_title(app: &EqApp) -> String {
     match (app.selected, app.others_selected().len()) {
@@ -768,7 +787,7 @@ impl EqApp {
         // With no band selected the Band card has no controls, so it is no stop of the cursor's:
         // VIEW from the graph would land on nothing and fall back to the graph.
         let absent = self.selected.is_none().then_some(NO_BAND_DESCRIPTION);
-        self.card(
+        let rect = self.card(
             ui,
             tokens,
             BAND_CARD,
@@ -777,6 +796,18 @@ impl EqApp {
             true,
             absent,
         );
+        // With a group the title's hover names every band in it (plan §7.9).
+        if let Some(names) = group_names(self) {
+            let margin = mxm_ui::space::SPACE_5;
+            let height = ui.text_style_height(&egui::TextStyle::Heading);
+            let strip = Rect::from_min_size(
+                rect.left_top() + vec2(margin, margin),
+                vec2((rect.width() - 2.0 * margin).max(0.0), height),
+            );
+            self.band_title_rect = strip;
+            ui.interact(strip, ui.id().with("band title"), egui::Sense::hover())
+                .on_hover_text(names);
+        }
     }
 
     /// The second column: Output, Analyser, Resonances and Match, top to bottom, each one of the
@@ -836,7 +867,7 @@ impl EqApp {
         tree: impl Fn(&EqApp, &Ui) -> Node<Leaf>,
         reserved: bool,
         absent: Option<&'static str>,
-    ) {
+    ) -> Rect {
         if let Some(hover) = absent {
             navigation::bar_card_absent(ui.ctx(), key);
             let rect = self.card_body(ui, tokens, title, tree, reserved);
@@ -846,13 +877,16 @@ impl EqApp {
                 egui::Sense::hover(),
             )
             .on_hover_text(hover);
-            return;
+            return rect;
         }
+        let mut drawn = Rect::NOTHING;
         navigation::bar_card(ui, key, |ui| {
             let rect = self.card_body(ui, tokens, title, tree, reserved);
             navigation::paint_card(ui, tokens, key, rect);
+            drawn = rect;
             rect
         });
+        drawn
     }
 
     fn card_body(
@@ -1144,13 +1178,20 @@ impl EqApp {
             }
             Leaf::Delete => {
                 if let Some(slot) = selected {
+                    // With a group it deletes the whole selection, and says so (plan §7.9).
+                    let group = !self.others_selected().is_empty();
+                    let (label, description) = if group {
+                        ("Delete bands", DELETE_GROUP_DESCRIPTION)
+                    } else {
+                        ("Delete band", DELETE_DESCRIPTION)
+                    };
                     let clicked = navigation::at(ui, "delete", |ui| {
                         let response = ui
                             .add(
-                                egui::Button::new("Delete band")
+                                egui::Button::new(label)
                                     .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
                             )
-                            .on_hover_text(DELETE_DESCRIPTION);
+                            .on_hover_text(description);
                         navigation::mark_unclaimed(ui, response.id, response.rect);
                         response.clicked()
                     });

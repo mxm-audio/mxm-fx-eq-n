@@ -5,7 +5,11 @@
 three blockers — the selection's primary and order, the shortcuts against the shared keymap, F8.3's
 gate — and round 2's, a point's menu against the selection, with their other findings, all
 accepted and applied here. **Signed by the owner** (2026-10-16, *"Approve all and build"*, decisions
-44–47 as proposed); F8.0 done. **F8.1–F8.3 built** (2026-10-16); their code review is next. **Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
+44–47 as proposed); F8.0 done. **F8.1–F8.3 built and reviewed** (2026-10-16; the agent-loop's
+code review READY in round 4: the history held by a counter, not a parameter; a group's limits read
+frequencies as they run; the selection sorted before it is deduplicated; the title's hover naming
+the group; a follower's gesture abandoned with the primary's; a card slider's group stopping at a
+limit inside its own gesture); F8.4, Bitwig, is the owner's. **Revision 30 — F7, auto gain and other tracks' spectra, designed for the owner's approval**
 (2026-10-16; §7.8, decisions 38–43): of F7's four candidates the owner chose these two
 (2026-10-16). **Its design approved by the agent-loop in round 2** (2026-10-16): round 1's three
 blockers — collisions marked on silence, the make-up's composition with Output gain, F7.4's gate —
@@ -1782,8 +1786,7 @@ solo plays and the keyboard's MOVE edge takes. Editor state, never saved, never 
   or a paste, the copy of the primary that was copied.
 - **Drawn**: every selected point ringed as the selected one is now, the primary's ring twice as
   thick; the rectangle a dashed outline. Never a hue. The Band card's title reads "Band 3 + 2" with
-  two more selected (found building it: mxm-ui's card title takes no hover, so none names them;
-  the rings show which).
+  two more selected, its hover naming them.
 
 **Relative editing** (decision 45): an edit of the primary, by drag, wheel, arrows or the Band
 card, moves every selected band with it, so the curve keeps its shape:

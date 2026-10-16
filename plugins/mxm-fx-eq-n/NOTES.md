@@ -358,19 +358,28 @@ and `audition.rs`'s tests hold the lifecycle.
     and the change carried to the others where they have the field, by one ratio (frequency, Q,
     Attack, Release), one offset (gain, Range, Threshold) or set (the discrete fields), held so the
     first member to meet a limit stops the group, the primary pulled back with it. Written as the
-    edit was: `send` inside a drag's, the wheel's or the keys' gesture; for the card's controls and
-    the menu, which close their own action, the history is held open around the edit
-    (`History::begin` on the output's index, an unchanged parameter dropping out), so the edit and
-    the group's writes are one undo step. §7.5's proposal pairs are groups now; `Drag.partner` is
-    gone.
+    edit was: `send` inside a drag's, the wheel's or the keys' gesture (`Writer::Send`); the card's
+    band controls, whose writes close their own action, are wrapped in `group_edit(Instant)`, which
+    holds the history open (`History::hold`/`release`, no parameter) so the control's write and the
+    group's are one undo step. The menu's commands (a shape, Copy, Cut, Paste, Invert gain, Delete)
+    are not group edits: each writes every selected band itself in one `instant`. §7.5's proposal
+    pairs are groups now; `Drag.partner` is gone. A parameter a control already holds open (the
+    primary's, pulled back at a limit during a card slider's gesture) is set inside that gesture,
+    never begun again (code review, 2026-10-16).
   - *Copy and paste*: twelve normalised values per band, in slot order, and the primary's place;
     pasted onto the lowest Off slots in slot order, all or nothing. The clipboard is a static
     mutex, so every instance in the process shares it, and the tests that use it take turns
     (`clipboard_turn`). Ctrl/Cmd+A, C, X, V are read where undo is (`handle_shortcuts`), as
     newDAWn's standard shortcuts outside the keymap, and not while a value is typed (`inert`);
     egui-baseview sends each as a key press.
-  - *Not built as the plan wrote it*: the Band card's title counts the group ("Band 3 + 2") but
-    has no hover naming the bands: mxm-ui's card title takes none; the graph's rings show which.
+  - *The title's hover*: mxm-ui's card title takes no hover, so the editor lays a hover-only
+    strip over the title's line (`group_names`), the heading's height inside the card's padding.
+  - *The group's limits read frequencies as they run* (`plain_heard`): below a rate's top a band
+    stored above it is at the top, so it stops the group going up and is not rewritten (code
+    review, 2026-10-16).
+  - *A hold, not a parameter*: a control's instant write and the group's join one action through
+    `History::hold`/`release`, a counter, so no parameter's gesture, abandoned by a restore or not,
+    is touched (code review, 2026-10-16).
 
 **Choices made for the owner's by-eye check** (plan E0.5, moved to E3): points at their own gain;
 solo a toggle (the owner, 2026-10-14, reversing held); the bands' keys are the language's, MOVE on an edge keeping the other one.

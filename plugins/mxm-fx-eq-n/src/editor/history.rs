@@ -60,6 +60,8 @@ pub struct History {
     abandoned: Vec<usize>,
     /// Of those, the ones the editor has still to end at the host ([`take_to_end`](Self::take_to_end)).
     to_end: Vec<usize>,
+    /// Holds keeping the action open across writes that close their own ([`hold`](Self::hold)).
+    holds: u32,
 }
 
 impl History {
@@ -137,7 +139,7 @@ impl History {
         match self.open.iter_mut().find(|change| change.index == index) {
             Some(change) => change.after = normalised,
             // A write outside any begin is still an edit; it is its own action.
-            None if self.open_params.is_empty() => {
+            None if self.open_params.is_empty() && self.holds == 0 => {
                 let before = self.current(index, readback);
                 self.push(vec![Change {
                     index,
@@ -163,7 +165,12 @@ impl History {
         if let Some(at) = self.open_params.iter().position(|open| *open == index) {
             self.open_params.remove(at);
         }
-        if self.open_params.is_empty() && !self.open.is_empty() {
+        self.close_if_done();
+    }
+
+    /// The action ends once nothing is open and nothing holds it.
+    fn close_if_done(&mut self) {
+        if self.open_params.is_empty() && self.holds == 0 && !self.open.is_empty() {
             let changes: Vec<Change> = std::mem::take(&mut self.open)
                 .into_iter()
                 .filter(|change| change.before != change.after)
@@ -172,6 +179,18 @@ impl History {
                 self.push(changes);
             }
         }
+    }
+
+    /// Holds the action open, with no parameter, until [`release`](Self::release): a control's
+    /// write that closes its own action and the writes that follow it (plan §7.9, a group's edit)
+    /// are then one undo step. No parameter's gesture, abandoned or not, is touched.
+    pub fn hold(&mut self) {
+        self.holds += 1;
+    }
+
+    pub fn release(&mut self) {
+        self.holds = self.holds.saturating_sub(1);
+        self.close_if_done();
     }
 
     fn push(&mut self, action: Vec<Change>) {
@@ -655,5 +674,29 @@ mod tests {
         history.set(5, 0.4, 0.0);
         history.end(5);
         assert_eq!(history.take_undo(), Some(vec![(5, 0.3)]));
+    }
+
+    /// **A hold keeps the action open with no parameter** (plan §7.9): an instant write and the
+    /// writes after it are one action; a parameter whose gesture a restore abandoned stays
+    /// abandoned across a hold, so its control's stale writes stay dropped.
+    #[test]
+    fn a_hold_joins_instant_writes_and_touches_no_gesture() {
+        let mut history = History::default();
+        history.hold();
+        history.begin(3, 0.1);
+        history.set(3, 0.2, 0.1);
+        history.end(3);
+        history.set(9, 0.7, 0.5);
+        assert_eq!(history.depth(), 0, "held open");
+        history.release();
+        assert_eq!(history.depth(), 1, "one action");
+
+        // A control's gesture abandoned by a restore stays so across a hold.
+        history.begin(288, 0.3);
+        history.abandon_open();
+        history.hold();
+        history.release();
+        assert!(history.abandoned.contains(&288));
+        assert_eq!(history.open_params(), Vec::<usize>::new());
     }
 }

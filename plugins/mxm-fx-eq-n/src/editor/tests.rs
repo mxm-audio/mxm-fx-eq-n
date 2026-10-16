@@ -2865,6 +2865,8 @@ fn a_peak_s_label_is_part_of_the_peak() {
 /// to the next shape and Enter picks it; ↓ to Delete and Enter deletes.
 #[test]
 fn the_band_menu_walks_with_the_arrows_and_enter_picks() {
+    // Nothing copied, so Paste is disabled and the arrows pass it (plan §7.9).
+    let _turn = clipboard_turn();
     let tap = |key_: Key| vec![key(key_, true, NONE), key(key_, false, NONE)];
     let mut rig = Rig::new();
     rig.press(Vec::new());
@@ -2881,15 +2883,21 @@ fn the_band_menu_walks_with_the_arrows_and_enter_picks() {
     assert_eq!(rig.band(0).shape, Some(Shape::LowShelf), "↓ then Enter");
     assert!(!egui::Popup::is_any_open(&rig.ctx), "and the menu closed");
 
+    // From the low shelf past the shapes, then Copy, Cut and Invert gain, to Delete, the last.
     rig.type_keys(&[job_key(MENU)]);
     rig.press(Vec::new());
     rig.press(Vec::new());
-    for _ in 0..Shape::ALL.len() {
+    for _ in 0..Shape::ALL.len() + 2 {
         rig.press(tap(Key::ArrowDown));
     }
     rig.press(tap(Key::Enter));
     rig.press(Vec::new());
     assert_eq!(rig.band(0).shape, None, "Delete, reached by the arrows");
+    assert_eq!(
+        rig.app.paste_refusal(),
+        Some(super::selection::PasteRefusal::Empty),
+        "Delete, not Cut: nothing was copied"
+    );
 }
 
 /// **The display keeps nothing of before a change** (plan §7.4): a loud line drawn under one Tilt,
@@ -3253,6 +3261,11 @@ fn apply_all_a_click_and_a_drag_are_each_one_step_and_back_leaves_nothing() {
         "the pair moves together"
     );
     assert_eq!(rig.depth(), depth + 1, "the drag is one step");
+    assert_eq!(
+        rig.app.selection(),
+        vec![0, 1],
+        "a pair is a group (plan §7.9)"
+    );
 
     // BACK during the drag: nothing is left.
     let mut rig = finding_rig(found());
@@ -4293,7 +4306,16 @@ fn the_clipboard_takes_one_copy_whole_from_two_threads() {
         .iter()
         .map(|&slot| rig.band(slot).freq)
         .collect();
-    assert!(copies.contains(&pasted), "{pasted:?} against {copies:?}");
+    // Whole: one copy's bands, all of them, never a mix of the two (plain values recomputed from
+    // the normalised ones, so within rounding).
+    let same = |copy: &Vec<f32>| {
+        copy.len() == pasted.len()
+            && copy
+                .iter()
+                .zip(&pasted)
+                .all(|(a, b)| (a / b - 1.0).abs() < 1e-4)
+    };
+    assert!(copies.iter().any(same), "{pasted:?} against {copies:?}");
 }
 
 /// **Invert gain** turns every selected gain over in one undo step; a right-click on a selected
@@ -4356,4 +4378,356 @@ fn the_title_counts_the_selection() {
         column::band_title(&rig.app),
         format!("Band {}", slots[0] + 1)
     );
+}
+
+/// **A rectangle with Shift adds once** (plan §7.9): overlapping a band already selected, it is
+/// not counted twice.
+#[test]
+fn an_additive_rectangle_counts_each_band_once() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(100.0, 3.0), (400.0, -3.0), (1_600.0, 6.0)]);
+    rig.app.select_set(&[slots[0], slots[2]], Some(slots[0]));
+    let corner = rig.app.graph_rect.left_top() + egui::vec2(4.0, 4.0);
+    let past = egui::pos2(
+        point_of(&rig, slots[2]).x + 6.0,
+        rig.app.graph_rect.bottom() - 4.0,
+    );
+    let shift = egui::Modifiers::SHIFT;
+    rig.press(pointer_with(corner, Some(true), shift));
+    for step in 1..=6 {
+        rig.press(pointer_with(
+            corner + (past - corner) * (step as f32 / 6.0),
+            None,
+            shift,
+        ));
+    }
+    rig.press(pointer_with(past, Some(false), shift));
+    assert_eq!(rig.app.selection(), slots);
+    assert_eq!(rig.app.others_selected().len(), 2, "no band twice");
+    assert_eq!(
+        column::band_title(&rig.app),
+        format!("Band {} + 2", slots[0] + 1)
+    );
+}
+
+/// **A group reads frequencies as they run** (plan §7.9): below a low rate's top a band stored
+/// above it is at the top, so the group cannot go up, nothing moves the other way, and the
+/// stored band is not rewritten; down, both move by one ratio from where they run.
+#[test]
+fn a_group_reads_frequencies_as_they_run() {
+    let mut rig = Rig::new();
+    rig.app.telemetry.publish_sample_rate(22_050.0);
+    let slots = with_bells(&mut rig, &[(1_000.0, 3.0)]);
+    let high = rig.app.insert_at(2_000.0).unwrap();
+    let index = band_index(high, Field::Freq);
+    let above = rig.app.normalised(index, 30_000.0);
+    rig.app.instant(&[(index, above)]);
+    rig.app.select_set(&[slots[0], high], Some(slots[0]));
+    rig.press(Vec::new());
+    let top = rig.app.high();
+    assert!(top < 30_000.0);
+    rig.hold(&[MOVE], &[Key::ArrowRight]);
+    assert!(
+        (rig.band(slots[0]).freq / 1_000.0 - 1.0).abs() < 1e-3,
+        "{}",
+        rig.band(slots[0]).freq
+    );
+    assert_eq!(rig.app.normalised_now(index), above, "not rewritten");
+    rig.hold(&[MOVE], &[Key::ArrowLeft]);
+    let ratio = rig.band(slots[0]).freq / 1_000.0;
+    assert!(ratio < 0.99, "{ratio}");
+    assert!(
+        (rig.band(high).freq / top / ratio - 1.0).abs() < 0.01,
+        "{}",
+        rig.band(high).freq
+    );
+}
+
+/// **The wheel, the dynamics and a typed value move the group** (plan §7.9): the wheel's Q by one
+/// factor; Range by one offset and Attack by one factor within their ranges; a value typed into
+/// the card, entered, moves the others in the same undo step.
+#[test]
+fn the_wheel_the_dynamics_and_a_typed_value_move_the_group() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    rig.app.select_set(&slots, Some(slots[0]));
+    rig.press(Vec::new());
+    let (q0, q1) = (rig.band(slots[0]).q, rig.band(slots[1]).q);
+    let at = point_of(&rig, slots[0]);
+    let alt = egui::Modifiers::ALT;
+    rig.press(vec![
+        egui::Event::ModifiersChanged(alt),
+        egui::Event::PointerMoved(at),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: alt,
+        },
+    ]);
+    rig.press(vec![egui::Event::ModifiersChanged(NONE)]);
+    let ratio = rig.band(slots[0]).q / q0;
+    assert!((ratio - 1.0).abs() > 0.01, "{ratio}");
+    assert!((rig.band(slots[1]).q / q1 / ratio - 1.0).abs() < 1e-3);
+    assert_eq!(rig.app.selection(), slots, "the wheel keeps the group");
+    // The wheel's gesture ends after a pause; here at once.
+    rig.app.close_open();
+    rig.press(Vec::new());
+
+    // The card's dynamics, as their sliders write: Range by an offset, Attack by a factor.
+    let range = |slot| dynamics_index(slot, DynamicsField::Range);
+    let attack = |slot| dynamics_index(slot, DynamicsField::Attack);
+    let depth = rig.depth();
+    let (r1, a1) = (
+        rig.app.current_plain(range(slots[1])),
+        rig.app.current_plain(attack(slots[1])),
+    );
+    rig.app
+        .group_edit(super::selection::Writer::Instant, |app| {
+            let writes = [
+                (range(slots[0]), app.normalised(range(slots[0]), -6.0)),
+                (attack(slots[0]), app.normalised(attack(slots[0]), 20.0)),
+            ];
+            app.instant(&writes);
+        });
+    rig.press(Vec::new());
+    let (r0, a0) = (-6.0, 20.0);
+    let range_before = 0.0;
+    assert!((rig.app.current_plain(range(slots[1])) - (r1 + (r0 - range_before))).abs() < 0.01);
+    let attack_default = rig.app.params.dynamics[slots[0]]
+        .attack
+        .default_plain_value();
+    let factor = a0 / attack_default;
+    assert!((rig.app.current_plain(attack(slots[1])) / a1 / factor - 1.0).abs() < 0.01);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+
+    // A typed frequency, entered, as the card's typed entry writes it.
+    let depth = rig.depth();
+    let freq = |slot| band_index(slot, Field::Freq);
+    let (f0, f1) = (rig.band(slots[0]).freq, rig.band(slots[1]).freq);
+    rig.app
+        .group_edit(super::selection::Writer::Instant, |app| {
+            let value = app.normalised(freq(slots[0]), f0 * 2.0);
+            app.instant(&[(freq(slots[0]), value)]);
+        });
+    rig.press(Vec::new());
+    assert!((rig.band(slots[1]).freq / f1 / 2.0 - 1.0).abs() < 0.01);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **A point's menu offers the selection's items** (plan §7.9): Copy, Cut, Paste, Invert gain and
+/// Delete, Paste disabled with nothing copied.
+#[test]
+fn a_point_s_menu_offers_the_selection_s_items() {
+    let _turn = clipboard_turn();
+    let mut rig = Rig::new();
+    rig.ctx.enable_accesskit();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    rig.app.select_set(&slots, Some(slots[0]));
+    rig.type_keys(&[job_key(MENU)]);
+    let output = rig.frame(Rig::opening(), Vec::new());
+    let update = output.platform_output.accesskit_update.expect("an update");
+    let labelled = |item: &str| {
+        update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label().is_some_and(|label| label == item))
+            .map(|(_, node)| node.is_disabled())
+    };
+    for item in ["Copy", "Cut", "Invert gain", "Delete"] {
+        assert_eq!(labelled(item), Some(false), "{item}");
+    }
+    assert_eq!(labelled("Paste"), Some(true), "nothing copied");
+}
+
+/// The texts and the outlined circles a frame painted.
+fn painted(output: &egui::FullOutput) -> (Vec<String>, Vec<(f32, f32)>) {
+    let mut texts = Vec::new();
+    let mut rings = Vec::new();
+    for clipped in &output.shapes {
+        match &clipped.shape {
+            egui::epaint::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+            egui::epaint::Shape::Circle(circle)
+                if circle.fill == egui::Color32::TRANSPARENT && circle.stroke.width > 0.0 =>
+            {
+                rings.push((circle.radius, circle.stroke.width));
+            }
+            _ => {}
+        }
+    }
+    (texts, rings)
+}
+
+/// **The card's own controls move the group** (plan §7.9): its Threshold slider, operated by the
+/// cursor as any control is (VALUE, ↑, OUT), moves the other band's Threshold by the same offset;
+/// its Bypass toggle, an instant write, bypasses both; each one undo step.
+#[test]
+fn the_card_s_own_controls_move_the_group() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    rig.app.select_set(&slots, Some(slots[0]));
+    rig.press(Vec::new());
+    rig.view(Key::ArrowRight);
+    if rig.app.nav.card() != Some(BAND_CARD) {
+        rig.view(Key::ArrowLeft);
+    }
+    rig.up_to_the_band_card();
+    let reach = |rig: &mut Rig, target: &str, arrow: Key| {
+        let mut seen = Vec::new();
+        for _ in 0..16 {
+            if rig.app.nav.parameter() == Some(target) {
+                return;
+            }
+            seen.push(rig.app.nav.parameter().map(str::to_owned));
+            rig.type_keys(&[arrow]);
+        }
+        panic!("the arrows never reach {target}: {seen:?}");
+    };
+    let range = |slot| dynamics_index(slot, DynamicsField::Threshold);
+    reach(&mut rig, "threshold_1", Key::ArrowDown);
+    let (before0, before1) = (
+        rig.app.current_plain(range(slots[0])),
+        rig.app.current_plain(range(slots[1])),
+    );
+    let depth = rig.depth();
+    let value = Job::Verb(mxm_keys::Verb::Value);
+    rig.type_keys(&[job_key(value), Key::ArrowUp, job_key(Job::Out)]);
+    let moved = rig.app.current_plain(range(slots[0])) - before0;
+    assert!(moved.abs() > 0.01, "the slider moved: {moved}");
+    let followed = rig.app.current_plain(range(slots[1])) - before1;
+    assert!(
+        (followed - moved).abs() < 0.01,
+        "{followed} against {moved}"
+    );
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+
+    // Bypass shares its row with Placement: up to the row, then ← along it.
+    reach(&mut rig, "place_1", Key::ArrowUp);
+    reach(&mut rig, "bypass_1", Key::ArrowLeft);
+    let depth = rig.depth();
+    rig.type_keys(&[Key::Enter]);
+    rig.press(Vec::new());
+    assert!(rig.band(slots[0]).bypass && rig.band(slots[1]).bypass);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **What a selection paints** (plan §7.9): a ring round every selected point, the primary's
+/// twice as thick; the rectangle while it is dragged; the title's hover naming the bands.
+#[test]
+fn a_selection_paints_its_rings_its_rectangle_and_its_names() {
+    let ring = graph::POINT_RADIUS + 4.0;
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
+    rig.app.select_set(&[slots[0], slots[2]], Some(slots[2]));
+    let output = rig.frame(Rig::opening(), Vec::new());
+    let (_, rings) = painted(&output);
+    let mut widths: Vec<f32> = rings
+        .iter()
+        .filter(|(radius, _)| (radius - ring).abs() < 0.01)
+        .map(|&(_, width)| width)
+        .collect();
+    widths.sort_by(f32::total_cmp);
+    assert_eq!(widths.len(), 2, "a ring round each selected point");
+    assert!(
+        (widths[1] / widths[0] - 2.0).abs() < 1e-3,
+        "the primary's twice as thick"
+    );
+
+    // The rectangle, dashed, while it is dragged on the background.
+    let corner = rig.app.graph_rect.left_top() + egui::vec2(4.0, 4.0);
+    let to = corner + egui::vec2(120.0, 90.0);
+    rig.press(pointer(corner, Some(true)));
+    rig.press(pointer(corner + egui::vec2(60.0, 45.0), None));
+    let output = rig.frame(Rig::opening(), pointer(to, None));
+    let dashes = output
+        .shapes
+        .iter()
+        .filter(|clipped| match &clipped.shape {
+            egui::epaint::Shape::LineSegment { points, .. } => {
+                (points[0].y - corner.y).abs() < 0.5 && (points[1].y - corner.y).abs() < 0.5
+            }
+            _ => false,
+        })
+        .count();
+    assert!(dashes >= 3, "the rectangle's top edge, dashed: {dashes}");
+    rig.press(pointer(to, Some(false)));
+
+    // The title's hover names the bands.
+    rig.app.select_set(&slots, Some(slots[1]));
+    rig.press(Vec::new());
+    let names = column::group_names(&rig.app).expect("a group");
+    assert!(names.contains(&format!("band {}", slots[1] + 1)), "{names}");
+    let title = rig.app.band_title_rect.center();
+    rig.press(vec![egui::Event::PointerMoved(title)]);
+    let mut shown = false;
+    for _ in 0..90 {
+        let output = rig.frame(Rig::opening(), Vec::new());
+        let (texts, _) = painted(&output);
+        if texts.contains(&names) {
+            shown = true;
+            break;
+        }
+    }
+    assert!(shown, "the title's hover: {names}");
+}
+
+/// **A card slider's group stops at a follower's limit without a nested gesture** (plan §7.9):
+/// the Threshold slider held by the cursor (VALUE, ↑ five times, OUT) with the other band 1 dB
+/// under the top; the group stops there, kept 29 dB apart, the slider's own parameter set inside
+/// its gesture and never begun again, one undo step.
+#[test]
+fn a_card_slider_s_group_stops_at_a_limit_without_nesting() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0)]);
+    let threshold = |slot| dynamics_index(slot, DynamicsField::Threshold);
+    let writes = [
+        (
+            threshold(slots[0]),
+            rig.app.normalised(threshold(slots[0]), -30.0),
+        ),
+        (
+            threshold(slots[1]),
+            rig.app.normalised(threshold(slots[1]), -1.0),
+        ),
+    ];
+    rig.app.instant(&writes);
+    rig.app.select_set(&slots, Some(slots[0]));
+    rig.press(Vec::new());
+    rig.view(Key::ArrowRight);
+    if rig.app.nav.card() != Some(BAND_CARD) {
+        rig.view(Key::ArrowLeft);
+    }
+    rig.up_to_the_band_card();
+    for _ in 0..16 {
+        if rig.app.nav.parameter() == Some("threshold_1") {
+            break;
+        }
+        rig.type_keys(&[Key::ArrowDown]);
+    }
+    assert_eq!(rig.app.nav.parameter(), Some("threshold_1"));
+    let depth = rig.depth();
+    let value = Job::Verb(mxm_keys::Verb::Value);
+    rig.type_keys(&[
+        job_key(value),
+        Key::ArrowUp,
+        Key::ArrowUp,
+        Key::ArrowUp,
+        Key::ArrowUp,
+        Key::ArrowUp,
+        job_key(Job::Out),
+    ]);
+    let (primary, follower) = (
+        rig.app.current_plain(threshold(slots[0])),
+        rig.app.current_plain(threshold(slots[1])),
+    );
+    assert!(
+        (follower - 0.0).abs() < 0.01,
+        "the follower at the top: {follower}"
+    );
+    assert!(
+        ((follower - primary) - 29.0).abs() < 0.01,
+        "kept apart: {primary}"
+    );
+    assert!(rig.gestures_balanced(), "no gesture begun twice");
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
 }

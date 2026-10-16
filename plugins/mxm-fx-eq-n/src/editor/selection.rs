@@ -18,7 +18,7 @@ use std::sync::{Mutex, PoisonError};
 use mxm_fx_eq_n_dsp::{FREQ_MIN, GAIN_RANGE, Q_MAX, Q_MIN, SLOTS};
 use nice_plug::prelude::Param;
 
-use super::{DynamicsField, EqApp, Field, OUTPUT_INDEX, band_index, dynamics_index, history};
+use super::{DynamicsField, EqApp, Field, band_index, dynamics_index, history};
 use super::{key_index, place_index};
 
 /// How the others follow a field of the primary.
@@ -103,6 +103,9 @@ struct Copied {
 
 static CLIPBOARD: Mutex<Option<Copied>> = Mutex::new(None);
 
+/// A parameter's index and the normalised value written to it.
+type Write = (usize, f32);
+
 fn clipboard() -> std::sync::MutexGuard<'static, Option<Copied>> {
     CLIPBOARD.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -118,6 +121,7 @@ impl EqApp {
             .chain(self.others.iter().copied())
             .filter(|&slot| self.band_in_use(slot))
             .collect();
+        all.sort_unstable();
         all.dedup();
         self.along_axis(&mut all);
         all
@@ -158,6 +162,7 @@ impl EqApp {
             .copied()
             .filter(|&slot| self.band_in_use(slot))
             .collect();
+        slots.sort_unstable();
         slots.dedup();
         self.along_axis(&mut slots);
         let Some(&first) = slots.first() else {
@@ -273,7 +278,17 @@ impl EqApp {
 
     /// The primary's twelve fields, plain.
     fn plains(&self, slot: usize) -> [f32; 12] {
-        Which::ALL.map(|which| self.current_plain(which.index(slot)))
+        Which::ALL.map(|which| self.plain_heard(which, slot))
+    }
+
+    /// A field as the group reads it: a frequency as it runs, held below this rate's top, the
+    /// rest as stored.
+    fn plain_heard(&self, which: Which, slot: usize) -> f32 {
+        let plain = self.current_plain(which.index(slot));
+        match which {
+            Which::Band(Field::Freq) => self.clamp_freq(plain),
+            _ => plain,
+        }
     }
 
     /// Whether `slot` has the field: a field it lacks never moves with the group.
@@ -325,8 +340,7 @@ impl EqApp {
         // An instant edit closes its own action; held open, the group's writes join it.
         let hold = writer == Writer::Instant;
         if hold {
-            let readback = self.erased(OUTPUT_INDEX).normalised();
-            history::lock(&self.history).begin(OUTPUT_INDEX, readback);
+            history::lock(&self.history).hold();
         }
         let before = self.plains(primary);
         let result = edit(self);
@@ -334,7 +348,7 @@ impl EqApp {
             self.follow(primary, &before, writer);
         }
         if hold {
-            history::lock(&self.history).end(OUTPUT_INDEX);
+            history::lock(&self.history).release();
         }
         result
     }
@@ -365,13 +379,13 @@ impl EqApp {
                     let wanted = now / was;
                     let mut ratio = wanted;
                     for &slot in &members {
-                        let value = self.current_plain(which.index(slot));
+                        let value = self.plain_heard(which, slot);
                         let (low, high) = self.limits(which, slot);
                         if value > 0.0 {
-                            ratio = if ratio > 1.0 {
-                                ratio.min(high / value)
+                            ratio = if wanted > 1.0 {
+                                ratio.min(high / value).max(1.0)
                             } else {
-                                ratio.max(low / value)
+                                ratio.max(low / value).min(1.0)
                             };
                         }
                     }
@@ -379,32 +393,36 @@ impl EqApp {
                         let index = which.index(primary);
                         writes.push((index, self.normalised(index, was * ratio)));
                     }
-                    for slot in members {
-                        let index = which.index(slot);
-                        let value = self.current_plain(index);
-                        writes.push((index, self.normalised(index, value * ratio)));
+                    if ratio != 1.0 {
+                        for slot in members {
+                            let index = which.index(slot);
+                            let value = self.plain_heard(which, slot) * ratio;
+                            writes.push((index, self.normalised(index, value)));
+                        }
                     }
                 }
                 Follow::Offset => {
                     let wanted = now - was;
                     let mut offset = wanted;
                     for &slot in &members {
-                        let value = self.current_plain(which.index(slot));
+                        let value = self.plain_heard(which, slot);
                         let (low, high) = self.limits(which, slot);
-                        offset = if offset > 0.0 {
-                            offset.min(high - value)
+                        offset = if wanted > 0.0 {
+                            offset.min(high - value).max(0.0)
                         } else {
-                            offset.max(low - value)
+                            offset.max(low - value).min(0.0)
                         };
                     }
                     if offset != wanted {
                         let index = which.index(primary);
                         writes.push((index, self.normalised(index, was + offset)));
                     }
-                    for slot in members {
-                        let index = which.index(slot);
-                        let value = self.current_plain(index);
-                        writes.push((index, self.normalised(index, value + offset)));
+                    if offset != 0.0 {
+                        for slot in members {
+                            let index = which.index(slot);
+                            let value = self.plain_heard(which, slot) + offset;
+                            writes.push((index, self.normalised(index, value)));
+                        }
                     }
                 }
                 Follow::Ratio => {}
@@ -419,7 +437,25 @@ impl EqApp {
                     self.send(index, value);
                 }
             }
-            Writer::Instant => self.instant(&writes),
+            Writer::Instant => {
+                // A parameter a control already holds open (the primary's, pulled back at a
+                // limit during a slider's drag) is set inside that gesture, never begun again;
+                // the rest are one instant write, the history's hold keeping them all one action.
+                let open = history::lock(&self.history).open_params();
+                let (held, closed): (Vec<Write>, Vec<Write>) = writes
+                    .into_iter()
+                    .partition(|(index, _)| open.contains(index));
+                if let Some(gui) = self.gui.clone() {
+                    let setter = gui.param_setter();
+                    let params = self.params.clone();
+                    for (index, value) in held {
+                        params.param(index).set(&setter, value);
+                    }
+                }
+                if !closed.is_empty() {
+                    self.instant(&closed);
+                }
+            }
         }
     }
 

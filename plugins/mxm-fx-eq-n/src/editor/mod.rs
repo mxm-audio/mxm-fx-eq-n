@@ -266,6 +266,8 @@ pub struct EqApp {
     pub(crate) copied_from: Vec<usize>,
     /// A rectangle being dragged on the background: where it began and whether it adds.
     pub(crate) marquee: Option<(egui::Pos2, bool)>,
+    /// Where the Band card's title lies, its hover naming a group (plan §7.9).
+    pub(crate) band_title_rect: Rect,
     /// The keyboard's place on the line where no band is selected.
     pub(crate) focus_freq: f32,
     /// The selected band's edge MICRO + ← → took, for MOVE to move alone.
@@ -396,6 +398,7 @@ impl EqApp {
             others: Vec::new(),
             copied_from: Vec::new(),
             marquee: None,
+            band_title_rect: Rect::NOTHING,
             focus_freq: 1_000.0,
             edge: None,
             copy: None,
@@ -490,6 +493,7 @@ impl EqApp {
             }
         }
         self.copy = None;
+        self.marquee = None;
         self.end_solo();
         self.drag = None;
         // A freeze is the editor's moment, and so is a listen: closing ends them (plan §7.4,
@@ -1748,6 +1752,7 @@ impl EqApp {
         self.wheel_until = None;
         self.copy = None;
         self.drag = None;
+        self.marquee = None;
         // A solo latched on the patch replaced is let go with it.
         self.latched = None;
         ctx.stop_dragging();
