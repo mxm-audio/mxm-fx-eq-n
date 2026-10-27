@@ -757,7 +757,7 @@ impl Finder {
         self.evidence.listened()
     }
 
-    /// Forgets everything heard: Find turned on again, a reset, another rate.
+    /// Forgets everything heard: Find turned on again, another rate, a reset into other channels.
     pub fn restart(&mut self) {
         self.restart_windows();
         self.expected_seq = None;
@@ -792,8 +792,8 @@ impl Finder {
     }
 
     /// One block of the analyser's: its pre-EQ audio. A block at another rate is not this
-    /// finder's; a new generation (a reset) starts the listen again; a dropped block restarts the
-    /// frames.
+    /// finder's; a new generation (a reset) or a dropped block restarts the frames and keeps what
+    /// was heard, unless the reset changed the channels, which starts the listen again.
     pub fn ingest(&mut self, block: &Block) {
         if block.sample_rate != self.sample_rate {
             return;
@@ -802,7 +802,13 @@ impl Finder {
             .generation
             .is_some_and(|generation| generation != block.generation)
         {
-            self.restart();
+            // A host resets whenever it resumes processing: Resolve, playing on through a
+            // voice-over's clips, lost each listen as it went (2026-10-27).
+            if usize::from(block.channels.clamp(1, 2)) == self.evidence.channels {
+                self.restart_windows();
+            } else {
+                self.restart();
+            }
         } else if self
             .expected_seq
             .is_some_and(|expected| block.seq != expected)
@@ -1273,7 +1279,10 @@ fn predict(p: &[f64; 5], points: &[(f64, f64, f64)], out: &mut [f64]) {
 /// lines riding on a bump count for little. A fit reads the whole bump, where one point — a
 /// parabola's top, a half-height crossing — follows whichever line is highest; and the bell it
 /// finds is the shape whose exact inverse the cut is (research §9.2). `None` when it does not
-/// settle on a bump within a twelfth of an octave of the guess.
+/// settle on a bump within a twelfth of an octave of the guess, or the bell it settles on is
+/// wider at half its gain than the third either side it reads (Q under about 2.1): there its
+/// height is guessed, not measured, traded for width, and on a voice's formant under the ripple
+/// of its harmonics a 6 dB bump fitted at +36 dB and Q 0.2 (2026-10-27).
 pub fn fit_bell(
     db: &[f32],
     bin_hz: f32,
@@ -1399,7 +1408,10 @@ pub fn fit_bell(
     let freq = p[0].exp() as f32;
     let (gain, q) = (p[1] as f32, p[2].exp() as f32);
     let near = octaves(freq, guess.freq).abs() <= 1.0 / 12.0;
-    (near && gain.is_finite() && q.is_finite()).then_some((freq, gain, q))
+    // The cookbook bell's width at half its gain, in octaves, against the window it was read on.
+    let width = 2.0 * (1.0 / (2.0 * f64::from(q))).asinh() / std::f64::consts::LN_2;
+    let seen = width <= 2.0 * f64::from(KEY_OCTAVES);
+    (near && seen && gain.is_finite() && q.is_finite()).then_some((freq, gain, q))
 }
 
 /// `system · x = rhs` for five unknowns, by Gaussian elimination with partial pivoting.

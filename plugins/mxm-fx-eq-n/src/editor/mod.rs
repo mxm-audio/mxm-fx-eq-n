@@ -1096,7 +1096,7 @@ impl EqApp {
         if !self.find {
             return;
         }
-        // A reset restarted the listen: what the last one found goes with it.
+        // A reset into other channels restarted the listen: what the last one found goes with it.
         if self.finder.listen() != self.listen_seen {
             self.forget_listen();
         }

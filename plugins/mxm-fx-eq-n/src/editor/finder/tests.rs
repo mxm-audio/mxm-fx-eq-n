@@ -311,9 +311,10 @@ fn each_resonance_is_placed_where_its_excess_is() {
     assert_eq!(domains_at(&centred, 1_200.0), [Domain::Average]);
 }
 
-/// **Only heard frames count, and a reset starts the listen again** (plan §7.5).
+/// **Only heard frames count, and a reset keeps the listen** (plan §7.5): a host resets whenever
+/// it resumes processing. A reset into other channels starts it again.
 #[test]
-fn quiet_frames_count_for_nothing_and_a_reset_restarts_the_listen() {
+fn quiet_frames_count_for_nothing_and_a_reset_keeps_the_listen() {
     let mut finder = Finder::new(RATE);
     let mut noise = Noise(7);
     let mut resonance = Resonance::new(1_000.0, 12.0, 10.0);
@@ -330,18 +331,26 @@ fn quiet_frames_count_for_nothing_and_a_reset_restarts_the_listen() {
         [x, x]
     });
     assert!(finder.listened());
-    let before = finder.revision();
-    let block = Block {
+    let heard = finder.measured();
+    assert!(!heard.is_empty());
+    let block = |generation, channels| Block {
         seq,
-        generation: 1,
+        generation,
         sample_rate: RATE,
-        channels: 2,
+        channels,
         pre: [[0.0; BLOCK_FRAMES]; 2],
         post: [[0.0; BLOCK_FRAMES]; 2],
         key: [[0.0; BLOCK_FRAMES]; 2],
     };
-    finder.ingest(&block);
-    assert!(!finder.listened(), "a new generation is a new listen");
+    finder.ingest(&block(1, 2));
+    assert!(finder.listened(), "a reset is a gap, not a new listen");
+    assert_eq!(finder.measured(), heard);
+    let before = finder.revision();
+    finder.ingest(&block(2, 1));
+    assert!(
+        !finder.listened(),
+        "a reset into one channel is a new listen"
+    );
     assert_ne!(finder.revision(), before);
     assert!(finder.measured().is_empty());
 }
@@ -976,4 +985,60 @@ fn resonances_at_the_edges_of_what_is_read_are_found() {
             "{freq} Hz at {rate}: {candidates:#?}"
         );
     }
+}
+
+/// **A bell wider than the fit reads is not measured** (plan §7.5): on a broad bump under the
+/// ripple a voice's harmonics leave, the fit traded height for width without end, a 6 dB bump at
+/// +36 dB and Q 0.2 (the owner's voice-over, 2026-10-27). Such a fit does not hold; a narrow
+/// resonance under the same ripple still measures to its height.
+#[test]
+fn a_bell_wider_than_the_fit_reads_is_not_measured() {
+    let bin_hz = 5.859_375f32;
+    let gain = 6.0f32;
+    let spectrum = |centre: f32, q: f32, pattern: usize| -> Vec<f32> {
+        let (k1, k2, phase) = (
+            0.11 + 0.13 * pattern as f32,
+            0.9 + 0.29 * pattern as f32,
+            pattern as f32,
+        );
+        (0..4_097)
+            .map(|bin| {
+                let freq = (bin as f32 * bin_hz).max(1.0);
+                let ripple =
+                    1.5 * ((bin as f32 * k1 + phase).sin() * 0.6 + (bin as f32 * k2).sin() * 0.4);
+                -60.0 - 3.0 * (freq / 1_000.0).log2()
+                    + bell_db(f64::from(freq / centre), f64::from(gain), f64::from(q)) as f32
+                    + ripple
+            })
+            .collect()
+    };
+    let guess = |centre: f32| Measured {
+        domain: Domain::Average,
+        rung: 0,
+        freq: centre * 1.02,
+        db: -60.0 + gain,
+        prominence: gain,
+        q: 2.0,
+    };
+    // Each ran away before: +37.2, +38.3 and +41.0 dB.
+    for (centre, q, pattern) in [(800.0f32, 1.5f32, 11), (800.0, 1.5, 8), (1_500.0, 2.0, 8)] {
+        let fit = fit_bell(
+            &spectrum(centre, q, pattern),
+            bin_hz,
+            (1, 4_096),
+            &guess(centre),
+        );
+        assert!(
+            fit.is_none_or(|(_, fitted, _)| fitted < 2.0 * gain),
+            "{centre} Hz, Q {q}: {fit:?}"
+        );
+    }
+    let (_, fitted, _) = fit_bell(
+        &spectrum(1_500.0, 6.0, 8),
+        bin_hz,
+        (1, 4_096),
+        &guess(1_500.0),
+    )
+    .expect("a narrow resonance is measured");
+    assert!((fitted - gain).abs() < 1.5, "gain {fitted}");
 }

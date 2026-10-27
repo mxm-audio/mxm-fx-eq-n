@@ -1067,6 +1067,10 @@ legal advice; continuous suppression stays out of this plan unless the owner has
 boosts are never taken for resonances and editing bands does not disturb it. Like Freeze it is
 offered only with the analyser on; turning one of Find and Freeze on turns the other off; the
 analyser off turns Find off, and back on leaves it off. The listen runs from when Find is turned on.
+A reset breaks its frames, as a dropped block does, and keeps what it heard, since a host resets
+whenever it resumes processing: Resolve, played on through a voice-over of 22 clips, found
+resonances and lost them again as it went (the owner, 2026-10-27). A reset into other channels
+starts the listen again.
 - **Two kinds of evidence** (§8.6), on three rungs, each a frequency's only home, so no peak is found
   twice: **width** from 8,192-point frames (about 4/B seconds for a bandwidth B: Q 32 from about
   50 Hz up) and **movement** from frames about the shortest that tells notes a semitone apart in
@@ -1105,7 +1109,13 @@ analyser off turns Find off, and back on leaves it off. The listen runs from whe
   highest on the bump). A candidate needs three heard width frames in its rung, so the clip is in
   force (the lowest rung's first candidates come about 5.5 s into a listen), and a fitted width of
   at least four of their bins: anything narrower reports the frame's window, not the peak (§8.6),
-  and is a line or noise.
+  and is a line or noise. **Nor a fit wider at half its gain than the third either side it reads**
+  (Q under about 2.1): there the height is guessed, not measured, traded for width, and on a
+  voice's formants and sibilance under the ripple of its harmonics a 6 dB bump fitted at +36 dB
+  and Q 0.2, proposing a cut of 12 dB over 1–8 kHz (the owner's voice-over in Resolve,
+  2026-10-27). Such a fit does not hold and the candidate keeps its first measure; on a swept
+  test of broad and narrow bumps under ±0.5–3 dB of ripple, it left no fit over twice the true
+  height (101 before) and kept 97.5 % of the narrow ones (Q 3 and up), within 0.5 dB.
 - **Placed where the excess is**, with F2's placements (§7.3), the first rule that holds: the peak
   in one of left and right only, **Left** or **Right**; in both, their P more than 3 dB apart, a
   **Left and a Right** band, each its own depth; in the side and not the mid, **Side**; in the mid
