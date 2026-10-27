@@ -1,0 +1,15 @@
+gentle-low-cut.json
+voice-presence.json
+de-mud.json
+air.json
+bass-weight.json
+tilt-brighter.json
+tilt-darker.json
+telephone-band.json
+band-pass-sweep.json
+tight-kick.json
+snare-crack.json
+hum-notch-50-hz.json
+hum-notch-60-hz.json
+de-esser.json
+resonance-tamer.json

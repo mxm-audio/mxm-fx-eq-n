@@ -65,8 +65,13 @@ impl mxm_preset::Instrument for EqParams {
         &self.preset
     }
 
-    fn factory_files(&self) -> &'static [(&'static str, &'static str)] {
+    /// The installed set, but in a unit test, which is loaded from no bundle: the repository's.
+    #[cfg(test)]
+    fn factory_files(&self) -> Vec<(String, String)> {
         FACTORY_FILES
+            .iter()
+            .map(|(name, json)| ((*name).to_owned(), (*json).to_owned()))
+            .collect()
     }
 }
 
@@ -148,51 +153,22 @@ pub fn add_missing_at_defaults(state: &mut nice_plug::prelude::PluginState) {
     }
 }
 
-/// The shipped set, in the order `FACTORY_DESIGN` states it.
-///
-/// Generated, never hand-edited: `write_the_factory_presets` writes the files from the design, and
-/// `shipped_files_are_exactly_the_readable_design` fails when they differ.
-pub const FACTORY_FILES: &[(&str, &str)] = &[
-    (
-        "Gentle low cut",
-        include_str!("../presets/gentle-low-cut.json"),
-    ),
-    (
-        "Voice presence",
-        include_str!("../presets/voice-presence.json"),
-    ),
-    ("De-mud", include_str!("../presets/de-mud.json")),
-    ("Air", include_str!("../presets/air.json")),
-    ("Bass weight", include_str!("../presets/bass-weight.json")),
-    (
-        "Tilt brighter",
-        include_str!("../presets/tilt-brighter.json"),
-    ),
-    ("Tilt darker", include_str!("../presets/tilt-darker.json")),
-    (
-        "Telephone band",
-        include_str!("../presets/telephone-band.json"),
-    ),
-    (
-        "Band pass sweep",
-        include_str!("../presets/band-pass-sweep.json"),
-    ),
-    ("Tight kick", include_str!("../presets/tight-kick.json")),
-    ("Snare crack", include_str!("../presets/snare-crack.json")),
-    (
-        "Hum notch 50 Hz",
-        include_str!("../presets/hum-notch-50-hz.json"),
-    ),
-    (
-        "Hum notch 60 Hz",
-        include_str!("../presets/hum-notch-60-hz.json"),
-    ),
-    ("De-esser", include_str!("../presets/de-esser.json")),
-    (
-        "Resonance tamer",
-        include_str!("../presets/resonance-tamer.json"),
-    ),
-];
+/// The factory set as it ships, `(name, json)` in its order: the repository's `presets/`, which
+/// is installed beside the plugin and read there (`mxm_preset::installed_factory_dir`). For the
+/// tests, the integration tests and the audits, which are loaded from no bundle; the plugin itself
+/// never reads it.
+pub static FACTORY_FILES: std::sync::LazyLock<Vec<(&'static str, &'static str)>> =
+    std::sync::LazyLock::new(|| {
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        mxm_preset::read_factory_dir(&folder)
+            .into_iter()
+            .map(|(file, json)| {
+                let name = mxm_preset::Preset::parse(&json, crate::CLAP_ID)
+                    .map_or(file, |preset| preset.name);
+                (&*String::leak(name), &*String::leak(json))
+            })
+            .collect()
+    });
 
 #[cfg(test)]
 mod tests {
@@ -465,7 +441,8 @@ mod tests {
     fn shipped_files_are_exactly_the_readable_design() {
         let params = EqParams::default();
         assert_eq!(FACTORY_FILES.len(), FACTORY_DESIGN.len());
-        for ((name, category, bands), (file_name, text)) in FACTORY_DESIGN.iter().zip(FACTORY_FILES)
+        for ((name, category, bands), (file_name, text)) in
+            FACTORY_DESIGN.iter().zip(FACTORY_FILES.iter())
         {
             assert_eq!(
                 name, file_name,
@@ -547,7 +524,7 @@ mod tests {
     fn every_file_is_complete_distinct_categorised_and_for_this_plugin() {
         let params = EqParams::default();
         let mut seen = Vec::new();
-        for (name, text) in FACTORY_FILES {
+        for (name, text) in FACTORY_FILES.iter() {
             let preset =
                 Preset::parse(text, crate::CLAP_ID).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             assert_eq!(&preset.name, name);
@@ -588,7 +565,7 @@ mod tests {
         let params = EqParams::default();
         let init = Preset::init(&params);
         let rate = 48_000.0;
-        for (name, text) in FACTORY_FILES {
+        for (name, text) in FACTORY_FILES.iter() {
             let preset = Preset::parse(text, crate::CLAP_ID).unwrap();
             let bands: Vec<_> = (0..SLOTS)
                 .map(|slot| stored_band(&preset, &params.bands[slot], slot))
@@ -733,7 +710,7 @@ mod dynamics_migration {
     /// host's state.
     #[test]
     fn no_preset_carries_the_instance_id() {
-        for (name, json) in FACTORY_FILES {
+        for (name, json) in FACTORY_FILES.iter() {
             assert!(!json.contains("\"instance\""), "{name}");
         }
     }
