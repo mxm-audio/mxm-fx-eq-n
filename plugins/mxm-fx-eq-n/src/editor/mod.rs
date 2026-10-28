@@ -15,10 +15,10 @@
 //!   and restore, and the editor ends it on close.
 //! - **Find** (plan §7.5) listens to the input for resonances while it is on, and its proposals are
 //!   applied as ordinary bands, each one undo step ([`EqApp::apply_proposals`]).
-//! - **Match** (plan §7.6) listens to the side chain and the input and proposes the bands that
-//!   bring the input's tone to the reference's, applied together as one undo step
-//!   ([`EqApp::apply_match`]). One proposal set at a time: Find, Match and Freeze each end the
-//!   others.
+//! - **Match** (plan §7.6) learns a reference and the track, each held once learned, and proposes
+//!   the bands that bring the track's tone to the reference's, applied together as one undo step
+//!   ([`EqApp::apply_match`]); a reference can be saved by name and chosen for any track
+//!   (`references.rs`). One proposal set at a time: Find, Match and Freeze each end the others.
 
 pub mod column;
 pub mod external;
@@ -28,6 +28,7 @@ pub mod graph;
 pub mod history;
 pub mod matcher;
 pub mod panel;
+pub mod references;
 pub mod selection;
 pub mod spectrum;
 
@@ -44,13 +45,14 @@ use nice_plug::prelude::*;
 
 use crate::analyser::Block;
 use crate::audition::Audition;
+use crate::learned::{Learned, MatchTo};
 use crate::params::{BAND_FIELDS, DEFAULT_SLOPE, EqParams, type_of};
 use crate::telemetry::Telemetry;
 use crate::view::ViewSettings;
 
 /// The window the editor opens at: inside the quarter-4K budget, as tall as the column's tallest
 /// state with no scrolling (`the_opening_size_holds_the_column_without_scrolling`).
-pub const REFERENCE: (u32, u32) = (1_532, 1_045);
+pub const REFERENCE: (u32, u32) = (1_532, 876);
 /// One card wide, and never narrower than the app bar's last compact step
 /// (`the_app_bar_holds_in_the_minimum_window`). Narrower than graph and column, the surface scrolls
 /// sideways with the column still beside the graph (plan §5.1).
@@ -92,6 +94,8 @@ pub struct Handles {
     pub params: Arc<EqParams>,
     pub telemetry: Arc<Telemetry>,
     pub audition: Arc<Audition>,
+    /// Match's Preview (plan §7.6), the proposed bands heard before they are applied.
+    pub preview: Arc<crate::preview::Preview>,
     pub history: history::Shared,
     pub analyser: Option<rtrb::Consumer<Block>>,
     /// This instance's registry entry (plan §7.8): its track's name goes there, and the others are
@@ -127,6 +131,47 @@ pub enum FindRefusal {
     Full,
     NoGain,
 }
+
+/// A name being typed to save what this EQ learned under, as a reference (plan §7.6); whether a reference of
+/// that name is saved already, so the next press replaces it; whether its field has the focus, and
+/// whether it was given it when it opened.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Naming {
+    pub name: String,
+    pub taken: bool,
+    pub focused: bool,
+    pub asked: bool,
+}
+
+/// Why what this EQ learned was not saved as a reference.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveRefusal {
+    /// Nothing learned and held, or not long enough.
+    NothingLearned,
+    NoName,
+    /// This system has no config directory.
+    NoFolder,
+    /// A reference of that name is saved already.
+    Taken,
+    Failed(String),
+}
+
+/// How often the saved references are listed again while the editor is open, in seconds.
+pub const REFERENCES_SECONDS: f64 = 2.0;
+/// How long Learn's lamp stays lit after it last heard sound, in seconds: several of its frames,
+/// so steady sound holds it steady.
+pub const LAMP_SECONDS: f64 = 0.25;
+/// The frames Preview holds what it played after an Apply: half a second at sixty a second.
+pub const PREVIEW_HOLD_FRAMES: u32 = 30;
+/// How often the learned lines are drawn anew while Learn runs, in seconds: their smoothing is
+/// too dear for every frame.
+pub const LINES_SECONDS: f64 = 0.25;
+
+/// What the learned lines were made from: the matcher's revision, the reference's stamp and Learn.
+type LinesBasis = (u64, u64, bool);
+/// The learned lines per cell: the reference's, the track's, and how much each cell counts for
+/// how settled they are.
+pub(crate) type LearnedLines = [Vec<Option<f32>>; 3];
 
 /// What the editor hands its worker (plan §7.5, §7.6): Find's search or Match's fit, one at a time.
 pub enum Task {
@@ -240,6 +285,13 @@ pub struct EqApp {
     pub(crate) params: Arc<EqParams>,
     pub(crate) telemetry: Arc<Telemetry>,
     pub(crate) audition: Arc<Audition>,
+    /// Match's Preview (plan §7.6): the shell's handoff; whether it is on; the version of the
+    /// proposals last given it, `None` once it was cleared; and how many more frames what it plays
+    /// is held after an Apply, until the host has the bands.
+    preview: Arc<crate::preview::Preview>,
+    pub(crate) previewing: bool,
+    preview_published: Option<u64>,
+    preview_hold: u32,
     pub(crate) history: history::Shared,
     analyser: Option<rtrb::Consumer<Block>>,
     /// This instance's registry entry, and another track's spectrum while it is chosen and the
@@ -327,10 +379,26 @@ pub struct EqApp {
     /// The dashed curve the proposals would make: the proposals' version and the frequencies it
     /// was computed at, and its lines.
     pub(crate) proposal_curve: Option<(u64, Vec<f32>, Vec<Vec<f32>>)>,
-    /// Match (plan §7.6): on or off, the editor's moment, never saved; what it has heard; the
-    /// bands proposed and the basis they were fitted on; the basis and the matcher's revision the
-    /// last fit was asked on, and when.
-    pub(crate) matching: bool,
+    /// Match (plan §7.6): whether Learn is on; its lamp: the seconds heard as last seen, when they
+    /// last rose, and whether it is lit; whether what was learned is drawn since Learn was on in
+    /// this window; the learned lines as the graph draws them, the reference's then the track's,
+    /// what they were made from and when ([`EqApp::learned_lines`]); the saved references as last
+    /// listed, when, and their folder (`None` in the tests, which give it a sandbox); a name being
+    /// typed to save under; a count that moves whenever the reference matched to may have. What was
+    /// learned and what it is matched to are host state (`EqParams::learned`, `match_to`).
+    pub(crate) learning: bool,
+    lamp_heard: f64,
+    lamp_at: Option<f64>,
+    pub(crate) hearing: bool,
+    shown_learned: bool,
+    learned_lines: Option<(LinesBasis, f64, LearnedLines)>,
+    pub(crate) saved_references: Vec<references::Listed>,
+    references_listed_at: Option<f64>,
+    pub(crate) references_dir: Option<std::path::PathBuf>,
+    pub(crate) naming: Option<Naming>,
+    reference_version: u32,
+    /// What Learn is learning; the bands proposed and the basis they were fitted on; the basis and
+    /// the matcher's revision the last fit was asked on, and when.
     pub(crate) matcher: matcher::Matcher,
     pub(crate) match_bands: Vec<matcher::MatchBand>,
     pub(crate) match_fitted_on: Vec<u32>,
@@ -386,6 +454,10 @@ impl EqApp {
             params: handles.params,
             telemetry: handles.telemetry,
             audition: handles.audition,
+            preview: handles.preview,
+            previewing: false,
+            preview_published: None,
+            preview_hold: 0,
             history: handles.history,
             analyser: handles.analyser,
             instance: handles.instance,
@@ -433,7 +505,17 @@ impl EqApp {
             focus_proposal: None,
             proposal_labels: Vec::new(),
             proposal_curve: None,
-            matching: false,
+            learning: false,
+            lamp_heard: 0.0,
+            lamp_at: None,
+            hearing: false,
+            shown_learned: false,
+            learned_lines: None,
+            saved_references: Vec::new(),
+            references_listed_at: None,
+            references_dir: if cfg!(test) { None } else { references::root() },
+            naming: None,
+            reference_version: 0,
             matcher,
             match_bands: Vec::new(),
             match_fitted_on: Vec::new(),
@@ -504,6 +586,12 @@ impl EqApp {
         self.unfreeze();
         self.end_find();
         self.end_match();
+        self.naming = None;
+        self.shown_learned = false;
+        // Preview is the window's moment, as solo is.
+        self.previewing = false;
+        self.preview.clear();
+        self.preview_published = None;
         self.telemetry.connect(false);
         self.gui = None;
         self.host = None;
@@ -974,11 +1062,9 @@ impl EqApp {
     }
 
     /// Whether an external spectrum is drawn (plan §7.8): the side chain's on a layout with the
-    /// port (Match's while it listens), or another track found.
+    /// port, or another track found.
     pub(crate) fn external_shown(&self, settings: &crate::view::ViewSettings) -> bool {
-        self.matching
-            || (settings.side_chain && self.telemetry.side_chain_port())
-            || self.other.is_some()
+        (settings.side_chain && self.telemetry.side_chain_port()) || self.other.is_some()
     }
 
     pub(crate) fn shown_spectra(&self) -> [&[f32]; 3] {
@@ -1177,11 +1263,13 @@ impl EqApp {
     }
 
     /// What the worker gave back, if it has: a search's, shown while Find is on, a fit's while
-    /// Match is.
+    /// this EQ is matched to something.
     pub(crate) fn take_done(&mut self) {
         match self.worker.as_mut().and_then(finder::Worker::take) {
             Some(Done::Found(found)) if self.find => self.accept(found),
-            Some(Done::Fitted(fitted)) if self.matching => self.accept_fit(fitted),
+            Some(Done::Fitted(fitted)) if self.match_to() != MatchTo::Nothing => {
+                self.accept_fit(fitted);
+            }
             _ => {}
         }
     }
@@ -1288,39 +1376,68 @@ impl EqApp {
 
     // ---- Match (plan §7.6) ----------------------------------------------------------------
 
-    /// Whether Match is offered: the analyser on, and a layout with the side-chain port.
+    /// Whether Match is offered: the analyser on, on every layout (plan §7.6).
     pub(crate) fn match_offered(&self, settings: &ViewSettings) -> bool {
-        settings.analyser && self.telemetry.side_chain_port()
+        settings.analyser
     }
 
-    /// Turns Match on, ending Find and a freeze (one proposal set at a time), with a listen from
-    /// nothing; or off.
-    pub(crate) fn set_match(&mut self, on: bool) {
+    /// What this EQ has learned of its track (plan §7.6): as it stands while Learn is on, else as
+    /// its project holds it; `None` before anything, or of another grid.
+    pub(crate) fn learned(&self) -> Option<Arc<Learned>> {
+        if self.learning {
+            Some(Arc::new(self.matcher.learned()))
+        } else {
+            self.params.learned.get().filter(|learned| learned.usable())
+        }
+    }
+
+    /// The seconds of this track learned: what the card reads.
+    pub(crate) fn learned_seconds(&self) -> f64 {
+        if self.learning {
+            self.matcher.heard_seconds()
+        } else {
+            self.params
+                .learned
+                .get()
+                .map_or(0.0, |learned| learned.seconds)
+        }
+    }
+
+    /// Learn (plan §7.6): on learns this track anew, from nothing, its input before the EQ and its
+    /// output after it, ending Find and a freeze; off keeps what it learned with the project, where
+    /// every other EQ can match to it.
+    pub(crate) fn set_learn(&mut self, on: bool) {
         if on {
-            if !self.matching {
+            if !self.learning {
                 self.unfreeze();
                 self.end_find();
                 self.matcher.restart();
-                self.match_listen_seen = self.matcher.listen();
-                self.matching = true;
+                self.learning = true;
+                self.shown_learned = true;
+                self.forget_match();
             }
-        } else {
-            self.end_match();
+        } else if self.learning {
+            self.learning = false;
+            let learned = self.matcher.learned();
+            self.params
+                .learned
+                .store((learned.seconds > 0.0).then(|| Arc::new(learned)));
+            self.reference_version = self.reference_version.wrapping_add(1);
+            self.mark_dirty();
         }
     }
 
-    /// Ends Match: what it heard and proposed goes with it.
+    /// Ends Learn, keeping what it learned, and the proposals go (Find or a freeze turned on, the
+    /// analyser off, the editor closed).
     pub(crate) fn end_match(&mut self) {
-        if !self.matching && self.match_bands.is_empty() {
-            return;
+        self.set_learn(false);
+        if !self.match_bands.is_empty() {
+            self.forget_match();
         }
-        self.matching = false;
-        self.matcher.restart();
-        self.forget_match();
     }
 
-    /// The listen started again — Match off, a reset, a new rate — so what was proposed goes, and a
-    /// fit still running for the old one with it.
+    /// Learn turned on again, or Match ended, so what was proposed goes, and a fit still running
+    /// for the old one with it.
     pub(crate) fn forget_match(&mut self) {
         self.worker = None;
         self.match_bands.clear();
@@ -1332,27 +1449,366 @@ impl EqApp {
         self.match_listen_seen = self.matcher.listen();
     }
 
-    /// What a fit depends on besides what was heard: every parameter as this editor last set it
-    /// (the EQ as heard and the free slots), Amount, Detail and the layout.
+    /// Preview (plan §7.6): while on, the proposed bands are heard in the slots Apply would write.
+    pub(crate) fn set_preview(&mut self, on: bool) {
+        self.previewing = on;
+    }
+
+    /// What Preview plays, given the shell whenever the proposals change: each in the free slot
+    /// Apply would write, its gain under the gain scale as Apply writes it; nothing while Preview
+    /// is off or there are none. After an Apply what it played is held for [`PREVIEW_HOLD_FRAMES`],
+    /// so the bands written take over from it without a gap.
+    pub(crate) fn update_preview(&mut self) {
+        let wanted =
+            (self.previewing && !self.match_bands.is_empty()).then_some(self.match_version);
+        if wanted == self.preview_published {
+            return;
+        }
+        if wanted.is_none() && self.preview_hold > 0 {
+            self.preview_hold -= 1;
+            return;
+        }
+        let scale = self.gain_scale_now();
+        if wanted.is_some() && scale > f32::EPSILON {
+            let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+            let slots: Vec<usize> = self.free_slots().collect();
+            let bands: Vec<(usize, Shape, f32, f32, f32)> = slots
+                .into_iter()
+                .zip(&self.match_bands)
+                .map(|(slot, band)| {
+                    (
+                        slot,
+                        band.shape,
+                        self.clamp_freq(band.freq),
+                        (band.gain_db / scale).clamp(-range, range),
+                        band.q,
+                    )
+                })
+                .collect();
+            self.preview.publish(&bands);
+        } else {
+            self.preview.clear();
+        }
+        self.preview_hold = 0;
+        self.preview_published = wanted;
+    }
+
+    /// Learn's lamp (plan §7.6): lit while it is on and has heard sound within [`LAMP_SECONDS`],
+    /// so a track that sends nothing shows on the card.
+    pub(crate) fn update_lamp(&mut self, now: f64) {
+        let heard = self.matcher.heard_seconds();
+        if heard > self.lamp_heard {
+            self.lamp_at = Some(now);
+        }
+        self.lamp_heard = heard;
+        self.hearing = self.learning
+            && self
+                .lamp_at
+                .is_some_and(|at| (0.0..LAMP_SECONDS).contains(&(now - at)));
+    }
+
+    /// What Match has learned, as the graph draws it (plan §7.6): the reference matched to and this
+    /// track's input, each per cell while it sounds and smoothed as the match reads it, empty until
+    /// heard; while Learn is on, once it has been in this window, or while matching to something,
+    /// else nothing. Made anew at most every [`LINES_SECONDS`] while only what is heard changes.
+    pub(crate) fn learned_lines(&mut self, now: f64) -> Option<LearnedLines> {
+        if !(self.learning || self.shown_learned || self.match_to() != MatchTo::Nothing) {
+            self.learned_lines = None;
+            return None;
+        }
+        let basis = (
+            self.matcher.revision(),
+            self.reference_stamp(),
+            self.learning,
+        );
+        if let Some((made_on, made_at, lines)) = &self.learned_lines {
+            let recent = (0.0..LINES_SECONDS).contains(&(now - made_at));
+            if *made_on == basis || ((made_on.1, made_on.2) == (basis.1, basis.2) && recent) {
+                return Some(lines.clone());
+            }
+        }
+        let matched = self
+            .matched_reference()
+            .filter(|reference| reference.seconds > 0.0);
+        let learned = self.learned().filter(|learned| learned.seconds > 0.0);
+        let reference = matched
+            .as_ref()
+            .map(|reference| matcher::smooth(&reference.cells))
+            .unwrap_or_default();
+        let track = learned
+            .as_ref()
+            .map(|learned| matcher::smooth(&learned.input_levels()))
+            .unwrap_or_default();
+        let settled = learned
+            .as_ref()
+            .map(|learned| matcher::settled_cells(learned, matched.as_ref()))
+            .unwrap_or_default();
+        let lines = [reference, track, settled];
+        self.learned_lines = Some((basis, now, lines.clone()));
+        Some(lines)
+    }
+
+    /// What this EQ is matched to (plan §7.6), saved with the project.
+    pub(crate) fn match_to(&self) -> MatchTo {
+        self.params
+            .match_to
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Chooses what this EQ is matched to (plan §7.6), saved with the project. Something chosen
+    /// ends Find and a freeze, as Learn does: one proposal set at a time.
+    pub(crate) fn set_match_to(&mut self, to: MatchTo) {
+        if to != MatchTo::Nothing {
+            self.unfreeze();
+            self.end_find();
+        }
+        {
+            let mut chosen = self
+                .params
+                .match_to
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if *chosen == to {
+                return;
+            }
+            *chosen = to;
+        }
+        self.reference_version = self.reference_version.wrapping_add(1);
+        self.mark_dirty();
+    }
+
+    /// The reference matched to (plan §7.6): another EQ's output as it learned it, or a saved one;
+    /// `None` when nothing is chosen, or the one chosen is not found, has learned nothing, cannot be
+    /// read or is of another grid.
+    pub(crate) fn matched_reference(&self) -> Option<matcher::Reference> {
+        match self.match_to() {
+            MatchTo::Nothing => None,
+            MatchTo::Track(id) => crate::instances::find(id)
+                .filter(|entry| !Arc::ptr_eq(entry, &self.instance))
+                .and_then(|entry| entry.learned())
+                .filter(|learned| learned.usable())
+                .map(|learned| learned.sound()),
+            MatchTo::Saved(name) => self
+                .saved_references
+                .iter()
+                .find(|listed| listed.name == name)
+                .and_then(|listed| listed.read.as_ref().ok().cloned()),
+        }
+    }
+
+    /// A stamp that moves whenever the reference matched to may have: another choice, the other EQ
+    /// learning again, a saved one changed on disk.
+    fn reference_stamp(&self) -> u64 {
+        let other = match self.match_to() {
+            MatchTo::Track(id) => crate::instances::find(id)
+                .and_then(|entry| entry.learned())
+                .map_or(0, |learned| {
+                    (Arc::as_ptr(&learned) as u64) ^ learned.seconds.to_bits()
+                }),
+            _ => 0,
+        };
+        other ^ u64::from(self.reference_version)
+    }
+
+    /// A stamp that moves whenever what this EQ keeps as learned does.
+    fn learned_stamp(&self) -> u64 {
+        self.params.learned.get().map_or(0, |learned| {
+            (Arc::as_ptr(&learned) as u64) ^ learned.seconds.to_bits()
+        })
+    }
+
+    /// Lists the saved references again, at most every [`REFERENCES_SECONDS`]: another session
+    /// may have saved one, or the player renamed one in the folder. The chosen one changed on disk
+    /// is a new basis.
+    pub(crate) fn refresh_references(&mut self, now: f64) {
+        let due = self
+            .references_listed_at
+            .is_none_or(|at| now - at >= REFERENCES_SECONDS || now < at);
+        if !due {
+            return;
+        }
+        self.references_listed_at = Some(now);
+        let before = self.matched_reference();
+        self.saved_references = self
+            .references_dir
+            .as_deref()
+            .map(references::list)
+            .unwrap_or_default();
+        if matches!(self.match_to(), MatchTo::Saved(_)) && self.matched_reference() != before {
+            self.reference_version = self.reference_version.wrapping_add(1);
+        }
+    }
+
+    /// The name first offered to save under: this track's, else "Reference".
+    pub(crate) fn default_reference_name(&self) -> String {
+        crate::instances::names()
+            .into_iter()
+            .find(|listed| listed.id == self.instance.id())
+            .map(|listed| listed.name)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Reference".to_owned())
+    }
+
+    /// Whether what this EQ learned can be saved as a reference: kept, not being learned, heard
+    /// long enough, and a folder to save in.
+    pub(crate) fn can_save_reference(&self) -> bool {
+        !self.learning
+            && self.references_dir.is_some()
+            && self
+                .params
+                .learned
+                .get()
+                .is_some_and(|learned| learned.usable() && learned.seconds > 0.0)
+    }
+
+    /// Saves this EQ's output as learned as the reference `name` (plan §7.6, decision 48), for
+    /// any EQ in any project, replacing one of that name only when `replace`.
+    pub(crate) fn save_reference(&mut self, name: &str, replace: bool) -> Result<(), SaveRefusal> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(SaveRefusal::NoName);
+        }
+        if !self.can_save_reference() {
+            return Err(if self.references_dir.is_none() {
+                SaveRefusal::NoFolder
+            } else {
+                SaveRefusal::NothingLearned
+            });
+        }
+        let (Some(dir), Some(learned)) = (self.references_dir.clone(), self.params.learned.get())
+        else {
+            return Err(SaveRefusal::NothingLearned);
+        };
+        if !replace && references::path_for(&dir, name).exists() {
+            return Err(SaveRefusal::Taken);
+        }
+        references::save(&dir, name, &learned.sound()).map_err(SaveRefusal::Failed)?;
+        self.saved_references = references::list(&dir);
+        self.references_listed_at = None;
+        Ok(())
+    }
+
+    /// The Save button (plan §7.6): the first press asks for a name, this track's offered; the
+    /// next saves under it, and a name taken is replaced only on the press after that.
+    pub(crate) fn press_save_reference(&mut self) {
+        let Some(naming) = self.naming.clone() else {
+            if self.can_save_reference() {
+                self.naming = Some(Naming {
+                    name: self.default_reference_name(),
+                    ..Naming::default()
+                });
+            }
+            return;
+        };
+        match self.save_reference(&naming.name, naming.taken) {
+            Ok(()) => self.naming = None,
+            Err(SaveRefusal::Taken) => {
+                if let Some(naming) = &mut self.naming {
+                    naming.taken = true;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// What this EQ can be matched to, and each one's name (plan §7.6): nothing; every other EQ
+    /// that has learned, by its track's name; every saved reference, one whose
+    /// name a track has marked saved and one that cannot be read marked so; and the one chosen,
+    /// where it is none of these.
+    pub(crate) fn match_choices(&self) -> Vec<(MatchTo, String)> {
+        let mut all = vec![(MatchTo::Nothing, "Nothing".to_owned())];
+        let others = crate::instances::others(&self.instance);
+        let learned = |listed: &crate::instances::Listed| {
+            listed
+                .entry
+                .upgrade()
+                .and_then(|entry| entry.learned())
+                .is_some_and(|learned| learned.usable() && learned.seconds > 0.0)
+        };
+        let tracks: Vec<(MatchTo, String)> = others
+            .iter()
+            .filter(|listed| learned(listed))
+            .map(|listed| (MatchTo::Track(listed.id), external::short(&listed.name)))
+            .collect();
+        let names: Vec<String> = tracks.iter().map(|(_, name)| name.clone()).collect();
+        all.extend(tracks);
+        all.extend(self.saved_references.iter().map(|listed| {
+            let mut shown = external::short(&listed.name);
+            if names.contains(&shown) {
+                shown.push_str(" (saved)");
+            }
+            if listed.read.is_err() {
+                shown.push_str(" (cannot read)");
+            }
+            (MatchTo::Saved(listed.name.clone()), shown)
+        }));
+        let chosen = self.match_to();
+        if !all.iter().any(|(to, _)| *to == chosen) {
+            let shown = match &chosen {
+                MatchTo::Track(id) => others
+                    .iter()
+                    .find(|listed| listed.id == *id)
+                    .map_or("Track not found".to_owned(), |listed| {
+                        format!("{} (not learned)", external::short(&listed.name))
+                    }),
+                MatchTo::Saved(name) => format!("Missing: {}", external::short(name)),
+                MatchTo::Nothing => "Nothing".to_owned(),
+            };
+            all.push((chosen, shown));
+        }
+        all
+    }
+
+    /// What a fit depends on besides what is being heard: every parameter as this editor last set
+    /// it (the EQ as heard and the free slots), what this EQ keeps as learned, what it is matched to
+    /// and that one's stamp, Amount, Detail and the layout.
     pub(crate) fn match_basis(&self, settings: &ViewSettings) -> Vec<u32> {
         let mut basis: Vec<u32> = (0..self.pointers.len())
             .map(|index| self.normalised_now(index).to_bits())
             .collect();
+        // FNV-1a of the choice, so a restore choosing another is a new basis too.
+        let chosen = format!("{:?}", self.match_to());
+        basis.push(chosen.bytes().fold(0x811c_9dc5u32, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+        }));
+        for stamp in [self.reference_stamp(), self.learned_stamp()] {
+            basis.push(stamp as u32);
+            basis.push((stamp >> 32) as u32);
+        }
         basis.push(u32::from(settings.match_amount));
         basis.push(u32::from(settings.match_detail()));
         basis.push(u32::from(self.telemetry.mono()));
         basis
     }
 
-    /// Fits again every [`finder::UPDATE_SECONDS`] while Match hears something new, and whenever the
-    /// EQ, Amount or Detail moves; on the worker, the latest winning: while one runs nothing is
-    /// asked, and the next is asked on what is current then.
+    /// Fits again every [`finder::UPDATE_SECONDS`] while Learn hears something new, and whenever
+    /// what is matched to, what was learned, the EQ, Amount or Detail moves; on the worker, the
+    /// latest winning: while one runs nothing is asked, and the next is asked on what is current
+    /// then. Nothing is proposed until this track and the reference have each been heard long
+    /// enough, nor while Find or a freeze is on.
     pub(crate) fn update_match(&mut self, now: f64, settings: &ViewSettings) {
-        if !self.matching {
-            return;
-        }
         if self.matcher.listen() != self.match_listen_seen {
             self.forget_match();
+        }
+        if self.find || self.freezing() || !self.match_offered(settings) {
+            // The worker is Find's while it runs: the proposals go, and the fit is asked again
+            // once Find or the freeze ends.
+            if !self.match_bands.is_empty() || !self.match_asked_on.is_empty() {
+                self.match_bands.clear();
+                self.match_fitted_on.clear();
+                self.match_asked_on.clear();
+                self.match_version += 1;
+            }
+            return;
+        }
+        if self.match_to() == MatchTo::Nothing {
+            if !self.match_bands.is_empty() {
+                self.match_bands.clear();
+                self.match_version += 1;
+            }
+            return;
         }
         if self.worker.as_ref().is_some_and(finder::Worker::busy) {
             return;
@@ -1360,11 +1816,23 @@ impl EqApp {
         let due = self
             .match_asked_at
             .is_none_or(|at| now - at >= finder::UPDATE_SECONDS || now < at);
-        let heard_new = due && self.matcher.revision() != self.match_revision;
+        let heard_new = due && self.learning && self.matcher.revision() != self.match_revision;
         let basis = self.match_basis(settings);
-        if !(heard_new || basis != self.match_asked_on) || !self.matcher.spectra().listened() {
+        if !(heard_new || basis != self.match_asked_on) {
             return;
         }
+        let track = self.learned().filter(|learned| learned.seconds > 0.0);
+        let reference = self
+            .matched_reference()
+            .filter(|reference| reference.seconds > 0.0);
+        let (Some(track), Some(reference)) = (track, reference) else {
+            self.match_asked_on = basis;
+            if !self.match_bands.is_empty() {
+                self.match_bands.clear();
+                self.match_version += 1;
+            }
+            return;
+        };
         if self.find_refusal().is_some() {
             self.match_asked_on = basis;
             if !self.match_bands.is_empty() {
@@ -1375,7 +1843,8 @@ impl EqApp {
         }
         let revision = self.matcher.revision();
         let fit = matcher::Fit {
-            spectra: self.matcher.spectra().clone(),
+            track,
+            reference,
             heard: self.heard_eq(),
             amount: settings.match_amount_share(),
             max_bands: usize::from(settings.match_detail()).min(self.free_slots().count()),
@@ -1405,9 +1874,9 @@ impl EqApp {
         }
     }
 
-    /// What a fit proposes, shown, unless an earlier listen made it.
+    /// What a fit proposes, shown, unless an earlier listen made it or Find or a freeze is on.
     pub(crate) fn accept_fit(&mut self, fitted: matcher::Fitted) {
-        if fitted.listen != self.matcher.listen() {
+        if fitted.listen != self.matcher.listen() || self.find || self.freezing() {
             return;
         }
         self.match_bands = fitted.bands;
@@ -1461,6 +1930,7 @@ impl EqApp {
         self.match_bands.clear();
         self.match_fitted_on.clear();
         self.match_version += 1;
+        self.preview_hold = PREVIEW_HOLD_FRAMES;
         slots
     }
 
@@ -2047,6 +2517,12 @@ impl EqApp {
             return;
         }
         self.params.view.edit(settings);
+        self.mark_dirty();
+    }
+
+    /// Tells the host the project changed outside its parameters: view state, the reference
+    /// chosen.
+    fn mark_dirty(&self) {
         if let Some(host) = &self.host {
             // The parameter-free transaction: the wrapper marks the project dirty and restores
             // nothing (nice-plug's PATCHES.md, *GUI-authored state dirty*).

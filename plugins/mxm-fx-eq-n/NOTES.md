@@ -19,7 +19,8 @@ The editor's modules, by phase: `mod.rs` its state, writes and keyboard commands
 frame; `graph.rs` the graph and its pointer; `column.rs` the cards; `history.rs` undo; `spectrum.rs`
 the analyser's editor half; `grab.rs` F3's hold, peaks and freeze; `finder.rs` F4's resonance
 finder, the rungs and the worker, its tests in `finder/tests.rs`; `matcher.rs` F5's EQ match, its
-tests in `matcher/tests.rs`; `external.rs` F7's external spectrum and collisions; `selection.rs`
+tests in `matcher/tests.rs`; `references.rs` its saved references; `crate::learned` what each EQ
+learned and what it is matched to, the project's; `external.rs` F7's external spectrum and collisions; `selection.rs`
 F8's selection, a group's edits and the clipboard; `tests.rs` the editor's tests.
 
 ## The parameters in full
@@ -81,6 +82,29 @@ undo it, and a request to turn solo off fails only when the shell already turned
 
 The editor ends it on close (E3). `solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell`
 and `audition.rs`'s tests hold the lifecycle.
+
+## Match's Preview is a transient command too
+
+Plan §7.6, decision 50; the kit's exception for a transient, non-value action
+(`plugins/AGENTS.md`, *Editor*), as band solo is.
+
+- **Why not a parameter.** Preview is an audition of bands not yet applied. Saved, a project would
+  reopen playing bands it does not hold; automated or rendered, a render would play them; so
+  nothing of it is a parameter, and the host's undo and automation never see it.
+- **The handoff.** `preview.rs` is a sequence lock of atomics with one writer, the editor: the
+  bands by the slot Apply would write, between two counts of a sequence, odd while it writes. The
+  audio thread reads the count, the bands and the count again, and keeps what it last read whole
+  when they differ. Latest wins: it is a state, not a queue of acts, so nothing is dropped that a
+  later write does not replace.
+- **The process boundary.** `MxmFxEqN::sync`, each block: only with an editor connected and never
+  offline; a band only in a slot that is Off, played static, unkeyed and Stereo, as Apply writes
+  it; each slot set once a block, since the engine starts a band's transition on any change. A
+  reset or a restore leaves it to the editor, which hands it over anew whenever the proposals
+  change. **The editor ends it** on close; after Apply it holds what it played for
+  `PREVIEW_HOLD_FRAMES`, while the host takes the bands written, so the sound does not dip.
+- **Tests**: `preview_plays_in_an_off_slot_with_an_editor_and_never_offline`,
+  `with_an_editor_open_processing_never_allocates` (a preview published mid-run),
+  `preview_hands_the_proposals_to_the_free_slots` and `preview.rs`'s own.
 
 ## The handoffs in full
 
@@ -150,10 +174,11 @@ The full text of each follows, in *The editor in full*.
 - **Auto gain** (plan §7.8, decisions 38–40; NOTES, *Auto gain*): the Output card's switch, on
   Phase's row; the DSP estimates the make-up (`loudness.rs`), its hover gives it
   (`Telemetry::make_up`), the output at it or ramping to it within one fade.
-- **Match** (plan §7.6, decisions 31–34; NOTES, *Match*): the Match card's toggle, offered with
-  the analyser on and the side-chain port; it proposes bells and shelves for the free slots, the EQ
-  as heard counted, **Apply** writing them all as one undo step; never saved; its fits on the same
-  worker, listening inside `spectrum::BUDGET_MS` (`match_cost`).
+- **Match** (plan §7.6, decisions 31–34 and 48; NOTES, *Match*): each EQ's Learn, kept with the
+  project, and Match to another EQ or a saved reference, offered with the analyser on, on every
+  layout; it proposes bells and shelves for the free slots, the EQ as heard counted, **Apply**
+  writing them all as one undo step; its fits on the same worker, learning inside
+  `spectrum::BUDGET_MS` (`match_cost`).
 
 ## The editor in full
 
@@ -372,25 +397,74 @@ The full text of each follows, in *The editor in full*.
     hard-edged notes smear lines tens of hertz wide, and a tempered scale shares harmonics between
     half its notes, which no persistence test can tell from a resonance (research §8.2). Under the
     melody a broadband bed at −10 dB; at −30 dB the bump is mostly seen through lines.
-- **Match in short** (plan §7.6, decisions 31–34): the Match card's toggle, under
-  Resonances, offered only with the analyser on and the side-chain port; Find, Match and Freeze
-  each end the others; it is never saved. It listens to the side chain and the pre-EQ input
-  (`matcher.rs`, the key copied while it listens) and proposes bells and shelves for the free
-  slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on the graph; **Apply**
-  writes them all, every field, one undo step, only on the basis they were fitted on. **Amount**
-  (40 %) and **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job
-  at a time (`editor::Task`); listening stays inside `spectrum::BUDGET_MS` (`match_cost`).
+- **Match in short** (plan §7.6, decisions 31–34 and 48): the Match card, under the Band card
+  (the owner, 2026-10-28), offered with the analyser on, on every layout. **Learn** learns this
+  track anew while on, its input before the EQ and its output after it, and keeps them with the
+  project while off (`crate::learned`, `EqParams::learned`); **Match to** chooses another EQ that
+  has learned, read through the registry entry that shares its field (`Instance::learned`), or a
+  saved reference. The owner asked for it (2026-10-28: *"This shit is too convoluted. How does
+  other plugins do it?"*), as Pro-Q's instances and Ozone's snapshots work. **Why each EQ learns
+  only its own track**: a voice-over's clips never play together, so nothing that needs two tracks
+  playing at once, a side chain, carries a reference; and one window learning another track
+  depends on that track's EQ running while it is watched, which Resolve did not do for every EQ
+  on the voice-over track, whatever played, until a new one was inserted there (2026-10-28).
+  **The lamp** beside Learn is green while its seconds heard rose within `LAMP_SECONDS`
+  (`update_lamp`), so a track sending nothing shows. **What was learned is drawn**
+  (`learned_lines`, the owner: *"I still cannot see the eq curve of what has been learned"*): the
+  reference and this track as lettered lines on the analyser's scale
+  (`graph::learned_display_db`), each read while it sounds, faint where it is still settling.
+  **No fixed time** (the owner, 2026-10-28: *"Yes drop the 10 secs"*): each frequency counts once
+  the halves of both learns agree there (`matcher::settled`). **Preview** plays the proposals in
+  the free slots before Apply (`preview.rs`), a transient command as solo is; after an Apply it
+  holds what it played for `PREVIEW_HOLD_FRAMES`, while the host takes the bands written.
+  Learn and a choice end Find and Freeze;
+  Find and Freeze end Learn, keeping what it learned, and hide the proposals. It proposes bells and
+  shelves for the free slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on
+  the graph; **Apply** writes them all, every field, one undo step, only on the basis they were
+  fitted on, what was learned and what it is matched to part of it. **Amount** (40 %) and
+  **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job at a time
+  (`editor::Task`); learning stays inside `spectrum::BUDGET_MS` (`match_cost`).
+- **Saved references** (plan §7.6, decision 48; `references.rs`): **Save** names this track's
+  output as learned, in a text field where Match to was, a name taken replaced only on a second
+  press; a JSON file per reference in `references/` beside the user presets (`references::root`),
+  listed every `REFERENCES_SECONDS` and chosen in **Match to** for any track; **Folder** shows the
+  folder. What Match learned and what it is matched to are host state beside the view settings
+  (`EqParams::learned`, `match_to`): `ViewSettings` is `Copy`, and they are not. Not a preset: a
+  preset holds parameter values only. The editor's tests give it a sandbox; `None` otherwise, so
+  no test writes in the player's folder.
 - **Match, the EQ match to a reference** (plan §7.6, `editor/matcher.rs`):
-  - *Listening.* The side chain (the reference) and the pre-EQ input (the source) on F4's rungs
-    (`finder::rung_specs`), width frames only. **Every frame enters the long-term power means**; only
+  - *Learning.* The input before the EQ and the output after it, two streams of one block's
+    audio, on F4's rungs (`finder::rung_specs`), width frames only. What is kept is cells, each
+    one's power per hertz, the bins inside its 1/48 octave averaged, the input as its covariance; a sine read through them agrees
+    across rates within 0.2 dB from 1 kHz up, and 0.5 dB at 100 Hz, where a cell is four or five
+    bins. Two noise learns at different rates differ by their noise, about 1 dB under 400 Hz in
+    11 s, so the test reads a sine. **Every frame enters the long-term power means**; only
     a heard one (−60 dBFS) counts towards the seconds heard. Gating the frames as F4 does weighed a
     quiet passage differently on rungs of different frame lengths: a 3 s gap in the reference put a
     step at 400 Hz and moved the low shelf by 1.2 dB. Counted, a quiet stretch is a constant the
     level takes out; what frames straddling it mix in still moves a 16 s match by under 0.5 dB.
-  - *The EQ as heard* is exact for its static curve: the source's covariance per bin (`|L|²`,
-    `|R|²`, `L·conj(R)`) through the 2×2 transfer of the channel stage then the mid/side stage
-    (`through_power`). With the known EQ counted, the measured reference and the computed
-    through-the-EQ level agree within 0.003 dB on every cell.
+  - *The EQ as heard*, for its static curve: the source's covariance per cell (`|L|²`, `|R|²`,
+    `L·conj(R)`), kept with the project, through the 2×2 transfer of the channel stage then the
+    mid/side stage at the cell's centre (`through_power`). Read per bin before it was kept per
+    cell, the measured reference and the computed through-the-EQ level agreed within 0.003 dB on
+    every cell; per cell they agree within the test's 0.5 dB with a Mid and a Left band in it.
+  - *How settled.* A learn's frames alternate between two halves every `CHUNK_SECONDS` of sound;
+    each half's smoothed level, their difference less its mean over the range, its RMS over the
+    smoothing's window, halved and widened by `√(1 + 2/n)` for `n` seconds in the smaller half, is
+    a cell's spread. Measured on the known difference's noise, each learn's spread in dB:
+
+    | Heard | 35 Hz | 60 Hz | 120 Hz | 250 Hz | 500 Hz | 1 kHz | 4 kHz | 12 kHz |
+    |---|---|---|---|---|---|---|---|---|
+    | 3 s | — | — | — | — | 0.92 | 0.14 | 0.12 | 0.10 |
+    | 6 s | 0.55 | 0.75 | 0.79 | 0.49 | 0.78 | 0.19 | 0.15 | 0.09 |
+    | 10 s | 0.44 | 0.50 | 0.44 | 0.55 | 0.37 | 0.06 | 0.10 | 0.04 |
+    | 20 s | 0.26 | 0.45 | 0.32 | 0.45 | 0.29 | 0.09 | 0.07 | 0.03 |
+    | 30 s | 0.16 | 0.32 | 0.23 | 0.31 | 0.15 | 0.05 | 0.04 | 0.04 |
+
+    Two of them together, the track's and the reference's, settle a cell under 0.5 dB and none
+    from 1 dB (`SETTLED_DB`, `UNSETTLED_DB`): the highs in three seconds, the lows in about
+    thirty, so the known difference's low shelf needs 30 s of it (`a_known_difference_is_matched`),
+    and two separate 11 s learns' 1 dB under 400 Hz is what the spreads read there.
   - *The ease* weighs the fit's error, not the target: easing the target to 0 dB had the fit
     answer a +4 dB low shelf with a −4.5 dB one at 30 Hz, undoing its own tail.
   - *The fit* names F4's `fit_bell` scheme; its regions are read on the weighted residual, and the

@@ -17,7 +17,9 @@ No control map (plan §6): no collection role fits on-demand bands.
 - `src/params.rs`: the parameters, their domains and readings.
 - `src/preset.rs`: the `mxm_preset::Instrument` seam and the factory set's design.
 - `presets/`: the factory set, generated from that design, never hand-edited.
-- `src/audition.rs`: band solo, the transient command.
+- `src/audition.rs`: band solo, a transient command.
+- `src/preview.rs`: Match's Preview, the other transient command (plan §7.6).
+- `src/learned.rs`: what Match learned of the track and what it is matched to, host state.
 - `src/telemetry.rs`: the editor link and the Out meter, two of mxm-kit's `PeakMeter`s.
 - `src/analyser.rs`: the analyser's audio half, and the share tap's (`Tap::capture_post`).
 - `src/instances.rs`: the registry other tracks' editors read this instance through, its id and
@@ -116,6 +118,14 @@ transaction.
   waits, locks or allocates. The editor ends it on close.
 - `solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell` and `audition.rs`'s tests.
 
+## Match's Preview is a transient command too — [NOTES.md § Why](NOTES.md#matchs-preview-is-a-transient-command-too)
+
+- **No id, state or preset value**, as solo (plan §7.6, decision 50); `preview.rs`, the bands by
+  the slot Apply writes, one writer, latest wins. **The shell plays it** each block only with an
+  editor connected, never offline, only in an Off slot; **the editor ends it** on close.
+- `preview_plays_in_an_off_slot_with_an_editor_and_never_offline` and
+  `preview_hands_the_proposals_to_the_free_slots`.
+
 ## The analyser's and the meter's handoffs — [NOTES.md § The handoffs](NOTES.md#the-handoffs-in-full)
 
 - **Analyser** (`analyser.rs`): preallocated pre/post blocks through a bounded `rtrb` ring; every
@@ -143,7 +153,7 @@ transaction.
 
 - **Layout**, the named exception to paged cards: the graph takes every spare point, the Out meter
   beside it, then **two fixed-width columns** of cards to its right, never under it (decision 30):
-  the Band card alone, then Output, Analyser, Resonances and Match, scrolling together; it opens at
+  the Band card and Match, then Output, Analyser and Resonances, scrolling together; it opens at
   `REFERENCE`, hugged to the taller column, narrows to `MINIMUM`, and every card is a tree passing
   the tree checks in every Band state, the Band card reserved to its tallest shape (the
   opening-size tests).
@@ -170,7 +180,10 @@ transaction.
   - **Every command is one undo step**: a proposal written (Find, Match's Apply), Split, a Phase
     or Resolution change, an edit of a selection's primary, which moves the group (`group_edit`).
   - **Nothing they hold is saved but view state** (`view.rs`, persisted, dirty-only): the
-    analyser's settings, the External line, Collisions, Find's Amount, Match's Amount and Detail.
+    analyser's settings, the External line, Collisions, Find's Amount, Match's Amount and Detail;
+    and Match's, what this EQ learned and what it is matched to (`EqParams::learned`, `match_to`,
+    host state beside it, every other EQ reading the first through the registry). A saved
+    reference is a file, never a preset (`references.rs`).
   - **The GUI thread's budget**: the analyser and Find's and Match's listening inside
     `spectrum::BUDGET_MS` of a frame (`analyser_cost`, `finder_cost`, `match_cost`), their
     searches and fits on `finder::Worker`.

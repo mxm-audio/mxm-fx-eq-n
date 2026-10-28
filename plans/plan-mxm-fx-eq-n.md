@@ -1,6 +1,23 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 31 — F8, working with several bands, designed for the owner's approval** (2026-10-16;
+**Revision 35 — Match settles by frequency, and is heard before it is applied** (2026-10-28; §7.6,
+decisions 49 and 50). The owner asked why proposals waited a fixed 10 s, and whether the match
+could be heard while Amount and Detail move: *"Yes drop the 10 secs"*, of a learn read in halves
+that counts each frequency once it has settled, and of a Preview played as solo is. **Built**
+(2026-10-28, F5.10); F5.7, Resolve, is the owner's. **Revision 34 — One learn per EQ, matched to another's** (2026-10-28; §7.6, decisions 31 and 48).
+The owner, after learning from another track in Resolve: *"This shit is too convoluted. How does
+other plugins do it?"*, then, of the design each other maker has, every instance learning its own
+track and one chosen to match to, *"yes, rebuild it that way"*. **Built** (2026-10-28, F5.9); F5.7,
+Resolve, is the owner's. **Revision 33 — Match under the Band card, a lamp for each learn, what was learned drawn**
+(2026-10-28; §7.6, decision 34). The owner, trying the learns in Resolve with nothing reaching the
+reference: *"make something go green or something when audio is comming in"*, *"could the match
+card not be under the band card?"*, and with a learn green, *"I still cannot see the eq curve of
+what has been learned"*. **Built** (2026-10-28, F5.8); F5.7, Resolve, is the owner's. **Revision 32 — F5's Match redesigned for the owner's approval** (2026-10-28; §7.6, decisions 31
+and 48). Having tried Match in Resolve, the owner asked for it to learn as Find does (*"yes,
+redesign it that way"*): the reference and the track each learned while on and held while off, the
+reference from this track, the side chain or another track, and saved by name so any track can be
+matched to it (decision 48, the owner's choice). **Signed by the owner** (2026-10-28, *"yes, go
+ahead"*); **F5.5–F5.6 built** (2026-10-28); F5.7, Resolve, is the owner's. **Revision 31 — F8, working with several bands, designed for the owner's approval** (2026-10-16;
 §7.9, decisions 44–47). **Its design approved by the agent-loop in round 3** (2026-10-16): round 1's
 three blockers — the selection's primary and order, the shortcuts against the shared keymap, F8.3's
 gate — and round 2's, a point's menu against the selection, with their other findings, all
@@ -88,6 +105,10 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
+| 35 | **Match settles by frequency, and is heard before it is applied** (2026-10-28), §7.6, the owner's asking: no fixed 10 s, each frequency counting once the halves of both learns agree there (decision 49); Preview, the proposals played in the free slots as a transient command (decision 50); the card five rows |
+| 34 | **One learn per EQ, matched to another's** (2026-10-28), §7.6, the owner's asking: Learn learns this track, its input and its output, kept with the project; Match to chooses another EQ that has learned, or a saved reference (decision 31, rewritten; 48); the From list, the two learns and learning another track while it plays gone; the card four rows |
+| 33 | **Match under the Band card, a lamp for each learn, what was learned drawn** (2026-10-28), §7.6, the owner's asking: each learn's lamp green while it hears sound; the card in the first column (decision 34, rewritten), the source on a row of its own and the two learns side by side; the window opening hugged to the first column, shorter; the reference and the track learned drawn as lines at the analyser's level, a learn's level read while it sounds |
+| 32 | **F5's Match redesigned** (2026-10-28), §7.6, for the owner's approval: a reference and the track each learned and held, as Find is (decision 31, rewritten); the reference from this track's input, the side chain or another MXM EQ's output; references saved by name in a folder beside the user presets, any of them chosen for any track (decision 48); Match offered on every layout |
 | 31 | **F8 designed** (2026-10-16), §7.9, for the owner's approval: a selection of bands and its primary, by Shift-click, a rectangle on the background, SELECT and Select all (decision 44); a group moving by one ratio, offset and factor, stopping at its first member's limit (45); copy, cut and paste through a clipboard in the process (46); global transforms from the selection and Invert gain, no Shift parameter (47) |
 | 28 | **F5 designed** (2026-10-15), §7.6, for the owner's approval: the side-chain input is the reference (decision 31); the fit writes only into free slots, the EQ as heard counted (decision 32), through the source's covariance; one Amount, 40 % by default (decision 33); the Match card (decision 34), signed with 33 and 34's alternatives, a Detail control and the card under Resonances; power-mean long-term spectra of both inputs before the EQ, smoothed by the wider of a third of an octave and an ERB, the level taken out after the Amount so the loudness is kept, Ramos & López's greedy fit refined by Levenberg–Marquardt on the actual responses |
 | 27 | **F4 designed** (2026-10-15), §7.5, for the owner's approval: the finder proposes static cut bells the player applies, never continuous suppression (decision 27); a long listen to the input that keeps peaks fixed while the music moves (decision 28); one Amount, 20 % by default (decision 29); a second column of cards (decision 30); its design approved by the agent-loop in round 5: the rungs, the five spectra and the placement order made exact, the depths solved by projected Gauss–Seidel on the actual responses, a pair counted as one candidate, Amount's migration, the DOX closeout |
@@ -144,10 +165,10 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 27 | **F4 proposes static cut bells and the player applies them**: the EQ's own bands, never continuous per-bin suppression; the alternative proposes dynamic bands (§7.1) directly (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 28 | **The finder listens for peaks that stay put**: a long, high-resolution listen to the input that keeps a peak only if it holds its frequency through most of what was heard; the alternative takes F3's frozen peaks as the candidates (§7.5) | **Settled** (owner, 2026-10-15) | F4.1 |
 | 29 | **One Amount, 20 % by default**: each cut takes that share of its peak's prominence, at most 12 dB; the alternative starts at 50 % (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
-| 31 | **The reference is the side-chain input**, the track the host routes there, the one F3 draws (decision 26); the alternative adds **Capture**, a second source: pressed, the EQ's own input before the EQ becomes the reference until pressed again (the reference played through the EQ, or the part of the song to match to), and Match then takes the input heard after the capture as the source; the capture kept while the editor is open, never saved (§7.6) | **Settled** (owner, 2026-10-15) | F5.1 |
+| 31 | **Each EQ learns its own track, and is matched to another's**, as every maker's match works (Pro-Q's instances, Ozone's snapshots, §10.1): one toggle, **Learn**, learning this track's input before the EQ and its output after it anew while on, and off keeping them with the project; **Match to** chooses another EQ that has learned, by its track's name (§7.8), or a saved reference; the alternative learned the reference and the track in one window, from this track, the side chain or another track while that one played (§7.6) | **Settled** (owner, 2026-10-28: *"yes, rebuild it that way"*) | F5.9 |
 | 32 | **The fit writes only into free slots, the EQ as heard counted**, so the player's bands never change; the alternative replaces the EQ, every band refitted (§7.6) | **Settled** (owner, 2026-10-15) | F5.1 |
 | 33 | **One Amount, 40 % by default, and Pro-Q's detail control, a band count the player sets**; the proposal had no detail control, the fit stopping only where what is left is just audible or the slots run out (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
-| 34 | **The Match card goes under Resonances** in the second column, beside the other proposal tool, the window opening taller; the proposal put it under the Band card in the first (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
+| 34 | **The Match card goes under the Band card** in the first column, which is then the taller, the window opening hugged to it (§7.6) | **Settled** (owner, 2026-10-28: *"could the match card not be under the band card?"*) | F5.8 |
 | 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 37 | **Dynamic bands are held at their drawn gain in Linear phase**, coming back in Zero latency; the alternative lets them move through the kernel, as Pro-Q allows up to High: a new kernel every 21 ms, their detector on the input delayed by the latency so it hears what the output plays, the gain then acting at least one update interval later still (a bank designed, taken at a boundary and faded in) and an Attack under 21 ms acting as 21 ms, at the cost of a kernel design every interval while any band moves (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
@@ -160,6 +181,9 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 44 | **The selection by Shift-click (adding or taking out one band) and a rectangle dragged on the background**, SELECT with the arrows and Ctrl/Cmd+A, the primary band the one the card shows and solo plays; the alternative is Pro-Q's own: Ctrl/Cmd-click adds or takes out one band and Shift-click selects a consecutive range, which takes the modifier this EQ holds for solo on a point (§5.2), so solo would move to another (§7.9) | **Settled** (owner, 2026-10-16) | F8.1 |
 | 45 | **A group moves by one ratio in frequency, one offset in gain, one factor in Q, and stops at its first member's limit**, keeping the curve's shape; the alternative is Pro-Q's gain scaling, each gain multiplied by the dragged band's ratio, so 0 dB bands never move and cuts and boosts spread apart (§7.9) | **Settled** (owner, 2026-10-16) | F8.1 |
 | 46 | **Copy and paste through a clipboard in the process**, shared by every instance as the registry is, pasting into free slots and never over a band; the alternative uses the system clipboard as text, which also reaches other processes and programs, through each system's clipboard in the window library (§7.9) | **Settled** (owner, 2026-10-16) | F8.2 |
+| 48 | **What an EQ learned is saved by name as a reference**, a file per reference in a folder beside the EQ's user presets, listed in Match to and chosen for any track in any project, the choice saved with the project; the alternative keeps a reference only while the editor is open and keeps a match by saving the applied bands as an ordinary preset, which matches only material like the track it was fitted on (§7.6) | **Settled** (owner, 2026-10-28: the reference saved) | F5.6 |
+| 49 | **A frequency counts in the match once it has settled**, no fixed time waited for: a learn read in two halves, a second of sound each in turn, whose agreement after smoothing is its spread; a frequency counts in full while the track's and the reference's spreads together are under 0.5 dB and not at all from 1 dB, so the highs match in seconds and the lows join as they settle; the alternative waited 10 s of each for every frequency at once (§7.6) | **Settled** (owner, 2026-10-28: *"Yes drop the 10 secs"*) | F5.10 |
+| 50 | **Preview plays the proposals before they are applied**, following Amount and Detail, as a transient command as band solo is (§5.2): no parameter written, never in a render, only with an editor; the alternative applied, listened and undid (§7.6) | **Settled** (owner, 2026-10-28: *"Yes"*) | F5.10 |
 | 47 | **Global transforms come from the selection**: Select all, then drag or the arrows, and Invert gain on the menu; no Shift parameter; the alternative adds Bitwig's and DMG's **Shift**, an automatable parameter moving every band by one ratio in the DSP, a host able to ride it (§7.9) | **Settled** (owner, 2026-10-16) | F8.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 22 | **Channel bands before mid/side bands**, so slot order never matters; the alternative allows one family per instance, Mid and Side unavailable while a Left or Right band exists (§7.3) | **Settled** (owner, 2026-10-15) | F2.1 |
@@ -1204,7 +1228,7 @@ proposed and Find's hover says why. Hover only, no help text.
 **A second column** (decision 30). The column stands at 1,048 of the 1,080 px budget, so a fourth
 card cannot go under the others, and the owner allowed the window to grow sideways (2026-10-15,
 *"you can also expand sideways"*). The cards become **two columns** right of the graph: **Band**
-alone in the first, **Output, Analyser and Resonances** in the second. The window opens 328 px
+in the first, **Output, Analyser and Resonances** in the second; Match went under Band (decision 34). The window opens 328 px
 wider, inside the 1,920 px budget, hugged to the taller column. §5.1's rules hold for the pair:
 never under the graph, the graph shrinking to its floor first, then the surface scrolling sideways;
 the columns scroll vertically together.
@@ -1245,7 +1269,7 @@ reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192
 | **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column (opening 1,532 × 692); the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md`. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `finder_cost`'s, recorded in the plugin's `NOTES.md` (*Find*) | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
 
-### 7.6 F5 — EQ match to a reference (revision 28, for the owner's approval)
+### 7.6 F5 — EQ match to a reference (revision 28; redesigned in revisions 32 and 34)
 
 The next phase in the owner's order (decision 9). Matching is solved in outline, the same in every
 source (research §10.1): the long-term spectra of a reference and of the source, their difference
@@ -1255,34 +1279,60 @@ pitfalls every maker warns of (§10.7): matching notes instead of tone, narrow f
 little smoothing, the extremes over-corrected, short analyses, an analysis taken through the EQ
 itself, and the level.
 
-**The reference** (decision 31) is **the side-chain input** (§7.2), the reference track routed to
-the EQ's side chain by the host while the song plays: the reference F3 already draws (decision 26)
-is the one matched. Match is offered only on a layout with the side-chain port, and, like Find,
-only with the analyser on. While Match listens the key's spectrum is drawn as the Side chain view
-draws it, whatever that view's setting, and the audio thread copies the key (`Telemetry`'s switch
-is the view's or Match's), so the audio path does not change.
+**Each EQ learns its own track, and is matched to another's** (decision 31; the owner,
+2026-10-28, having tried two learns in one window in Resolve), as every maker's match works
+(§10.1): Pro-Q's instances each analyse their own track, and one chooses another to match to.
+**Learn**, one toggle on the Match card: on, it learns this track anew from what plays, from
+nothing, **its input before the EQ**, which the match changes, and **its output after it**, the sound
+another EQ matches to; off, it keeps both **with the project**, host state, never a preset's
+(`crate::learned`). **Match to** chooses what this track is matched to: another MXM EQ in the
+process that has learned, by its track's name (§7.8, decision 41), as that one
+learned it, whether or not its window is open and after a reload, the registry's entry sharing its
+persisted field; or a saved reference (decision 48). A voice-over is matched clip to clip: the EQ on
+the clip that sounds right learns while it plays, the EQ on the others learns while they play, and
+the second is matched to the first. Like Find, Match is offered only with the analyser on, on
+every layout.
+
+**What was learned is kept.** A reset breaks Learn's frames and keeps what it heard, as Find's
+does (§7.5: Resolve resets as it plays on from clip to clip). What it keeps is the long-term
+spectra the fit reads, as **cells** (below), so it does not depend on the rate it was learned at:
+per cell the input's covariance and the output's level, while it sounds. **Save** keeps this
+track's output under a name (decision 48) for any track in any project.
 
 **What it writes** (decision 32): **bands in the free slots only, the EQ counted.** The player's
 bands are never changed; what the EQ as heard already does is part of the match, so the fit adds
 what is left: a band already there is not proposed again, and after an Apply Match shows nothing
 left to add. Applied, the bands are ordinary static bands, editable and deletable, as F4's.
 
-**Match**, a toggle on its own card, **listens to both inputs before the EQ**: the side chain, and
-the input before the EQ, so the analysis is never taken through the EQ (§10.7).
-- **The long-term spectra.** Each input's width frames on F4's rungs (§7.5: 8,192 points, Hann,
-  half a frame's hop, each rung its own frequencies), as **power means** over every frame, per bin
-  and in linear units: the reference's channels' power averaged (mono: the one); the source's
-  **covariance**, `S_LL = E|X_L|²`, `S_RR = E|X_R|²` and the complex `S_LR = E[X_L·conj(X_R)]`, so
-  the EQ can be counted as heard (below). Only then summed into F4's 1/48-octave cells and taken to
-  dB. **Every frame counts**, a quiet one with its little power and its time, so each rung's mean is
-  a time average alike and a silent stretch in either input scales every rung the same, a constant
+**The track is learned before the EQ**, so the analysis is never taken through this EQ (§10.7); a
+reference, another EQ's output, is heard after that track's EQ, as it sounds.
+- **The long-term spectra.** Learn's width frames on F4's rungs (§7.5: 8,192 points, Hann,
+  half a frame's hop, each rung its own frequencies), as **power means** over every frame of the
+  learn, per bin and in linear units: the output's channels' power averaged (mono: the one); the
+  input's **covariance**, `S_LL = E|X_L|²`, `S_RR = E|X_R|²` and the complex `S_LR = E[X_L·conj(X_R)]`,
+  so the EQ can be counted as heard (below). Both are averaged into F4's 1/48-octave cells as power
+  per hertz, the output's taken to dB, and kept so. **Every frame of a learn counts**, a quiet one
+  with its little power and its time, so each rung's mean is
+  a time average alike and a silent stretch in a learn scales every rung the same, a constant
   the level takes out: it changes nothing but by what frames straddling it mix in, which a longer
   listen dilutes. (Gating the frames, as F4 does, weighed a quiet passage differently on rungs of
   different frame lengths, a step at their edges — found building F5.1.) Only a heard frame (at
-  least −60 dBFS, §7.5) counts towards the seconds heard. Proposals appear once each input has been heard for
-  **10 s**, and are fitted again about twice a second while it listens and whenever the EQ or Amount
-  moves; the card reads how long each has been heard, and Match's hover advises 30 s or more
-  (FabFilter's advice, §10.1).
+  least −60 dBFS, §7.5) counts towards the seconds heard. Proposals are fitted about twice a second
+  while Learn learns and whenever the EQ, Amount, Detail, what was learned or what it is matched to
+  changes; the card reads how long this track has been learned, and Learn's hover advises 30 s or
+  more (FabFilter's advice, §10.1).
+- **How settled it is** (decision 49): no fixed time is waited for. Every second of sound heard,
+  a learn's frames go to its other half; each half's level is smoothed as the match reads it, and
+  their difference, its mean over the range taken out (a level the match takes out), gives each
+  cell's **spread**: the RMS of what is left over the smoothing's window, halved for the mean of
+  two, widened by `√(1 + 2/n)` while the smaller half holds `n` seconds, as an estimate from few is
+  less sure. Kept with what was learned, and in a saved reference (one without it is taken as
+  settled). A cell counts in the fit by the track's and the reference's spreads together, `√(a² +
+  b²)`: in full at or under **0.5 dB**, not at all from **1 dB**, linearly between, multiplying the
+  ease's weight and the level's. Measured on noise, the highs settle in three seconds and the lows,
+  read on long frames, in about thirty; a voice's take longer, its sounds differing more than
+  noise's. Two learns of noise 11 s long differed by up to 1 dB under 400 Hz, which the spreads
+  then read (NOTES, *Match*).
 - **Smoothed** in dB by a Hann window in log-frequency **as wide as the wider of a third of an
   octave and one ERB** (`24.7 + 0.108 f` Hz, as octaves `log2((f + ERB/2)/(f − ERB/2))`): a third of an octave above about 200 Hz removes the
   comb of a key's notes (§10.2: twelve peaks an octave; a third of an octave is four of their
@@ -1290,13 +1340,15 @@ the input before the EQ, so the analysis is never taken through the EQ (§10.7).
   averages across bass notes in different keys. A key's coarser pattern, one or two cycles an
   octave, is tone balance at that resolution and stays, as in every product. Linear in dB,
   smoothing each spectrum then subtracting is smoothing their difference (§10.2).
-- **The difference** `D(f) = L_ref(f) − L_src(f)`, `L_src` the source's channels' power averaged.
-- **What the EQ as heard does**, `E(f)`, exactly for its static curve: the source's smoothed level
-  through the EQ less its own. Per bin the EQ is the 2×2 transfer `H` of the graph's two stages
-  (§7.3: the channels' `diag(dl, dr)`, then mid/side's `diag(dm, ds)`), each band's complex response
-  from the numbers the audio runs (`Cascade::response`), gain scale, bypass and placement included;
-  the output power is `trace(H·S·Hᴴ)` on the linear covariance `S`, summed into cells and only then
-  taken to dB and smoothed as the spectra are. So a Mid or Side band, whose
+- **The difference** `D(f) = L_ref(f) − L_src(f)`, `L_src` the track's channels' power averaged.
+  Where the reference has no level — a cell above what its rate read, or one no frame reached —
+  `D` is not known there, and the fit's weight there is 0.
+- **What the EQ as heard does**, `E(f)`, for its static curve: the source's smoothed level
+  through the EQ less its own. Per cell the EQ is the 2×2 transfer `H` of the graph's two stages at
+  the cell's centre (§7.3: the channels' `diag(dl, dr)`, then mid/side's `diag(dm, ds)`), each band's
+  complex response from the numbers the audio runs (`Cascade::response`), gain scale, bypass and
+  placement included; the output power is `trace(H·S·Hᴴ)` on the cell's linear covariance `S`, only
+  then taken to dB and smoothed as the spectra are. So a Mid or Side band, whose
   power on a stereo source depends on how alike its channels are, counts as heard. A dynamic band
   counts at its drawn gain, its curve at rest; what it does while it moves is not modelled. Mono:
   the cascade's own response. A proposal is a Stereo band, the same response on both channels,
@@ -1357,7 +1409,7 @@ asks about 15 over the range, so the free slots are rarely what stops it.
 **The fit runs on F4's worker thread** (§7.5), one job at a time, **the latest winning**: a request
 made while a fit runs waits, a newer one replacing it, and runs when the worker is free. Each fit
 carries a copy of the spectra, the listen it was made for and **its basis**: what was heard so far,
-the EQ as heard, the free slots, Amount and Detail. A result is drawn only while Match is on that listen;
+the reference matched, the EQ as heard, the free slots, Amount and Detail. A result is drawn only while Match is on that listen;
 one made on an older basis is drawn until the newer fit arrives, but **Apply writes only proposals
 fitted on the current basis** — the EQ, the free slots, Amount and Detail as they stand; what was
 heard moves on with every frame, and a fit half a second old is still the match — and is
@@ -1371,7 +1423,9 @@ to ten sections, §10.4): since bands come in order of importance, a lower Detai
 important ones, and the fit still stops where nothing left is just audible, so a higher Detail
 never adds an inaudible band. Amount and Detail are view state, saved with the analyser's settings
 (§4), Amount in whole percent: a project from before loads 40 % and 8, a change marks the project
-dirty. Match, what it heard and its proposals are the editor's moment, never saved.
+dirty. What each EQ learned and what it is matched to are host state, saved with the project
+beside the view settings (`EqParams::learned`, `match_to`); the proposals are the editor's moment,
+never saved.
 
 **On the graph**, while Match has proposals: **the curve they would make**, dashed over the EQ's,
 as F4's, and each proposed band a **hollow diamond** at its centre and gain, labelled with its
@@ -1381,20 +1435,68 @@ card, writes every proposal into the lowest free slots as one undo step, each sl
 (`slot_writes`), a static, unkeyed Stereo bell or shelf. With every slot in use nothing is
 proposed and Match's hover says why.
 
-**One proposal set at a time**: turning on any of Find, Match and Freeze turns the other two off;
-the analyser off, or a layout without the side-chain port, ends Match. A reset or a new rate
-starts the listen again, as Find's (§7.5), and what an earlier listen found is never drawn in a
-later one; Match never outlives the editor.
+**One proposal set at a time**: turning Learn on, or choosing something to match to, ends Find and
+Freeze; turning on Find or Freeze, or the analyser off, ends Learn, keeping what it learned, and
+Match proposes nothing while Find or a freeze is on. Choosing what to match to again brings its
+proposals back. What was learned, being cells, outlives a new rate; what an earlier learn found is
+never drawn in a later one.
 
-**The Match card** (decision 34) holds **Match**, **Amount**, **Detail**, the heard reading and
-**Apply**, hover only, no help text. It goes **under Resonances in the second column**, beside the
-other proposal tool: the second column, about 610 px before it, grows by the card, and the window
-opens taller, hugged to it, inside the 1,080 px budget. §5.1's rules hold.
+**Saved references** (decision 48; the owner, 2026-10-28: the reference saved, so any track can be
+matched to it). **A reference is not a preset**: a preset holds parameter values only (§5.4, the
+kit's conventions), and a reference is a measurement. A file per reference, in a `references`
+folder beside the EQ's user presets (`<config>/mxm/dk.mxm.mxm-fx-eq-n/`, mxm-kit's
+`mxm_preset::library` layout), so an install never touches them; **a folder, not a dialog**, as the
+kit's banks are: **Folder** shows it, and a reference is renamed or deleted there.
+- **The file**, JSON: a format name and version, the reference's name, the seconds heard, the rate
+  it was learned at, and its level per 1/48-octave cell from 20 Hz in dB while it sounds,
+  unsmoothed (the fit smooths), `null` where nothing was read. One that does not parse, or of a newer version, is listed
+  marked *cannot read*, the reason on the list's hover, and cannot be chosen.
+- **Save** keeps this track's output as learned under a name, asked for in a text field where
+  Match to was, the track's name offered first; Save or Enter saves, BACK leaves it; a name already
+  taken is replaced only on a second press, the button reading *Replace*. Saving needs something
+  learned, Learn off; what this track is matched to does not change.
+- **Match to remembers a saved one** by name with the project. If its file has gone when the
+  project opens, the list reads *Missing* and Match proposes nothing until another is chosen. Another
+  EQ chosen is remembered by its instance's id (§7.8), read *not learned* while it has nothing, and
+  *Track not found* while it is not in the process.
 
-**Not in F5**: a reference from a file, a capture of the EQ's own input (decision 31's
-alternative), or another instance; matching left, right, mid or side separately; a dynamic band's
-motion; separate boost and cut ceilings or frequency handles; applying one
-proposal of a fit alone; linear-phase matching (F6); matching dynamics.
+**The Match card** (decision 34) holds five rows, top to bottom as it is used: **Learn**, its
+**lamp** and how long this track has been learned; **Save** and **Folder**, which shows the folder;
+**Match to** (*Nothing*, every other EQ that has learned by its track's name, then the saved
+references by name, one sharing a track's name marked *saved*); **Amount** and **Detail** side by
+side; **Preview** and **Apply**. Hover only, no help text. **The lamp** (the owner, 2026-10-28) is green and
+filled while Learn hears sound, its seconds heard rising within the last `LAMP_SECONDS`, and a ring
+otherwise, so its state never rests on hue: on and dark says nothing is playing on this track. The
+card sits **under the Band card in the first column**, which is then the taller, and the window
+opens hugged to it (`REFERENCE`, the opening-size tests). §5.1's rules hold.
+
+**Preview** (decision 50; the owner, 2026-10-28): while on, the proposals are heard as if applied,
+each in the free slot Apply would write, its gain under the gain scale, following Amount and Detail
+as they move; off plays the EQ as it is, so the switch is the comparison. **A transient command**,
+as band solo is (§5.2; `plugins/AGENTS.md`'s exception): no parameter is written, so a project never
+reopens previewing, a render never plays a proposal and the host's undo and automation see nothing.
+The editor hands the bands over (`preview.rs`); each block the shell plays them only with an editor
+connected and never offline, each only in a slot that is Off, static, unkeyed and Stereo, so a slot
+the player has since used is the player's; closing the window ends it. After Apply what it played
+is held for half a second, while the host takes the bands written, so the sound does not dip. While
+it is on, the dashed curve is the one heard.
+
+**What was learned is drawn** (the owner, 2026-10-28): while Learn is on, once it has been on in
+this window, or while this track is matched to something, the graph draws the reference matched to
+and this track's input as learned as two lines, solid where the match uses them and faint where
+they are still settling, lettered
+**Ref** and **Track** at their ends and never told apart by hue alone, behind the bands, each
+smoothed as the match reads it. They sit on the analyser's scale, so they line up with the live
+spectrum: a cell's power per hertz times the display's twelfth-of-an-octave band, both scaled so a
+full-scale sine reads 0 dB, tilted as the display is (`learned_display_db`). **A learn's level is
+read while it sounds**: every frame counts towards its long-term mean, pauses too, so its cells are
+raised by the seconds learned over the seconds heard; a learn left on through a voice-over's
+pauses reads the level of the voice. It is one level for every cell, so it changes no match, and a
+saved reference holds it. The lines are made anew at most every `LINES_SECONDS` while Learn runs.
+
+**Not in F5**: a reference from an audio file; matching left, right, mid or side separately; a
+dynamic band's motion; separate boost and cut ceilings or frequency handles; applying one proposal
+of a fit alone; linear-phase matching (F6); matching dynamics.
 
 **Tests** (written at the end): the reference a noise through a known EQ (a +4 dB low shelf at
 120 Hz, a −3 dB bell at 800 Hz Q 1.4, a +3 dB bell at 3 kHz Q 1, a −2 dB high shelf at 9 kHz) and
@@ -1408,14 +1510,30 @@ against the rendered output's long-term spectrum, within 0.5 dB); a difference t
 lines a semitone apart (each 12 dB over a flat floor, at any offset) smoothed flat within 0.25 dB
 from 30 Hz up, so proposing nothing; the EQ already carrying the difference proposing nothing,
 and after an Apply nothing left; with three free slots, and at Detail 3, exactly the unbounded
-fit's state after its third band; a silent stretch in the side chain changing the match by under
-0.5 dB anywhere over the range, and nothing proposed before 10 s of each;
+fit's state after its third band; a silent stretch in the reference changing the match by under
+0.5 dB anywhere over the range; three seconds of the known difference proposing the 3 kHz bell and
+nothing under 300 Hz, thirty proposing the low shelf too; a reference's unread or unsettled cells
+weighing nothing; Preview heard in an Off slot with an editor, giving way to a band the player puts
+there, never offline, never allocating, and handed over in the slots Apply writes, nothing once off
+or closed; Learn kept when
+turned off, read back whole from the project's state by another instance, and learning anew when
+turned on again, the lamp lit while it hears and dark once nothing comes, a reset keeping what it
+heard and a restart forgetting it; one EQ matched to another that has learned, proposing, one that
+has learned nothing not offered; a learn with pauses reading within 0.5 dB of one without, from
+60 Hz to 8 kHz; the learned lines of white noise and of a tilted one at the analyser's level at
+1 kHz, within 1 dB; a reference saved and read back whole, cell for cell; a sine's power read from a
+reference learned at 44.1 kHz and at 96 kHz the same within 0.2 dB at 1 and 8 kHz, and 0.5 dB at
+100 Hz, where a cell is a few bins (two noise learns at different rates differ by their noise, up
+to 1 dB in 11 s, and test nothing); a reference's unread cells weighing nothing; a file that does
+not parse or is of a newer version listed with its reason; a name taken replaced only on
+the second press, saving not changing what is matched to; the saved one chosen holding what this
+track sounded like, the choice saved with the project, *Missing* when its file has gone;
 the fit deterministic, the region rules' edges (a zero point, a region at each end and at both,
 the tie); a newer request superseding a waiting one, an older listen's result dropped, Apply
-refused on a stale basis; the toggles' rules, Match not offered without the port, the key copied
-only while it is wanted; Apply one undo step, every field written over a stale Off slot; Amount and Detail
-saved, an old project at 40 % and 8, Match never saved; the opening size with the Match card, hugged,
-and the keyboard reaching it; the listening inside the analyser's 2 ms budget (§4) at 192 kHz.
+refused on a stale basis; Learn's rules against Find, a freeze and the analyser, Find hiding the
+proposals and choosing again bringing them back; Apply one undo step, every field written over a stale Off slot; Amount and Detail
+saved, an old project at 40 % and 8, Match never saved; the Match card under the Band card, the
+opening size hugged to the first column, and the keyboard reaching it; the listening inside the analyser's 2 ms budget (§4) at 192 kHz.
 
 **Delivery** (tests at the end, one review over F5.1–F5.2):
 
@@ -1424,7 +1542,14 @@ and the keyboard reaching it; the listening inside the analyser's 2 ms budget (�
 | **F5.0** | Decisions 31–34, signed; their statuses and the plan's status line updated. **Done** (2026-10-15) | Owner |
 | **F5.1** | The match's analysis and fit: the two long-term spectra and the source's cross-spectrum, smoothing, the difference, the EQ as heard, the target and its level, the greedy fit and its refinement (`editor/matcher.rs`), run on the worker. **Built** (2026-10-15), with the match's tests: the ease made the fit's weight and every frame counted, found by them | Unit tests at the end |
 | **F5.2** | The editor: the Match card, Amount, Apply, the graph's curve and diamonds, the toggles' rules, the key's switch, the worker's latest-wins jobs; the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, the scope descriptions in the existing Child DOX Index rows of `plugins/AGENTS.md` and the root `AGENTS.md`, and this plan's status line and F5's delivery rows. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `match_cost`'s, recorded in the plugin's `NOTES.md` (*Match*) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin and its host tests, `cargo test -p mxm-fx-eq-n`, the release cost measurement; one agent-loop review of F5.1–F5.2 |
-| **F5.3** | The owner by ear, in Bitwig with a reference on the side chain | Owner sign-off |
+| **F5.3** | The owner by ear, in Bitwig: one track matched to another | Owner sign-off |
+| **F5.4** | Decisions 31, rewritten, and 48, signed; their statuses and the plan's status line updated. **Done** (2026-10-28) | Owner |
+| **F5.5** | The learns: the matcher's reference and track learned apart, each held; the reference as cells; its three sources, another track watched while it is learned; a reset keeping a learn; the fit reading cells, unread ones unweighted. **Built** (2026-10-28) | Unit tests at the end |
+| **F5.6** | Saved references: the folder, the file and its version, Save and Replace, the list, *Missing*, Folder; the card's new rows; the chosen name saved with the project; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
+| **F5.7** | The owner by ear, in Resolve: one voice-over clip matched to another | Owner sign-off |
+| **F5.10** | Decisions 49 and 50: a learn's halves and spreads, kept and saved; the fit's weights by how settled each cell is, no fixed time; the learned lines faint where unsettled; Preview (`preview.rs`), the shell playing it in the Off slots; the card's five rows; the DOX: the plugin's `AGENTS.md` and `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
+| **F5.9** | Decision 31, rewritten again, and 48: one Learn per EQ, its input and its output kept with the project (`crate::learned`, the registry sharing it); Match to and its choices; the fit reading cells; the card's four rows; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
+| **F5.8** | Decision 34, rewritten: the card under the Band card, its rows, a lamp for each learn (`update_lamps`); what was learned drawn (`learned_lines`), a learn's level read while it sounds; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 
 ### 7.7 F6 — phase modes (revision 29, for the owner's approval)
 

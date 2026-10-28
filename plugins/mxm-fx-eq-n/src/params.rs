@@ -532,6 +532,12 @@ pub struct EqParams {
     /// editor showing this track finds it again after a reload.
     #[persist = "instance"]
     pub identity: crate::instances::IdentityField,
+    /// What Match learned of this track, and what it matches it to (plan §7.6): host state beside
+    /// the view settings, never a preset's.
+    #[persist = "match-learned"]
+    pub learned: crate::learned::LearnedField,
+    #[persist = "match-to"]
+    pub match_to: RwLock<crate::learned::MatchTo>,
 }
 
 impl Default for EqParams {
@@ -593,6 +599,8 @@ impl Default for EqParams {
             preset: RwLock::new(mxm_preset::PresetIdentity::default()),
             view: crate::view::ViewField::default(),
             identity: crate::instances::IdentityField::default(),
+            learned: crate::learned::LearnedField::default(),
+            match_to: RwLock::new(crate::learned::MatchTo::default()),
         }
     }
 }

@@ -1,6 +1,8 @@
 //! The match against plan §7.6: what it proposes for a known difference, what it leaves alone,
 //! how it counts the EQ, keeps the level and orders its bands.
 
+use std::sync::Arc;
+
 use super::*;
 use mxm_fx_eq_n_dsp::Placement;
 use mxm_fx_eq_n_dsp::filter::Filter;
@@ -43,6 +45,12 @@ fn cascades(bands: &[MatchBand]) -> Vec<Cascade> {
         .collect()
 }
 
+/// `block` learned: its input before the EQ the track's, its side chain as the output, the
+/// reference.
+fn hear(matcher: &mut Matcher, block: &Block) {
+    matcher.ingest_streams(block, &block.pre, &block.key);
+}
+
 /// A matcher that heard `seconds` of what `next` gives, sample by sample: the input's left and
 /// right, then the side chain's.
 fn heard_for(seconds: f32, mut next: impl FnMut() -> ([f32; 2], [f32; 2])) -> Matcher {
@@ -65,7 +73,7 @@ fn heard_for(seconds: f32, mut next: impl FnMut() -> ([f32; 2], [f32; 2])) -> Ma
                 block.key[channel][index] = key[channel];
             }
         }
-        matcher.ingest(&block);
+        hear(&mut matcher, &block);
     }
     matcher
 }
@@ -126,13 +134,13 @@ struct Fitted {
 }
 
 fn fitted(matcher: &Matcher, heard: &HeardEq, amount: f32, max_bands: usize) -> Fitted {
-    let cells = curves(matcher.spectra(), heard);
+    let cells = curves(&matcher.learned(), &matcher.reference(), heard);
     let level = level_offset(&cells, amount);
     let points = points(heard.sample_rate);
     let target = target(&cells, &points, amount, level);
     let bands = fit(
         &target,
-        &weights(&points),
+        &weights(&points, &cells),
         &points,
         heard.sample_rate,
         max_bands,
@@ -153,7 +161,11 @@ fn left_after(fitted: &Fitted) -> Vec<f32> {
         .iter()
         .map(|band| band.responses(&fitted.points, f64::from(RATE)))
         .collect();
-    left_weighted(&fitted.target, &weights(&fitted.points), &responses)
+    left_weighted(
+        &fitted.target,
+        &weights(&fitted.points, &fitted.cells),
+        &responses,
+    )
 }
 
 fn octaves(a: f32, b: f32) -> f32 {
@@ -165,8 +177,9 @@ fn octaves(a: f32, b: f32) -> f32 {
 /// bands in all.
 #[test]
 fn a_known_difference_is_matched() {
-    let matcher = fixture(12.0, 1.0);
-    assert!(matcher.spectra().listened());
+    // Long enough for the lows to settle, the low shelf's among them.
+    let matcher = fixture(30.0, 1.0);
+    assert!(matcher.learned().seconds > 0.0);
     for amount in [1.0, 0.4] {
         let fit = fitted(&matcher, &flat(), amount, 24);
         let left = left_after(&fit);
@@ -281,8 +294,8 @@ fn a_mid_band_and_a_left_band_are_counted_as_heard() {
         let out = [m + s, m - s];
         (out, out)
     });
-    let expected = levels(through_eq.spectra(), &heard_eq);
-    let heard = levels(rendered.spectra(), &flat());
+    let expected = levels(&through_eq.learned(), &through_eq.reference(), &heard_eq);
+    let heard = levels(&rendered.learned(), &rendered.reference(), &flat());
     for cell in 0..CELLS {
         let freq = cell_freq(cell);
         if !(RANGE.0..=RANGE.1).contains(&freq) {
@@ -335,11 +348,11 @@ fn what_the_eq_already_does_is_not_proposed_again() {
 #[test]
 fn three_bands_are_the_unbounded_fits_first_three() {
     let matcher = fixture(12.0, 1.0);
-    let cells = curves(matcher.spectra(), &flat());
+    let cells = curves(&matcher.learned(), &matcher.reference(), &flat());
     let level = level_offset(&cells, 1.0);
     let points = points(f64::from(RATE));
     let target = target(&cells, &points, 1.0, level);
-    let weights = weights(&points);
+    let weights = weights(&points, &cells);
     let mut third = None;
     let rate = f64::from(RATE);
     let all = fit_each(&target, &weights, &points, rate, 24, 30.0, |bands| {
@@ -352,21 +365,32 @@ fn three_bands_are_the_unbounded_fits_first_three() {
     assert_eq!(Some(three), third);
 }
 
-/// **Only heard sound counts** (plan §7.6): nothing is proposed before ten seconds of each input,
-/// and a silent stretch in the side chain changes nothing.
+/// **A short learn matches only what has settled, and silence counts for nothing** (plan §7.6):
+/// three seconds of the known difference settle the highs and not the lows, so the 3 kHz bell is
+/// proposed and nothing under 300 Hz; a silent stretch in the side chain changes nothing.
 #[test]
-fn silence_counts_for_nothing_and_ten_seconds_come_first() {
-    let early = fixture(8.0, 1.0);
-    assert!(!early.spectra().listened());
+fn a_short_learn_matches_only_what_settled_and_silence_counts_for_nothing() {
+    let early = fixture(3.0, 1.0);
     let fit = Fit {
-        spectra: early.spectra().clone(),
+        track: Arc::new(early.learned()),
+        reference: early.reference(),
         heard: flat(),
         amount: 1.0,
         max_bands: 24,
         listen: 0,
         basis: Vec::new(),
     };
-    assert!(fit.run().bands.is_empty());
+    let bands = fit.run().bands;
+    assert!(
+        bands.iter().all(|band| band.freq > 300.0),
+        "nothing where it has not settled: {bands:#?}"
+    );
+    assert!(
+        bands
+            .iter()
+            .any(|band| octaves(band.freq, 3_000.0) <= 1.0 / 6.0 && band.gain_db > 0.0),
+        "what has: {bands:#?}"
+    );
 
     let plain = fixture(16.0, 1.0);
     let mut noise = Noise(0x2545_f491);
@@ -415,8 +439,8 @@ fn silence_counts_for_nothing_and_ten_seconds_come_first() {
 #[test]
 fn quiet_frames_change_the_means_and_ask_a_new_fit() {
     let mut matcher = fixture(12.0, 1.0);
-    let (revision, heard) = (matcher.revision(), matcher.spectra().heard_seconds());
-    let before = curves(matcher.spectra(), &flat());
+    let (revision, heard) = (matcher.revision(), matcher.heard_seconds());
+    let before = curves(&matcher.learned(), &matcher.reference(), &flat());
     let mut noise = Noise(99);
     let mut chain = Chain::new(&cascades(&[MatchBand {
         shape: Shape::Bell,
@@ -443,12 +467,161 @@ fn quiet_frames_change_the_means_and_ask_a_new_fit() {
                 block.key[channel][index] = y;
             }
         }
-        matcher.ingest(&block);
+        hear(&mut matcher, &block);
     }
     assert_ne!(matcher.revision(), revision, "something new");
-    assert_eq!(matcher.spectra().heard_seconds(), heard, "no seconds heard");
-    let after = curves(matcher.spectra(), &flat());
+    assert_eq!(matcher.heard_seconds(), heard, "no seconds heard");
+    let after = curves(&matcher.learned(), &matcher.reference(), &flat());
     assert_ne!(before, after, "the means moved");
+}
+
+/// **A reset keeps what was learned, and Learn on again starts anew** (plan §7.6): a new
+/// generation, as Resolve's reset from clip to clip, restarts the frames and keeps the sums and
+/// the seconds; a restart forgets the input and the output alike.
+#[test]
+fn a_reset_keeps_what_was_learned_and_a_restart_forgets_it() {
+    let mut noise = Noise(7);
+    let mut matcher = Matcher::new(RATE);
+    for seq in 0..(RATE * 12.0) as u64 / BLOCK_FRAMES as u64 {
+        let mut block = Block {
+            seq,
+            // A reset every second.
+            generation: (seq * BLOCK_FRAMES as u64 / RATE as u64) as u32,
+            sample_rate: RATE,
+            channels: 2,
+            pre: [[0.0; BLOCK_FRAMES]; 2],
+            post: [[0.0; BLOCK_FRAMES]; 2],
+            key: [[0.0; BLOCK_FRAMES]; 2],
+        };
+        for index in 0..BLOCK_FRAMES {
+            let x = 0.3 * noise.next();
+            block.pre[0][index] = x;
+            block.pre[1][index] = x;
+            block.key[0][index] = x;
+            block.key[1][index] = x;
+        }
+        hear(&mut matcher, &block);
+    }
+    let heard = matcher.heard_seconds();
+    assert!(heard > 10.0, "{heard} s");
+    assert!(matcher.learned().seconds > 10.0 && matcher.reference().seconds > 10.0);
+    matcher.restart();
+    assert_eq!(matcher.heard_seconds(), 0.0);
+    let learned = matcher.learned();
+    assert!(
+        learned.input.iter().all(Option::is_none) && learned.output.iter().all(Option::is_none),
+        "anew"
+    );
+}
+
+/// **A reference does not depend on the rate it was learned at** (plan §7.6): its cells are power
+/// per hertz, so a sine's power summed over the cells around it reads the same learned at 44.1 kHz
+/// and at 96 kHz, on every rung: within 0.2 dB at 1 and 8 kHz, and within 0.5 dB at 100 Hz, where a
+/// cell is four or five of the lowest rung's bins and its width is read to a bin (the match smooths
+/// over a third of an octave or more).
+#[test]
+fn a_reference_learned_at_another_rate_reads_the_same() {
+    let power_near = |rate: f32, freq: f32| -> f32 {
+        let mut matcher = Matcher::new(rate);
+        let step = std::f64::consts::TAU * f64::from(freq) / f64::from(rate);
+        let mut n = 0u64;
+        for seq in 0..(rate * 8.0) as u64 / BLOCK_FRAMES as u64 {
+            let mut block = Block {
+                seq,
+                generation: 0,
+                sample_rate: rate,
+                channels: 2,
+                pre: [[0.0; BLOCK_FRAMES]; 2],
+                post: [[0.0; BLOCK_FRAMES]; 2],
+                key: [[0.0; BLOCK_FRAMES]; 2],
+            };
+            for index in 0..BLOCK_FRAMES {
+                let x = (0.3 * (step * n as f64).sin()) as f32;
+                n += 1;
+                block.key[0][index] = x;
+                block.key[1][index] = x;
+            }
+            hear(&mut matcher, &block);
+        }
+        let reference = matcher.reference();
+        let centre = (CELLS_PER_OCTAVE * (freq / LOWEST_HZ).log2()).round() as usize;
+        let edge = 2f64.powf(1.0 / (2.0 * f64::from(CELLS_PER_OCTAVE)));
+        let power: f64 = (centre - 3..=centre + 3)
+            .filter_map(|cell| {
+                let db = reference.cells[cell]?;
+                let width = f64::from(cell_freq(cell)) * (edge - edge.recip());
+                Some(10f64.powf(f64::from(db) / 10.0) * width)
+            })
+            .sum();
+        (10.0 * power.log10()) as f32
+    };
+    for (freq, within) in [(100.0, 0.5), (1_000.0, 0.2), (8_000.0, 0.2)] {
+        let (low, high) = (power_near(44_100.0, freq), power_near(96_000.0, freq));
+        assert!(
+            (low - high).abs() <= within,
+            "{freq} Hz: {low} dB at 44.1 kHz, {high} dB at 96 kHz"
+        );
+    }
+}
+
+/// **Where the reference was not read, nothing is asked** (plan §7.6): its cells above what its
+/// rate read weigh nothing in the fit.
+#[test]
+fn an_unread_reference_cell_weighs_nothing() {
+    let matcher = fixture(12.0, 1.0);
+    let mut reference = matcher.reference();
+    let cut = (0..CELLS)
+        .find(|&cell| cell_freq(cell) > 8_000.0)
+        .expect("a cell over 8 kHz");
+    for cell in &mut reference.cells[cut..] {
+        *cell = None;
+    }
+    let cells = curves(&matcher.learned(), &reference, &flat());
+    let points = points(f64::from(RATE));
+    let weights = weights(&points, &cells);
+    for (freq, weight) in points.iter().zip(&weights) {
+        if *freq > 8_100.0 {
+            assert_eq!(*weight, 0.0, "{freq} Hz");
+        } else if (1_000.0..=8_000.0).contains(freq) {
+            assert_eq!(*weight, 1.0, "{freq} Hz, settled there");
+        }
+    }
+}
+
+/// **A learn reads the level of what played, its pauses aside** (plan §7.6): noise heard two
+/// seconds on and two off reads, smoothed, within 0.5 dB of the same noise heard throughout, the
+/// track's and the reference's alike, from the lows' long frames to the highs' short ones.
+#[test]
+fn a_learn_reads_the_level_of_what_played_its_pauses_aside() {
+    let learned = |paused: bool| {
+        let mut noise = Noise(11);
+        let mut sample = 0u64;
+        let seconds = if paused { 22.0 } else { 11.0 };
+        heard_for(seconds, move || {
+            let silent = paused && (sample / (2 * RATE as u64)) % 2 == 1;
+            sample += 1;
+            let x = if silent { 0.0 } else { 0.3 * noise.next() };
+            ([x, x], [x, x])
+        })
+    };
+    let (steady, paused) = (learned(false), learned(true));
+    let lines = |matcher: &Matcher| {
+        [
+            smooth(&matcher.reference().cells),
+            smooth(&matcher.learned().input_levels()),
+        ]
+    };
+    let (steady, paused) = (lines(&steady), lines(&paused));
+    for freq in [60.0, 1_000.0, 8_000.0] {
+        for learn in 0..2 {
+            let at = |lines: &[Vec<Option<f32>>; 2]| cell_at(&lines[learn], freq).expect("read");
+            let (steady, paused) = (at(&steady), at(&paused));
+            assert!(
+                (steady - paused).abs() <= 0.5,
+                "{freq} Hz, learn {learn}: {paused} dB against {steady} dB"
+            );
+        }
+    }
 }
 
 /// **A fit is deterministic** (plan §7.6): the same spectra give the same bands, bit for bit.
@@ -457,7 +630,8 @@ fn a_fit_is_deterministic() {
     let matcher = fixture(12.0, 1.0);
     let run = || {
         Fit {
-            spectra: matcher.spectra().clone(),
+            track: Arc::new(matcher.learned()),
+            reference: matcher.reference(),
             heard: flat(),
             amount: 0.4,
             max_bands: 8,
@@ -536,7 +710,8 @@ fn the_regions_edges() {
         .zip(bump(3_000.0, 3.0, 0.3))
         .map(|(a, b)| a + b)
         .collect();
-    let bands = fit(&pair, &weights(&points), &points, f64::from(RATE), 1, 12.0);
+    let eased: Vec<f32> = points.iter().map(|&freq| ease(freq)).collect();
+    let bands = fit(&pair, &eased, &points, f64::from(RATE), 1, 12.0);
     assert!(octaves(bands[0].freq, 300.0) <= 1.0 / 12.0, "{bands:?}");
 
     // A seed's gain is held to the bound at once.
@@ -587,9 +762,9 @@ fn match_cost() {
         }
         let start = std::time::Instant::now();
         for block in &blocks {
-            matcher.ingest(block);
+            hear(&mut matcher, block);
         }
-        let copy = matcher.spectra().clone();
+        let copy = matcher.learned();
         let took = start.elapsed().as_secs_f64() * 1_000.0;
         drop(copy);
         total += took;
@@ -603,7 +778,8 @@ fn match_cost() {
     };
     let start = std::time::Instant::now();
     let fitted = Fit {
-        spectra: matcher.spectra().clone(),
+        track: Arc::new(matcher.learned()),
+        reference: matcher.reference(),
         heard: heard_eq,
         amount: 1.0,
         max_bands: 24,

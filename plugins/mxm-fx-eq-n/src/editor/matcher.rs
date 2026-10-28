@@ -1,23 +1,42 @@
-//! F5's EQ match (plan §7.6): the long-term spectra of the side chain, the reference, and of the
-//! input before the EQ, their difference smoothed and scaled by an Amount, fitted to bands the
-//! player applies. The editor's half alone, as the finder is: it reads the analyser's blocks, and
-//! what it proposes the player applies as ordinary bands, so the DSP stays a plain band cascade.
+//! F5's EQ match (plan §7.6): what an EQ learned of its own track, its input before the EQ, against
+//! another EQ's output or a saved reference, their difference smoothed and scaled by an Amount,
+//! fitted to bands the player applies. The editor's half alone, as the finder is: it reads the
+//! analyser's blocks, and what it proposes the player applies as ordinary bands, so the DSP stays
+//! a plain band cascade.
 //!
-//! - **The long-term spectra** (`research:effects/parametric-equalizers.md` §10.1): each input's
-//!   width frames on F4's rungs ([`finder::rung_specs`]), power means over every frame, in linear
-//!   units per bin: the reference's channels averaged, the source's covariance (`|L|²`, `|R|²`,
-//!   `L·conj(R)`), so the EQ is counted as heard, Mid and Side bands included. Every frame counts,
-//!   so each rung's mean is a time average alike: a quiet stretch scales every rung the same, a
-//!   constant the level takes out. Only the heard seconds are gated.
+//! - **One learn, two streams** ([`Matcher::ingest`]): a block's input before the EQ, which the
+//!   match changes, and its output after it, what another EQ matches to, learned together while
+//!   Learn is on. A reset or a dropped block restarts the frames and keeps what was heard.
+//! - **Two halves, for how settled it is**: every [`CHUNK_SECONDS`] of sound heard, the frames go
+//!   to the other half. Where the halves' smoothed levels agree, what was learned there has
+//!   settled; their spread, the level between them taken out, is its uncertainty ([`Learned`]'s
+//!   spreads). A frequency counts in the fit once the track's and the reference's spreads together
+//!   are under [`SETTLED_DB`], and not at all from [`UNSETTLED_DB`]: the highs settle in seconds,
+//!   the lows, read on long frames, later. No fixed time is waited for (the owner, 2026-10-28).
+//! - **The long-term spectra** (`research:effects/parametric-equalizers.md` §10.1): width frames on
+//!   F4's rungs ([`finder::rung_specs`]), power means over every frame, in linear units per bin:
+//!   the input's covariance (`|L|²`, `|R|²`, `L·conj(R)`), so the EQ is counted as heard, Mid and
+//!   Side bands included; the output's channels averaged. Every frame counts, so each rung's mean
+//!   is a time average alike: a quiet stretch scales every rung the same, a constant the level
+//!   takes out. Only the heard seconds are gated, and the level is read while it sounds: raised by
+//!   the seconds learned over the seconds heard, one level for every cell, so the lines the graph
+//!   draws sit where the sound did.
+//! - **What was learned is cells** ([`Learned`], kept with the project, `crate::learned`): a 48th
+//!   of an octave each, so it does not depend on the rate it was learned at. **A reference is cells
+//!   too** ([`Reference`]): another EQ's output ([`Learned::sound`]) or a saved one
+//!   ([`super::references`]).
 //! - **Smoothed** in dB by a Hann window in log-frequency as wide as the wider of a third of an
 //!   octave and one ERB (§10.2), so neither a key's notes nor the bass notes are matched.
 //! - **The target** `T = Amount × D − E − c`: `D` the difference, `E` what the EQ as heard does,
-//!   `c` the level that keeps the source's K-weighted loudness; its error weighted by `w`, 1 over
-//!   30 Hz – 16 kHz easing to 0 half an octave beyond, so the extremes ask for nothing.
+//!   `c` the level that keeps the track's K-weighted loudness; its error weighted by `w`, 1 over
+//!   30 Hz – 16 kHz easing to 0 half an octave beyond, so the extremes ask for nothing, and 0
+//!   where the reference has no level.
 //! - **The fit** ([`fit`]), Ramos & López's order with Abel & Berners' refinement (§10.4): the
 //!   largest region of what is left past the deviation just audible seeds a bell or a shelf, every
 //!   band is refined together by Levenberg–Marquardt, again until nothing left is audible, Detail
 //!   is reached or the slots run out.
+
+use std::sync::Arc;
 
 use mxm_fft::Planner;
 use mxm_fx_eq_n_dsp::{Cascade, Design, Shape, Slope, design};
@@ -26,9 +45,14 @@ use super::finder::{
     self, Decimator, Frames, HeardEq, Job, LOWEST_HZ, RungSpec, WIDTH_POINTS, heard, usable_rate,
 };
 use crate::analyser::{BLOCK_FRAMES, Block};
+pub use crate::learned::Learned;
 
-/// Proposals appear once each input has been heard this long.
-pub const LISTEN_SECONDS: f64 = 10.0;
+/// How much sound each half of a learn takes before the other does, in seconds heard.
+pub const CHUNK_SECONDS: f64 = 1.0;
+/// A frequency's spread, the track's and the reference's together, at or under which it counts
+/// in full, and at or over which not at all, in dB.
+pub const SETTLED_DB: f32 = 0.5;
+pub const UNSETTLED_DB: f32 = 1.0;
 /// Amount's default, in percent (decision 33): Ozone advises under 50 %, Melda 30–40 % (§10.3).
 pub const DEFAULT_AMOUNT: u8 = 40;
 /// Detail's default, at most how many bands (decision 33): Ramos & López's error was about 0.5 dB
@@ -55,70 +79,75 @@ const LEVEL_SPAN_DB: f64 = 60.0;
 const LEVEL_HALVINGS: usize = 60;
 
 /// The cells the spectra are read on, 1/48 octave from [`LOWEST_HZ`], as F4's.
-const CELLS_PER_OCTAVE: f32 = 48.0;
-const CELLS: usize = 528;
+pub const CELLS_PER_OCTAVE: f32 = 48.0;
+pub const CELLS: usize = 528;
 
 pub(crate) fn cell_freq(cell: usize) -> f32 {
     LOWEST_HZ * 2f32.powf(cell as f32 / CELLS_PER_OCTAVE)
 }
 
-/// One input's rung as it listens.
+/// One stream's rung as it learns.
 struct ListenRung {
     rate: f32,
     decimator: Option<Decimator>,
     width: Frames,
 }
 
-/// What one rung has heard of both inputs, summed over each input's width frames, per width bin in
-/// linear units: the source's covariance and the reference's channels averaged.
-#[derive(Clone)]
+/// Where the learn is in its blocks, and the channels they came in.
+#[derive(Clone, Copy, Default)]
+struct Stream {
+    expected_seq: Option<u64>,
+    generation: Option<u32>,
+    channels: usize,
+}
+
+/// What one rung has learned, summed over its width frames, per width bin in linear units, each
+/// half apart: the input's covariance and the output's channels averaged.
 struct RungSums {
     low: f32,
     high: f32,
     bin_hz: f32,
-    /// Frames: the source's, then the reference's.
     frames: [u32; 2],
-    ll: Vec<f64>,
-    rr: Vec<f64>,
-    lr: Vec<(f64, f64)>,
-    reference: Vec<f64>,
+    ll: [Vec<f64>; 2],
+    rr: [Vec<f64>; 2],
+    lr: [Vec<(f64, f64)>; 2],
+    output: [Vec<f64>; 2],
 }
 
-/// Everything Match has heard. Plain data, so a fit runs on a copy away from the editor's frame.
-#[derive(Clone)]
-pub struct Spectra {
-    channels: usize,
-    rungs: Vec<RungSums>,
-    /// Seconds heard: the source's, then the reference's.
-    heard: [f64; 2],
-}
-
-impl Spectra {
-    /// Whether each input has been heard long enough for proposals (plan §7.6: ten seconds).
-    pub fn listened(&self) -> bool {
-        self.heard.iter().all(|&seconds| seconds >= LISTEN_SECONDS)
-    }
-
-    /// The seconds heard: the input's, then the reference's.
-    pub fn heard_seconds(&self) -> [f64; 2] {
-        self.heard
+impl RungSums {
+    /// The bins a cell centred at `centre` reads: those inside its 1/48 octave, or where it is
+    /// narrower than a bin, the one nearest its centre.
+    fn cell_bins(&self, centre: f32) -> std::ops::Range<usize> {
+        let half = 2f32.powf(1.0 / (2.0 * CELLS_PER_OCTAVE));
+        let bins = self.ll[0].len();
+        let first = ((centre / half / self.bin_hz).ceil() as usize).max(1);
+        let end = ((centre * half / self.bin_hz).ceil() as usize).min(bins);
+        if first < end {
+            first..end
+        } else {
+            let nearest = ((centre / self.bin_hz).round() as usize).clamp(1, bins - 1);
+            nearest..nearest + 1
+        }
     }
 }
 
-/// The source and the reference, `0` and `1` of each pair.
-const SOURCE: usize = 0;
-const REFERENCE: usize = 1;
+/// The input's stream and the output's, `0` and `1` of each pair.
+const INPUT: usize = 0;
+const OUTPUT: usize = 1;
 
-/// The matcher: everything heard since Match was turned on.
+/// The matcher: what this EQ has learned of its track since Learn was last turned on.
 pub struct Matcher {
     sample_rate: f32,
-    /// Each input's rungs, fastest first, each fed from the one above.
-    inputs: [Vec<ListenRung>; 2],
-    expected_seq: Option<u64>,
-    generation: Option<u32>,
+    /// Each stream's rungs, fastest first, each fed from the one above.
+    listening: [Vec<ListenRung>; 2],
+    stream: Stream,
     revision: u64,
     listen: u64,
-    spectra: Spectra,
+    rungs: Vec<RungSums>,
+    /// Seconds heard, each stream's, each half's.
+    heard: [[f64; 2]; 2],
+    /// Seconds learned, heard or not, each stream's, each half's.
+    total: [[f64; 2]; 2],
 }
 
 impl Matcher {
@@ -127,7 +156,7 @@ impl Matcher {
         let sample_rate = usable_rate(sample_rate);
         let mut planner = Planner::new();
         let specs = finder::rung_specs(sample_rate);
-        let input = |planner: &mut Planner<f32>| -> Vec<ListenRung> {
+        let stream = |planner: &mut Planner<f32>| -> Vec<ListenRung> {
             specs
                 .iter()
                 .map(|spec| ListenRung {
@@ -139,7 +168,7 @@ impl Matcher {
                 })
                 .collect()
         };
-        let inputs = [input(&mut planner), input(&mut planner)];
+        let listening = [stream(&mut planner), stream(&mut planner)];
         let bins = WIDTH_POINTS / 2 + 1;
         let rungs = specs
             .iter()
@@ -151,25 +180,22 @@ impl Matcher {
                     high,
                     bin_hz: rate / WIDTH_POINTS as f32,
                     frames: [0; 2],
-                    ll: vec![0.0; bins],
-                    rr: vec![0.0; bins],
-                    lr: vec![(0.0, 0.0); bins],
-                    reference: vec![0.0; bins],
+                    ll: [vec![0.0; bins], vec![0.0; bins]],
+                    rr: [vec![0.0; bins], vec![0.0; bins]],
+                    lr: [vec![(0.0, 0.0); bins], vec![(0.0, 0.0); bins]],
+                    output: [vec![0.0; bins], vec![0.0; bins]],
                 },
             )
             .collect();
         Matcher {
             sample_rate,
-            inputs,
-            expected_seq: None,
-            generation: None,
+            listening,
+            stream: Stream::default(),
             revision: 0,
             listen: 0,
-            spectra: Spectra {
-                channels: 2,
-                rungs,
-                heard: [0.0; 2],
-            },
+            rungs,
+            heard: [[0.0; 2]; 2],
+            total: [[0.0; 2]; 2],
         }
     }
 
@@ -177,121 +203,395 @@ impl Matcher {
         self.sample_rate
     }
 
-    /// What it has heard, for a fit.
-    pub fn spectra(&self) -> &Spectra {
-        &self.spectra
-    }
-
-    /// Changes whenever what it has heard does.
+    /// Changes whenever what it has learned does.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// Counts its listens, as the finder's do: a fit carries the one it was made in.
+    /// Counts its listens, as the finder's do: Learn turned on again begins another, and a fit
+    /// carries the one it was made in.
     pub fn listen(&self) -> u64 {
         self.listen
     }
 
-    /// Forgets everything heard: Match turned on again, a reset, another rate.
+    /// The seconds of the input heard: what the card reads.
+    pub fn heard_seconds(&self) -> f64 {
+        self.heard[INPUT][0] + self.heard[INPUT][1]
+    }
+
+    /// The half the frames go to now: the other one every [`CHUNK_SECONDS`] of the input heard.
+    fn half(&self) -> usize {
+        ((self.heard_seconds() / CHUNK_SECONDS) as u64 % 2) as usize
+    }
+
+    /// Forgets what it learned: Learn turned on again, or the track came back in other channels.
     pub fn restart(&mut self) {
         self.restart_windows();
-        self.expected_seq = None;
-        self.generation = None;
+        self.stream = Stream::default();
         self.revision = self.revision.wrapping_add(1);
         self.listen = self.listen.wrapping_add(1);
-        self.spectra.heard = [0.0; 2];
-        for rung in &mut self.spectra.rungs {
+        self.heard = [[0.0; 2]; 2];
+        self.total = [[0.0; 2]; 2];
+        for rung in &mut self.rungs {
             rung.frames = [0; 2];
-            rung.ll.fill(0.0);
-            rung.rr.fill(0.0);
-            rung.lr.fill((0.0, 0.0));
-            rung.reference.fill(0.0);
+            for half in 0..2 {
+                rung.ll[half].fill(0.0);
+                rung.rr[half].fill(0.0);
+                rung.lr[half].fill((0.0, 0.0));
+                rung.output[half].fill(0.0);
+            }
         }
     }
 
     /// A gap in the audio: the frames start again, never spliced across it.
     fn restart_windows(&mut self) {
-        for input in &mut self.inputs {
-            for rung in input {
-                if let Some(decimator) = &mut rung.decimator {
-                    decimator.restart();
-                }
-                rung.width.restart();
+        for rung in self.listening.iter_mut().flatten() {
+            if let Some(decimator) = &mut rung.decimator {
+                decimator.restart();
+            }
+            rung.width.restart();
+        }
+    }
+
+    /// One block: its input before the EQ and its output after it.
+    pub fn ingest(&mut self, block: &Block) {
+        self.ingest_streams(block, &block.pre, &block.post);
+    }
+
+    /// One block, `input` learned as the input and `output` as the output: a test's own signals
+    /// for each. A block at another rate is not this matcher's. A new generation (a reset) or a
+    /// dropped block restarts the frames and keeps what was heard, as Find's does (plan §7.6:
+    /// Resolve resets as it plays on from clip to clip), unless the track came back in other
+    /// channels, which starts the learn again.
+    pub fn ingest_streams(
+        &mut self,
+        block: &Block,
+        input: &[[f32; BLOCK_FRAMES]; 2],
+        output: &[[f32; BLOCK_FRAMES]; 2],
+    ) {
+        if block.sample_rate != self.sample_rate {
+            return;
+        }
+        let channels = usize::from(block.channels.clamp(1, 2));
+        let stream = self.stream;
+        let broken = stream
+            .generation
+            .is_some_and(|generation| generation != block.generation)
+            || stream
+                .expected_seq
+                .is_some_and(|expected| block.seq != expected);
+        if broken {
+            if stream.channels != channels {
+                self.restart();
+            } else {
+                self.restart_windows();
+            }
+        }
+        self.stream = Stream {
+            expected_seq: Some(block.seq.wrapping_add(1)),
+            generation: Some(block.generation),
+            channels,
+        };
+        let clean = |x: f32| if x.is_finite() { x } else { 0.0 };
+        for (which, audio) in [(INPUT, input), (OUTPUT, output)] {
+            for (&left, &right) in audio[0].iter().zip(&audio[1]) {
+                self.push_rung(which, 0, [left, right].map(clean));
             }
         }
     }
 
-    /// One block of the analyser's: its input before the EQ and its side chain. A block at another
-    /// rate is not this matcher's; a new generation (a reset) starts the listen again; a dropped
-    /// block restarts the frames.
-    pub fn ingest(&mut self, block: &Block) {
-        if block.sample_rate != self.sample_rate {
-            return;
-        }
-        if self
-            .generation
-            .is_some_and(|generation| generation != block.generation)
-        {
-            self.restart();
-        } else if self
-            .expected_seq
-            .is_some_and(|expected| block.seq != expected)
-        {
-            self.restart_windows();
-        }
-        self.generation = Some(block.generation);
-        self.expected_seq = Some(block.seq.wrapping_add(1));
-        self.spectra.channels = usize::from(block.channels.clamp(1, 2));
-        let clean = |x: f32| if x.is_finite() { x } else { 0.0 };
-        for index in 0..BLOCK_FRAMES {
-            let source = [block.pre[0][index], block.pre[1][index]].map(clean);
-            let reference = [block.key[0][index], block.key[1][index]].map(clean);
-            self.push_rung(SOURCE, 0, source);
-            self.push_rung(REFERENCE, 0, reference);
-        }
-    }
-
-    fn push_rung(&mut self, input: usize, index: usize, frame: [f32; 2]) {
-        let rung = &mut self.inputs[input][index];
+    fn push_rung(&mut self, which: usize, index: usize, frame: [f32; 2]) {
+        let rung = &mut self.listening[which][index];
         if rung.width.push(frame[0], frame[1]) {
-            self.width_frame(input, index);
+            self.width_frame(which, index);
         }
-        if index + 1 < self.inputs[input].len()
-            && let Some(next) = self.inputs[input][index + 1]
+        if index + 1 < self.listening[which].len()
+            && let Some(next) = self.listening[which][index + 1]
                 .decimator
                 .as_mut()
                 .and_then(|decimator| decimator.push(frame))
         {
-            self.push_rung(input, index + 1, next);
+            self.push_rung(which, index + 1, next);
         }
     }
 
-    /// A width frame: its power joins the input's long-term sums, whatever its level, so every
-    /// rung's mean is a time average alike (a frame gated as F4's would weigh a quiet passage
-    /// differently on rungs of different lengths, a step at their edges); so every frame is
-    /// something new. Only a heard one counts towards the seconds heard.
-    fn width_frame(&mut self, input: usize, index: usize) {
-        let channels = self.spectra.channels;
-        let rung = &mut self.inputs[input][index];
+    /// A width frame: its power joins the long-term sums, whatever its level, so every rung's mean
+    /// is a time average alike (a frame gated as F4's would weigh a quiet passage differently on
+    /// rungs of different lengths, a step at their edges); so every frame is something new. Only a
+    /// heard one counts towards the seconds heard; every one towards the seconds learned; each to
+    /// the half of now.
+    fn width_frame(&mut self, which: usize, index: usize) {
+        let channels = self.stream.channels.max(1);
+        let half = self.half();
+        let rung = &mut self.listening[which][index];
         self.revision = self.revision.wrapping_add(1);
-        if heard(rung.width.transform(channels)) && index == 0 {
-            self.spectra.heard[input] += rung.width.hop as f64 / f64::from(rung.rate);
+        let loud = heard(rung.width.transform(channels));
+        if index == 0 {
+            let seconds = rung.width.hop as f64 / f64::from(rung.rate);
+            self.total[which][half] += seconds;
+            if loud {
+                self.heard[which][half] += seconds;
+            }
         }
-        let sums = &mut self.spectra.rungs[index];
-        sums.frames[input] += 1;
-        if input == SOURCE {
-            rung.width
-                .add_covariance(channels, &mut sums.ll, &mut sums.rr, &mut sums.lr);
+        let sums = &mut self.rungs[index];
+        if which == INPUT {
+            sums.frames[half] += 1;
+            rung.width.add_covariance(
+                channels,
+                &mut sums.ll[half],
+                &mut sums.rr[half],
+                &mut sums.lr[half],
+            );
         } else {
-            rung.width.add_power(channels, &mut sums.reference);
+            rung.width.add_power(channels, &mut sums.output[half]);
         }
+    }
+
+    /// The rung whose own frequencies hold `centre`.
+    fn rung_of(&self, centre: f32) -> Option<&RungSums> {
+        self.rungs
+            .iter()
+            .find(|rung| centre >= rung.low && centre < rung.high)
+    }
+
+    /// How much louder a stream's sound is while heard than its mean over every frame: the seconds
+    /// learned over the seconds heard, of `halves`, so a learn left on through pauses reads the
+    /// level of what played; 1 with nothing heard.
+    fn sounding(&self, which: usize, halves: &[usize]) -> f64 {
+        let heard: f64 = halves.iter().map(|&half| self.heard[which][half]).sum();
+        let total: f64 = halves.iter().map(|&half| self.total[which][half]).sum();
+        if heard > 0.0 {
+            (total / heard).max(1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Per cell, of `halves`: the input's covariance and the output's power, each its bins' mean per
+    /// hertz while it sounds; `None` where no frame of them reached it.
+    fn cells(&self, halves: &[usize]) -> Vec<Option<([f64; 4], f64)>> {
+        let (input_sounding, output_sounding) =
+            (self.sounding(INPUT, halves), self.sounding(OUTPUT, halves));
+        (0..CELLS)
+            .map(|cell| {
+                let centre = cell_freq(cell);
+                let rung = self.rung_of(centre)?;
+                let frames: u32 = halves.iter().map(|&half| rung.frames[half]).sum();
+                if frames == 0 {
+                    return None;
+                }
+                let range = rung.cell_bins(centre);
+                let per = (range.len() as f64 * f64::from(rung.bin_hz) * f64::from(frames)).recip();
+                let (mut input, mut out) = ([0.0; 4], 0.0);
+                for &half in halves {
+                    for bin in range.clone() {
+                        input[0] += rung.ll[half][bin];
+                        input[1] += rung.rr[half][bin];
+                        input[2] += rung.lr[half][bin].0;
+                        input[3] += rung.lr[half][bin].1;
+                        out += rung.output[half][bin];
+                    }
+                }
+                Some((
+                    input.map(|sum| sum * per * input_sounding),
+                    out * per * output_sounding,
+                ))
+            })
+            .collect()
+    }
+
+    /// How unsettled each cell's smoothed level is, in dB (plan §7.6): the halves' smoothed levels'
+    /// difference, its mean over the range taken out (a level the match takes out), the RMS of
+    /// what is left over the smoothing's window, halved for the mean of two, and widened while
+    /// the halves hold few chunks, as an estimate from few is less sure; `None` where a half has
+    /// nothing.
+    fn spread(&self, level: impl Fn(&([f64; 4], f64)) -> f64) -> Vec<Option<f32>> {
+        let chunks = (self.heard[INPUT][0].min(self.heard[INPUT][1]) / CHUNK_SECONDS).floor();
+        if chunks < 1.0 {
+            return vec![None; CELLS];
+        }
+        let [a, b] = [0, 1].map(|half| {
+            let levels: Vec<Option<f32>> = self
+                .cells(&[half])
+                .iter()
+                .map(|cell| {
+                    cell.as_ref()
+                        .map(|cell| (10.0 * level(cell).max(1.0e-30).log10()) as f32)
+                })
+                .collect();
+            smooth(&levels)
+        });
+        let differences: Vec<Option<f32>> =
+            a.iter().zip(&b).map(|(a, b)| Some((*a)? - (*b)?)).collect();
+        let (mut sum, mut weights) = (0.0f64, 0.0f64);
+        for (cell, difference) in differences.iter().enumerate() {
+            if let Some(difference) = difference {
+                let weight = f64::from(ease(cell_freq(cell)));
+                sum += weight * f64::from(*difference);
+                weights += weight;
+            }
+        }
+        let mean = if weights > 0.0 { sum / weights } else { 0.0 } as f32;
+        let squared: Vec<Option<f32>> = differences
+            .iter()
+            .map(|difference| difference.map(|difference| (difference - mean).powi(2)))
+            .collect();
+        let widen = (1.0 + 2.0 / chunks).sqrt() as f32;
+        smooth(&squared)
+            .into_iter()
+            .map(|squared| squared.map(|squared| 0.5 * squared.max(0.0).sqrt() * widen))
+            .collect()
+    }
+
+    /// What it has learned (plan §7.6), what is kept with the project: per cell, the input's
+    /// covariance and the output's level while they sound, both halves', and how settled each is.
+    pub fn learned(&self) -> Learned {
+        let whole = self.cells(&[0, 1]);
+        Learned {
+            cells_per_octave: CELLS_PER_OCTAVE,
+            lowest_hz: LOWEST_HZ,
+            input: whole
+                .iter()
+                .map(|cell| cell.map(|(input, _)| input.map(|value| value as f32)))
+                .collect(),
+            output: whole
+                .iter()
+                .map(|cell| cell.map(|(_, out)| (10.0 * out.max(1.0e-30).log10()) as f32))
+                .collect(),
+            input_spread: self.spread(|(input, _)| 0.5 * (input[0] + input[1])),
+            output_spread: self.spread(|(_, out)| *out),
+            seconds: self.heard_seconds(),
+            sample_rate: self.sample_rate,
+        }
+    }
+
+    /// Its output as a reference, what another EQ matches to.
+    pub fn reference(&self) -> Reference {
+        self.learned().sound()
+    }
+}
+
+impl Learned {
+    /// Whether it is on this matcher's cells: another grid's is never read as these.
+    pub fn usable(&self) -> bool {
+        self.cells_per_octave == CELLS_PER_OCTAVE
+            && self.lowest_hz == LOWEST_HZ
+            && self.input.len() == CELLS
+            && self.output.len() == CELLS
+    }
+
+    /// Its output, what another EQ matches to.
+    pub fn sound(&self) -> Reference {
+        Reference {
+            cells: self.output.clone(),
+            spread: self.output_spread.clone(),
+            seconds: self.seconds,
+            sample_rate: self.sample_rate,
+        }
+    }
+
+    /// Its input's level per cell, the channels averaged, in dB: what the graph draws of it.
+    pub fn input_levels(&self) -> Vec<Option<f32>> {
+        self.input
+            .iter()
+            .map(|cell| {
+                cell.map(|[ll, rr, ..]| {
+                    (10.0 * (0.5 * (f64::from(ll) + f64::from(rr))).max(1.0e-30).log10()) as f32
+                })
+            })
+            .collect()
+    }
+}
+
+/// `cells`' level at `freq`, between the two cells about it in log-frequency, or the one of them
+/// that was read; `None` outside what was read.
+pub fn cell_at(cells: &[Option<f32>], freq: f32) -> Option<f32> {
+    let place = (freq / LOWEST_HZ).log2() * CELLS_PER_OCTAVE;
+    if !place.is_finite() || place < 0.0 {
+        return None;
+    }
+    let below = place.floor() as usize;
+    let part = place - below as f32;
+    let at = |cell: usize| cells.get(cell).copied().flatten();
+    match (at(below), at(below + 1)) {
+        (Some(low), Some(high)) => Some(low + part * (high - low)),
+        (Some(level), None) if part < 0.5 => Some(level),
+        (None, Some(level)) if part >= 0.5 => Some(level),
+        _ => None,
+    }
+}
+
+/// A reference as the fit reads it (plan §7.6): its long-term level per cell while it sounds, so it
+/// does not depend on the rate it was learned at nor on the pauses in it; another EQ's output
+/// ([`Learned::sound`]) or read back from a file ([`super::references`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reference {
+    /// Per cell, a 48th of an octave apart from [`LOWEST_HZ`]: its power per hertz in dB, `None`
+    /// where nothing was read.
+    pub cells: Vec<Option<f32>>,
+    /// Per cell, how unsettled its smoothed level is in dB; `None` where it cannot be told, and
+    /// empty for a reference taken as settled throughout.
+    pub spread: Vec<Option<f32>>,
+    /// The seconds of it heard.
+    pub seconds: f64,
+    /// The rate it was learned at.
+    pub sample_rate: f32,
+}
+
+impl Reference {
+    /// Its spread at `cell`: 0 for one taken as settled throughout, infinite where it cannot be
+    /// told.
+    fn spread_at(&self, cell: usize) -> f32 {
+        if self.spread.is_empty() {
+            0.0
+        } else {
+            self.spread
+                .get(cell)
+                .copied()
+                .flatten()
+                .unwrap_or(f32::INFINITY)
+        }
+    }
+}
+
+/// How much a cell counts in the fit for its spread, `track` and `reference` together (plan
+/// §7.6): in full at or under [`SETTLED_DB`], not at all from [`UNSETTLED_DB`], linearly between.
+pub fn settled(track: f32, reference: f32) -> f32 {
+    let spread = track.hypot(reference);
+    ((UNSETTLED_DB - spread) / (UNSETTLED_DB - SETTLED_DB)).clamp(0.0, 1.0)
+}
+
+/// How much each cell counts for how settled `track` and `reference` are, as the fit reads it
+/// (plan §7.6); with no reference, the track's alone: what the graph draws faint.
+pub fn settled_cells(track: &Learned, reference: Option<&Reference>) -> Vec<Option<f32>> {
+    (0..CELLS)
+        .map(|cell| {
+            Some(settled(
+                input_spread_at(track, cell),
+                reference.map_or(0.0, |reference| reference.spread_at(cell)),
+            ))
+        })
+        .collect()
+}
+
+/// `learned`'s input spread at `cell`, as [`Reference::spread_at`] reads its own.
+fn input_spread_at(learned: &Learned, cell: usize) -> f32 {
+    if learned.input_spread.is_empty() {
+        0.0
+    } else {
+        learned
+            .input_spread
+            .get(cell)
+            .copied()
+            .flatten()
+            .unwrap_or(f32::INFINITY)
     }
 }
 
 // ---- the curves ------------------------------------------------------------------------------
 
-/// One cell's long-term densities, per hertz, in linear units: the source's channels averaged, the
-/// reference's, and the source's through the EQ as heard.
+/// One cell's long-term densities, per hertz, in linear units: the track's channels averaged, the
+/// reference's, and the track's through the EQ as heard.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CellDensity {
     pub source: f64,
@@ -299,7 +599,7 @@ pub struct CellDensity {
     pub through: f64,
 }
 
-/// The output power of the EQ's 2×2 transfer on the source's covariance, the channels averaged
+/// The output power of the EQ's 2×2 transfer on the track's covariance, the channels averaged
 /// (plan §7.6): the channel stage `diag(dl, dr)`, then mid/side's `diag(dm, ds)`, so
 /// `y_L = a·dl·x_L + b·dr·x_R`, `y_R = b·dl·x_L + a·dr·x_R`, `a = (dm + ds)/2`, `b = (dm − ds)/2`.
 pub fn through_power(stages: [(f64, f64); 4], ll: f64, rr: f64, lr: (f64, f64)) -> f64 {
@@ -319,68 +619,33 @@ pub fn through_power(stages: [(f64, f64); 4], ll: f64, rr: f64, lr: (f64, f64)) 
     (0.5 * (left + right)).max(0.0)
 }
 
-impl Spectra {
-    /// Each cell's densities, `None` where it was not heard by both inputs: a cell belongs to the
-    /// rung whose own frequencies hold its centre, and reads the bins inside its 1/48 octave, or
-    /// where it is narrower than a bin, the bin nearest its centre.
-    pub fn densities(&self, heard_eq: &HeardEq) -> Vec<Option<CellDensity>> {
-        let half = 2f32.powf(1.0 / (2.0 * CELLS_PER_OCTAVE));
-        let bands: Vec<_> = heard_eq.bands.iter().map(|(c, p)| (c, *p)).collect();
-        let mut cells = vec![None; CELLS];
-        for (cell, out) in cells.iter_mut().enumerate() {
-            let centre = cell_freq(cell);
-            let Some(rung) = self
-                .rungs
-                .iter()
-                .find(|rung| centre >= rung.low && centre < rung.high)
-            else {
-                continue;
-            };
-            let [sources, references] = rung.frames;
-            if sources == 0 || references == 0 {
-                continue;
-            }
-            let bins = rung.ll.len();
-            let first = ((centre / half / rung.bin_hz).ceil() as usize).max(1);
-            let end = ((centre * half / rung.bin_hz).ceil() as usize).min(bins);
-            let range = if first < end {
-                first..end
+/// Each cell's densities against `reference`, `None` where the track was not learned or the
+/// reference has no level: the EQ as heard read at the cell's centre.
+pub fn densities(
+    track: &Learned,
+    reference: &Reference,
+    heard_eq: &HeardEq,
+) -> Vec<Option<CellDensity>> {
+    let bands: Vec<_> = heard_eq.bands.iter().map(|(c, p)| (c, *p)).collect();
+    (0..CELLS)
+        .map(|cell| {
+            let level = reference.cells.get(cell).copied().flatten()?;
+            let [ll, rr, re, im] = track.input.get(cell).copied().flatten()?.map(f64::from);
+            let source = 0.5 * (ll + rr);
+            let through = if bands.is_empty() {
+                source
             } else {
-                let nearest = ((centre / rung.bin_hz).round() as usize).clamp(1, bins - 1);
-                nearest..nearest + 1
+                let stages =
+                    finder::stages(bands.iter().copied(), cell_freq(cell), heard_eq.sample_rate);
+                through_power(stages, ll, rr, (re, im))
             };
-            let (n_source, n_reference) = (f64::from(sources), f64::from(references));
-            let mut sum = CellDensity {
-                source: 0.0,
-                reference: 0.0,
-                through: 0.0,
-            };
-            for bin in range.clone() {
-                let (ll, rr) = (rung.ll[bin] / n_source, rung.rr[bin] / n_source);
-                let lr = (rung.lr[bin].0 / n_source, rung.lr[bin].1 / n_source);
-                let source = 0.5 * (ll + rr);
-                sum.source += source;
-                sum.reference += rung.reference[bin] / n_reference;
-                sum.through += if bands.is_empty() {
-                    source
-                } else {
-                    let stages = finder::stages(
-                        bands.iter().copied(),
-                        bin as f32 * rung.bin_hz,
-                        heard_eq.sample_rate,
-                    );
-                    through_power(stages, ll, rr, lr)
-                };
-            }
-            let per = (range.len() as f64 * f64::from(rung.bin_hz)).recip();
-            *out = Some(CellDensity {
-                source: sum.source * per,
-                reference: sum.reference * per,
-                through: sum.through * per,
-            });
-        }
-        cells
-    }
+            Some(CellDensity {
+                source,
+                reference: 10f64.powf(f64::from(level) / 10.0),
+                through,
+            })
+        })
+        .collect()
 }
 
 /// The smoothing's width at `freq`, in octaves (plan §7.6): the wider of a third of an octave and
@@ -422,16 +687,18 @@ pub fn smooth(values: &[Option<f32>]) -> Vec<Option<f32>> {
 }
 
 /// What the fit is asked for in one cell: the smoothed difference `D`, the smoothed EQ as heard
-/// `E`, and the source's power in the cell (linear, its whole 1/48 octave) for the loudness.
+/// `E`, the source's power in the cell (linear, its whole 1/48 octave) for the loudness, and how
+/// much the cell counts for how settled the track and the reference are there ([`settled`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CellCurve {
     pub d: f32,
     pub e: f32,
     pub power: f64,
+    pub settled: f32,
 }
 
-/// The cells' smoothed levels in dB — the source's, the reference's and the source's through the
-/// EQ as heard — beside their densities.
+/// The cells' smoothed levels in dB — the track's, the reference's and the track's through the EQ
+/// as heard — beside their densities.
 pub struct Levels {
     pub densities: Vec<Option<CellDensity>>,
     pub source: Vec<Option<f32>>,
@@ -439,9 +706,9 @@ pub struct Levels {
     pub through: Vec<Option<f32>>,
 }
 
-/// [`Levels`] of what was heard.
-pub fn levels(spectra: &Spectra, heard_eq: &HeardEq) -> Levels {
-    let densities = spectra.densities(heard_eq);
+/// [`Levels`] of the track heard against `reference`.
+pub fn levels(track: &Learned, reference: &Reference, heard_eq: &HeardEq) -> Levels {
+    let densities = densities(track, reference, heard_eq);
     let db = |pick: fn(&CellDensity) -> f64| -> Vec<Option<f32>> {
         densities
             .iter()
@@ -456,9 +723,14 @@ pub fn levels(spectra: &Spectra, heard_eq: &HeardEq) -> Levels {
     }
 }
 
-/// The cells' curves (plan §7.6), `None` where a cell was not heard.
-pub fn curves(spectra: &Spectra, heard_eq: &HeardEq) -> Vec<Option<CellCurve>> {
-    let levels = levels(spectra, heard_eq);
+/// The cells' curves (plan §7.6), `None` where the track was not heard or the reference has no
+/// level.
+pub fn curves(
+    track: &Learned,
+    reference: &Reference,
+    heard_eq: &HeardEq,
+) -> Vec<Option<CellCurve>> {
+    let levels = levels(track, reference, heard_eq);
     let width = 2f64.powf(1.0 / (2.0 * f64::from(CELLS_PER_OCTAVE)));
     (0..levels.densities.len())
         .map(|cell| {
@@ -468,6 +740,7 @@ pub fn curves(spectra: &Spectra, heard_eq: &HeardEq) -> Vec<Option<CellCurve>> {
                 d: levels.reference[cell]? - levels.source[cell]?,
                 e: levels.through[cell]? - levels.source[cell]?,
                 power: density.source * centre * (width - width.recip()),
+                settled: settled(input_spread_at(track, cell), reference.spread_at(cell)),
             })
         })
         .collect()
@@ -515,7 +788,7 @@ pub fn k_weight(freq: f64) -> f64 {
 
 /// The level `c` (plan §7.6): the constant that, taken out after the Amount, leaves the source's
 /// K-weighted power through the EQ and the target what it is through the EQ alone. By bisection,
-/// the ease included.
+/// the ease and how settled each cell is included.
 pub fn level_offset(cells: &[Option<CellCurve>], amount: f32) -> f32 {
     let weighed: Vec<(f64, f64, f64, f64)> = cells
         .iter()
@@ -523,7 +796,7 @@ pub fn level_offset(cells: &[Option<CellCurve>], amount: f32) -> f32 {
         .filter_map(|(cell, curve)| {
             let curve = (*curve)?;
             let freq = cell_freq(cell);
-            let w = f64::from(ease(freq));
+            let w = f64::from(ease(freq) * curve.settled);
             (w > 0.0).then(|| {
                 (
                     k_weight(f64::from(freq)) * curve.power,
@@ -580,9 +853,7 @@ pub fn target(cells: &[Option<CellCurve>], points: &[f32], amount: f32, level: f
     points
         .iter()
         .map(|&freq| {
-            let at = (freq / LOWEST_HZ).log2() * CELLS_PER_OCTAVE;
-            let below = at.floor().max(0.0) as usize;
-            let t = at - below as f32;
+            let (below, t) = beside(freq);
             let value = |cell: usize| {
                 cells
                     .get(cell)
@@ -599,9 +870,36 @@ pub fn target(cells: &[Option<CellCurve>], points: &[f32], amount: f32, level: f
         .collect()
 }
 
-/// The fit's weights at `points`: the [`ease`].
-pub fn weights(points: &[f32]) -> Vec<f32> {
-    points.iter().map(|&freq| ease(freq)).collect()
+/// The fit's weights at `points`: the [`ease`] times how settled the cells beside a point are,
+/// read between them, and 0 where neither has a curve, where the reference was not read and `D` is
+/// not known (plan §7.6).
+pub fn weights(points: &[f32], cells: &[Option<CellCurve>]) -> Vec<f32> {
+    let settled = |cell: usize| {
+        cells
+            .get(cell)
+            .copied()
+            .flatten()
+            .map(|curve| curve.settled)
+    };
+    points
+        .iter()
+        .map(|&freq| {
+            let (below, t) = beside(freq);
+            let settled = match (settled(below), settled(below + 1)) {
+                (Some(a), Some(b)) => a + (b - a) * t,
+                (Some(a), None) | (None, Some(a)) => a,
+                (None, None) => 0.0,
+            };
+            ease(freq) * settled
+        })
+        .collect()
+}
+
+/// The cell at or below `freq`, and how far on to the next it is, in log-frequency.
+fn beside(freq: f32) -> (usize, f32) {
+    let at = (freq / LOWEST_HZ).log2() * CELLS_PER_OCTAVE;
+    let below = at.floor().max(0.0) as usize;
+    (below, at - below as f32)
 }
 
 /// What is left of `target` once `responses` are in, weighted: what the regions are read on.
@@ -982,9 +1280,10 @@ fn solve(mut system: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
 
 // ---- the job, away from the editor's frame ---------------------------------------------------
 
-/// One fit for Match (plan §7.6), on `spectra`, a copy of what the matcher has heard.
+/// One fit for Match (plan §7.6), on what this EQ learned of its track, against `reference`.
 pub struct Fit {
-    pub spectra: Spectra,
+    pub track: Arc<Learned>,
+    pub reference: Reference,
     pub heard: HeardEq,
     /// Amount, 0 to 1.
     pub amount: f32,
@@ -992,7 +1291,8 @@ pub struct Fit {
     pub max_bands: usize,
     /// The listen it was made in ([`Matcher::listen`]).
     pub listen: u64,
-    /// What it was made on besides what was heard: the EQ, the free slots, Amount and Detail.
+    /// What it was made on besides what was heard: the reference chosen, the EQ, the free slots,
+    /// Amount and Detail.
     pub basis: Vec<u32>,
 }
 
@@ -1006,14 +1306,14 @@ pub struct Fitted {
 impl Fit {
     /// Runs it, where it is.
     pub fn run(self) -> Fitted {
-        let bands = if self.spectra.listened() {
-            let cells = curves(&self.spectra, &self.heard);
+        let bands = if self.track.seconds > 0.0 && self.reference.seconds > 0.0 {
+            let cells = curves(&self.track, &self.reference, &self.heard);
             let level = level_offset(&cells, self.amount);
             let points = points(self.heard.sample_rate);
             let target = target(&cells, &points, self.amount, level);
             fit(
                 &target,
-                &weights(&points),
+                &weights(&points, &cells),
                 &points,
                 self.heard.sample_rate,
                 self.max_bands,

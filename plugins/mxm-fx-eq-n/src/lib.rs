@@ -18,8 +18,10 @@ pub mod analyser;
 pub mod audition;
 pub mod editor;
 pub mod instances;
+pub mod learned;
 pub mod params;
 pub mod preset;
+pub mod preview;
 pub mod telemetry;
 pub mod view;
 
@@ -36,6 +38,9 @@ pub struct MxmFxEqN {
     pub params: Arc<EqParams>,
     telemetry: Arc<Telemetry>,
     audition: Arc<Audition>,
+    /// Match's Preview (plan §7.6), and the bands last read from it whole, by slot.
+    preview: Arc<preview::Preview>,
+    previewed: [Option<mxm_fx_eq_n_dsp::Band>; mxm_fx_eq_n_dsp::SLOTS],
     /// The undo history: the instance's, so it survives the editor closing (plan §5.4).
     history: editor::history::Shared,
     engine: Box<Engine>,
@@ -58,11 +63,17 @@ impl Default for MxmFxEqN {
         let (tap, consumer) = analyser::ring();
         let (share, share_consumer) = analyser::ring_with(instances::SHARE_BLOCKS);
         let params = Arc::new(EqParams::default());
-        let instance = instances::Instance::join(params.identity.shared(), share_consumer);
+        let instance = instances::Instance::join_learned(
+            params.identity.shared(),
+            params.learned.shared(),
+            share_consumer,
+        );
         Self {
             params,
             telemetry: Arc::new(Telemetry::default()),
             audition: Arc::new(Audition::default()),
+            preview: Arc::new(preview::Preview::default()),
+            previewed: [None; mxm_fx_eq_n_dsp::SLOTS],
             history: editor::history::Shared::default(),
             engine: Box::new(Engine::new(48_000.0)),
             tap,
@@ -87,28 +98,51 @@ fn latency_of(phase: Phase, sample_rate: f32) -> u32 {
 }
 
 impl MxmFxEqN {
-    /// The parameters and the solo request, into the engine. Solo is an audition: never in an
-    /// offline render, and never without an editor to hold it.
+    /// The parameters, the solo request and Match's Preview, into the engine. Solo and Preview are
+    /// auditions: never in an offline render, and never without an editor to hold them. A
+    /// previewed band plays in its slot only while the slot is Off, static, unkeyed and Stereo, as
+    /// Apply writes it; each slot is set once, so a band's transitions run as any band's.
     fn sync(&mut self) {
+        let auditioning = !self.offline && self.telemetry.connected();
+        if auditioning {
+            self.preview.read(&mut self.previewed);
+        } else {
+            self.previewed = [None; mxm_fx_eq_n_dsp::SLOTS];
+        }
+        let mut previewing = [false; mxm_fx_eq_n_dsp::SLOTS];
         for (slot, band) in self.params.bands.iter().enumerate() {
-            self.engine.set_band(slot, band.band());
+            let band = band.band();
+            let previewed = self.previewed[slot].filter(|_| band.shape.is_none());
+            previewing[slot] = previewed.is_some();
+            self.engine.set_band(slot, previewed.unwrap_or(band));
         }
         for (slot, dynamics) in self.params.dynamics.iter().enumerate() {
-            self.engine.set_dynamics(slot, dynamics.dynamics());
+            let dynamics = if previewing[slot] {
+                mxm_fx_eq_n_dsp::Dynamics::STATIC
+            } else {
+                dynamics.dynamics()
+            };
+            self.engine.set_dynamics(slot, dynamics);
         }
         for (slot, key) in self.params.keys.iter().enumerate() {
-            self.engine.set_side_chain(slot, key.side_chain.value());
+            self.engine
+                .set_side_chain(slot, key.side_chain.value() && !previewing[slot]);
         }
         for (slot, place) in self.params.places.iter().enumerate() {
-            self.engine.set_placement(slot, place.placement());
+            let placement = if previewing[slot] {
+                mxm_fx_eq_n_dsp::Placement::Stereo
+            } else {
+                place.placement()
+            };
+            self.engine.set_placement(slot, placement);
         }
         self.engine.set_output_gain(self.params.output.value());
         self.engine.set_gain_scale(self.params.gain_scale.value());
         self.engine.set_auto_gain(self.params.auto_gain.value());
-        let solo = if self.offline || !self.telemetry.connected() {
-            None
-        } else {
+        let solo = if auditioning {
             self.audition.slot()
+        } else {
+            None
         };
         self.engine.set_solo(solo);
     }
@@ -348,6 +382,7 @@ impl Plugin for MxmFxEqN {
             params: self.params.clone(),
             telemetry: self.telemetry.clone(),
             audition: self.audition.clone(),
+            preview: self.preview.clone(),
             history: self.history.clone(),
             analyser: self.analyser.take(),
             instance: self.instance.clone(),

@@ -256,6 +256,50 @@ fn solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell() {
     assert_eq!(plugin.engine.audition(), None);
 }
 
+/// **Match's Preview is heard in an Off slot, with an editor, never offline** (plan §7.6): a +12 dB
+/// bell at 1 kHz previewed in slot 3 is not heard without an editor, is heard with one, gives way
+/// to a band the player puts in that slot, and is never heard in an offline render.
+#[test]
+fn preview_plays_in_an_off_slot_with_an_editor_and_never_offline() {
+    let tone = |plugin: &mut MxmFxEqN| -> f64 {
+        let input: Vec<f32> = (0..96_000)
+            .map(|i| (0.25 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
+            .collect();
+        let mut buffers = vec![input.clone(), input];
+        run(plugin, &mut buffers);
+        tone_db(&buffers[0], 1_000.0, 0.25)
+    };
+    let mut plugin = prepared(2);
+    plugin
+        .preview
+        .publish(&[(3, Shape::Bell, 1_000.0, 12.0, 1.0)]);
+    assert!(tone(&mut plugin).abs() < 0.01, "no editor: not heard");
+    plugin.telemetry.connect(true);
+    let heard = tone(&mut plugin);
+    assert!((heard - 12.0).abs() < 0.05, "heard {heard}");
+    set_band(
+        &plugin.params.bands[3],
+        Some(Shape::Bell),
+        1_000.0,
+        -6.0,
+        1.0,
+        Slope::Db12,
+    );
+    let heard = tone(&mut plugin);
+    assert!((heard + 6.0).abs() < 0.05, "the player's band: {heard}");
+    set_band(
+        &plugin.params.bands[3],
+        None,
+        1_000.0,
+        0.0,
+        1.0,
+        Slope::Db12,
+    );
+    assert!(plugin.prepare(48_000.0, 2, true));
+    let heard = tone(&mut plugin);
+    assert!(heard.abs() < 0.01, "offline: {heard}");
+}
+
 #[test]
 fn with_an_editor_open_processing_never_allocates() {
     let mut plugin = prepared(2);
@@ -288,11 +332,15 @@ fn with_an_editor_open_processing_never_allocates() {
             }
         }
         if block == 40 {
-            // Structural changes mid-run: a shape, a deletion, another solo.
+            // Structural changes mid-run: a shape, a deletion, another solo, Match's Preview in the
+            // slot deleted (plan §7.6).
             set_int(&plugin.params.bands[0].kind, type_of(Some(Shape::HighCut)));
             set_int(&plugin.params.bands[1].kind, 0);
             let (endings, _) = plugin.audition.state();
             assert!(plugin.audition.request(endings, Some(4)));
+            plugin
+                .preview
+                .publish(&[(1, Shape::Bell, 1_000.0, 3.0, 1.0)]);
         }
         let (left, right) = buffers.split_at_mut(1);
         let mut channels: [&mut [f32]; 2] = [&mut left[0], &mut right[0]];

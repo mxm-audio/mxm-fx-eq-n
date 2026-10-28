@@ -24,14 +24,15 @@ use super::{
     ANALYSER_CARD, BAND_CARD, EqApp, Field, FindRefusal, MATCH_CARD, OUTPUT_CARD, RESONANCES_CARD,
     SOLO_KEY,
 };
+use crate::learned::MatchTo;
 use crate::params::{EqParams, SHAPES, band_ids, shape_name};
 use crate::view::{Resolution, Show, Speed, Tilt, ViewSettings};
 
-/// The second column's titles, top to bottom.
+/// The cards' titles: the first column's under Band, then the second's, top to bottom.
+pub const MATCH_TITLE: &str = "Match";
 pub const OUTPUT_TITLE: &str = "Output";
 pub const ANALYSER_TITLE: &str = "Analyser";
 pub const RESONANCES_TITLE: &str = "Resonances";
-pub const MATCH_TITLE: &str = "Match";
 
 /// A slider in the column.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -88,16 +89,26 @@ pub enum Leaf {
     Amount,
     /// Makes every proposed cut as a band.
     ApplyAll,
-    /// Listens to the side chain and the input and proposes a match (plan §7.6).
-    Match,
+    /// Learns this track while on, keeps what it learned while off (plan §7.6).
+    Learn,
+    /// Lit while Learn hears sound.
+    LearnLamp,
+    /// What this EQ is matched to; the name to save under while one is being typed.
+    MatchTo,
+    /// Saves what this EQ learned as a reference, under a name.
+    SaveReference,
+    /// Shows the saved references' folder.
+    OpenReferences,
     /// The share of the difference from the reference the match takes.
     MatchAmount,
     /// At most how many bands the match proposes.
     Detail,
-    /// How long each input has been heard.
+    /// How long this track has been learned.
     MatchHeard,
     /// Makes the match's bands.
     MatchApply,
+    /// Plays the match's bands while on, before they are applied.
+    Preview,
     /// Zero latency or Linear phase (plan §7.7).
     PhaseMode,
     /// Linear phase's resolution.
@@ -165,11 +176,22 @@ const AMOUNT_DESCRIPTION: &str = "How much of each resonance a proposed cut take
 const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in one step Undo takes back.";
 /// The Amount slider's key in the cursor's registry and its held value's.
 const AMOUNT_KEY: &str = "amount";
-const MATCH_DESCRIPTION: &str = "Listens to the sound coming in and to the side chain, and proposes \
-     the bands that bring the sound's tone towards the side chain's. Route a reference track to \
-     the side chain. Needs the analyser.";
-const MATCH_NO_PORT_DESCRIPTION: &str = "Needs a side chain, which this layout does not have. Use \
-     the EQ with its side-chain input to match to a reference track.";
+const LEARN_DESCRIPTION: &str = "While on, learns this track's sound from what plays, before \
+     and after this EQ; turned off, keeps it with the project, where every other track with this \
+     EQ can be matched to it. Play the track, then turn it off. Thirty seconds or more makes a \
+     steadier match. Needs the analyser.";
+const MATCH_TO_DESCRIPTION: &str = "The sound this track is matched to: another track with this EQ \
+     on it, as that one learned it, or a reference saved before. The bands are proposed once both \
+     are learned.";
+const NAMING_DESCRIPTION: &str =
+    "The name to save this track's learned sound under. Press Save or Enter.";
+const SAVE_REFERENCE_DESCRIPTION: &str = "Keeps this track's learned sound under a name, so any \
+     track in any project can be matched to it.";
+const SAVE_TAKEN_DESCRIPTION: &str =
+    "A reference of that name is saved already. Press Replace to replace it.";
+const SAVE_NOTHING_DESCRIPTION: &str = "Learn this track first, and turn Learn off.";
+const OPEN_REFERENCES_DESCRIPTION: &str =
+    "Shows the folder the saved references are in, to rename or delete them.";
 const MATCH_FULL_DESCRIPTION: &str =
     "Every band slot is in use, so no band can be proposed. Delete a band to make room.";
 const MATCH_NO_GAIN_DESCRIPTION: &str =
@@ -178,13 +200,21 @@ const MATCH_AMOUNT_DESCRIPTION: &str =
     "How much of the difference from the reference the match takes.";
 const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
-const MATCH_HEARD_DESCRIPTION: &str = "How long the sound coming in and the side chain have been \
-     heard. Thirty seconds or more of each makes a steadier match.";
+const MATCH_HEARD_DESCRIPTION: &str =
+    "How long this track has been learned. Thirty seconds or more makes a steadier match.";
 const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in one step Undo takes back.";
+const PREVIEW_DESCRIPTION: &str = "While on, plays the proposed bands as if applied, following \
+     Amount and Detail as they move. Off plays the EQ as it is. Nothing is written until Apply.";
 const MATCH_AMOUNT_KEY: &str = "match amount";
 const DETAIL_KEY: &str = "detail";
-/// The heard reading's height.
+/// The heard reading's height, and its width: "Learning 999 s" whole.
 const HEARD_HEIGHT: f32 = 16.0;
+const HEARD_WIDTH: f32 = 96.0;
+const LAMP_DESCRIPTION: &str =
+    "Green while Learn hears sound. Dark while it is on: nothing is playing on this track.";
+/// A lamp's width, and its dot's radius.
+const LAMP_WIDTH: f32 = 12.0;
+const LAMP_RADIUS: f32 = 4.0;
 
 /// A slider on view state, not a parameter (plan §7.5, §7.6): Find's Amount, Match's Amount and
 /// Detail.
@@ -699,9 +729,27 @@ pub fn resonances_tree() -> Node<Leaf> {
     ])
 }
 
-/// The Match card (plan §7.6): Match and Apply on a row, Amount and Detail under them, then how long
-/// each input has been heard.
-pub fn match_tree() -> Node<Leaf> {
+/// The Match card (plan §7.6), top to bottom as it is used: Learn with its lamp and how long it
+/// has learned; Save and Folder; what it is matched to; Amount and Detail; Preview and Apply.
+pub fn match_tree(choices: Vec<String>) -> Node<Leaf> {
+    let lamp = |key: Leaf| {
+        leaf(
+            key,
+            Kind::Custom {
+                min_width: LAMP_WIDTH,
+                height: tree::Height::Fixed(HEARD_HEIGHT),
+                fills: false,
+            },
+        )
+    };
+    let toggle = |key: Leaf, label: &str| {
+        leaf(
+            key,
+            Kind::Toggle {
+                label: label.to_owned(),
+            },
+        )
+    };
     let slider = |key: Leaf, label: &str, widest: &str| {
         leaf(
             key,
@@ -714,24 +762,30 @@ pub fn match_tree() -> Node<Leaf> {
     };
     stack(vec![
         tree::row(vec![
+            toggle(Leaf::Learn, "Learn"),
+            lamp(Leaf::LearnLamp),
             leaf(
-                Leaf::Match,
-                Kind::Toggle {
-                    label: "Match".to_owned(),
+                Leaf::MatchHeard,
+                Kind::Custom {
+                    min_width: HEARD_WIDTH,
+                    height: tree::Height::Fixed(HEARD_HEIGHT),
+                    fills: true,
                 },
             ),
+        ]),
+        tree::row(vec![
+            button_leaf(Leaf::SaveReference, "Replace"),
+            button_leaf(Leaf::OpenReferences, "Folder"),
+        ]),
+        selector_leaf(Leaf::MatchTo, "Match to", choices),
+        tree::row(vec![
+            slider(Leaf::MatchAmount, "Amount", "100 %"),
+            slider(Leaf::Detail, "Detail", "24 bands"),
+        ]),
+        tree::row(vec![
+            toggle(Leaf::Preview, "Preview"),
             button_leaf(Leaf::MatchApply, "Apply"),
         ]),
-        slider(Leaf::MatchAmount, "Amount", "100 %"),
-        slider(Leaf::Detail, "Detail", "24 bands"),
-        leaf(
-            Leaf::MatchHeard,
-            Kind::Custom {
-                min_width: 0.0,
-                height: tree::Height::Fixed(HEARD_HEIGHT),
-                fills: true,
-            },
-        ),
     ])
 }
 
@@ -782,7 +836,7 @@ impl MeterDisplay {
 }
 
 impl EqApp {
-    /// The first column: the Band card alone (decision 30).
+    /// The first column: the Band card, then Match (decisions 30, 34).
     pub(crate) fn first_column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         let title = band_title(self);
         // With no band selected the Band card has no controls, so it is no stop of the cursor's:
@@ -809,10 +863,19 @@ impl EqApp {
             ui.interact(strip, ui.id().with("band title"), egui::Sense::hover())
                 .on_hover_text(names);
         }
+        ui.add_space(SPACE_3);
+        self.card(
+            ui,
+            tokens,
+            MATCH_CARD,
+            MATCH_TITLE,
+            |app, _| app.match_card_tree(),
+            false,
+            None,
+        );
     }
 
-    /// The second column: Output, Analyser, Resonances and Match, top to bottom, each one of the
-    /// cursor's.
+    /// The second column: Output, Analyser and Resonances, top to bottom, each one of the cursor's.
     pub(crate) fn second_column(&mut self, ui: &mut Ui, tokens: &Tokens) {
         self.card(
             ui,
@@ -840,16 +903,6 @@ impl EqApp {
             RESONANCES_CARD,
             RESONANCES_TITLE,
             |_, _| resonances_tree(),
-            false,
-            None,
-        );
-        ui.add_space(SPACE_3);
-        self.card(
-            ui,
-            tokens,
-            MATCH_CARD,
-            MATCH_TITLE,
-            |_, _| match_tree(),
             false,
             None,
         );
@@ -1296,26 +1349,22 @@ impl EqApp {
             Leaf::Amount => self.paint_view_slider(ui, tokens, rect, ViewSlider::FindAmount),
             Leaf::MatchAmount => self.paint_view_slider(ui, tokens, rect, ViewSlider::MatchAmount),
             Leaf::Detail => self.paint_view_slider(ui, tokens, rect, ViewSlider::Detail),
-            Leaf::Match => {
-                let settings = self.params.view.get();
-                let offered = self.match_offered(&settings);
-                let mut on = self.matching;
-                let description = if !self.telemetry.side_chain_port() {
-                    MATCH_NO_PORT_DESCRIPTION
-                } else {
-                    match self.find_refusal() {
-                        Some(FindRefusal::Full) if self.matching => MATCH_FULL_DESCRIPTION,
-                        Some(FindRefusal::NoGain) if self.matching => MATCH_NO_GAIN_DESCRIPTION,
-                        _ => MATCH_DESCRIPTION,
-                    }
+            Leaf::MatchTo => self.paint_match_to(ui, tokens, rect),
+            Leaf::Learn => {
+                let analyser = self.params.view.get().analyser;
+                let mut on = self.learning;
+                let description = match self.find_refusal() {
+                    Some(FindRefusal::Full) => MATCH_FULL_DESCRIPTION,
+                    Some(FindRefusal::NoGain) => MATCH_NO_GAIN_DESCRIPTION,
+                    None => LEARN_DESCRIPTION,
                 };
-                let changed = navigation::at(ui, "match", |ui| {
-                    ui.add_enabled_ui(offered, |ui| {
+                let changed = navigation::at(ui, "learn", |ui| {
+                    ui.add_enabled_ui(analyser, |ui| {
                         mxm_ui::control::toggle_sized(
                             ui,
                             tokens,
-                            "Match",
-                            "Match a reference",
+                            "Learn",
+                            "Learn",
                             &mut on,
                             false,
                             description,
@@ -1325,7 +1374,51 @@ impl EqApp {
                     .inner
                 });
                 if changed {
-                    self.set_match(on);
+                    self.set_learn(on);
+                }
+            }
+            Leaf::SaveReference => {
+                let taken = self.naming.as_ref().is_some_and(|naming| naming.taken);
+                let enabled = self.can_save_reference();
+                let description = if taken {
+                    SAVE_TAKEN_DESCRIPTION
+                } else if enabled {
+                    SAVE_REFERENCE_DESCRIPTION
+                } else {
+                    SAVE_NOTHING_DESCRIPTION
+                };
+                let clicked = navigation::at(ui, "save reference", |ui| {
+                    let response = ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(if taken { "Replace" } else { "Save" })
+                                .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
+                        )
+                        .on_hover_text(description)
+                        .on_disabled_hover_text(description);
+                    navigation::mark_unclaimed(ui, response.id, response.rect);
+                    response.clicked()
+                });
+                if clicked {
+                    self.press_save_reference();
+                }
+            }
+            Leaf::OpenReferences => {
+                let folder = self.references_dir.clone();
+                let clicked = navigation::at(ui, "open references", |ui| {
+                    let response = ui
+                        .add_enabled(
+                            folder.is_some(),
+                            egui::Button::new("Folder")
+                                .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
+                        )
+                        .on_hover_text(OPEN_REFERENCES_DESCRIPTION)
+                        .on_disabled_hover_text(OPEN_REFERENCES_DESCRIPTION);
+                    navigation::mark_unclaimed(ui, response.id, response.rect);
+                    response.clicked()
+                });
+                if clicked && let Some(folder) = folder {
+                    mxm_preset::library::open_folder(&folder);
                 }
             }
             Leaf::MatchApply => {
@@ -1347,12 +1440,65 @@ impl EqApp {
                     self.apply_match(&settings);
                 }
             }
-            Leaf::MatchHeard => {
-                let [input, reference] = self.matcher.spectra().heard_seconds();
-                let reading = if self.matching {
-                    format!("Heard: input {input:.0} s, side chain {reference:.0} s")
+            Leaf::Preview => {
+                let analyser = self.params.view.get().analyser;
+                let mut on = self.previewing;
+                let changed = navigation::at(ui, "preview", |ui| {
+                    ui.add_enabled_ui(analyser, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Preview",
+                            "Preview",
+                            &mut on,
+                            false,
+                            PREVIEW_DESCRIPTION,
+                            0.0,
+                        )
+                    })
+                    .inner
+                });
+                if changed {
+                    self.set_preview(on);
+                }
+            }
+            Leaf::LearnLamp => {
+                let response = ui.allocate_rect(rect, egui::Sense::hover());
+                let painter = ui.painter_at(rect);
+                // Filled while it hears, a ring otherwise, so the state never rests on hue alone.
+                if self.hearing {
+                    painter.circle_filled(rect.center(), LAMP_RADIUS, tokens.success);
                 } else {
-                    "Heard: nothing yet".to_owned()
+                    let colour = if self.learning {
+                        tokens.text_secondary
+                    } else {
+                        tokens.text_disabled
+                    };
+                    painter.circle_stroke(
+                        rect.center(),
+                        LAMP_RADIUS - 0.5,
+                        egui::Stroke::new(1.0, colour),
+                    );
+                }
+                let state = if self.hearing {
+                    "Hearing sound"
+                } else if self.learning {
+                    "Hearing nothing"
+                } else {
+                    "Not learning"
+                };
+                response.on_hover_text(LAMP_DESCRIPTION).widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, state)
+                });
+            }
+            Leaf::MatchHeard => {
+                let seconds = self.learned_seconds();
+                let reading = if self.learning {
+                    format!("Learning {seconds:.0} s")
+                } else if seconds > 0.0 {
+                    format!("Learned {seconds:.0} s")
+                } else {
+                    "Nothing learned".to_owned()
                 };
                 let response = ui.allocate_rect(rect, egui::Sense::hover());
                 ui.painter_at(rect).text(
@@ -1549,6 +1695,96 @@ impl EqApp {
         response
             .on_hover_text(MOVING_DESCRIPTION)
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &reading));
+    }
+
+    /// The Match card's tree (plan §7.6): its selector's names as they stand.
+    pub(crate) fn match_card_tree(&self) -> Node<Leaf> {
+        match_tree(
+            self.match_choices()
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect(),
+        )
+    }
+
+    /// Match to (plan §7.6): nothing, another EQ that has learned, or a saved reference, one that
+    /// cannot be read not chosen, the reasons on the hover; while a name is being typed to save
+    /// this track's learned sound under, its field, Enter saving and BACK leaving it.
+    fn paint_match_to(&mut self, ui: &mut Ui, tokens: &Tokens, rect: Rect) {
+        if let Some(mut naming) = self.naming.clone() {
+            let (response, enter, back) = navigation::at(ui, "match to", |ui| {
+                let response = ui
+                    .add_sized(
+                        rect.size(),
+                        egui::TextEdit::singleline(&mut naming.name).hint_text("Name"),
+                    )
+                    .on_hover_text(NAMING_DESCRIPTION);
+                if !naming.asked {
+                    response.request_focus();
+                    naming.asked = true;
+                }
+                let (enter, back) = ui.input(|input| {
+                    (
+                        input.key_pressed(egui::Key::Enter),
+                        input.key_pressed(egui::Key::Escape),
+                    )
+                });
+                (response, enter, back)
+            });
+            if response.changed() {
+                naming.taken = false;
+            }
+            naming.focused = response.has_focus();
+            let left = response.lost_focus();
+            self.naming = Some(naming);
+            if back {
+                self.naming = None;
+            } else if enter && left {
+                self.press_save_reference();
+            }
+            return;
+        }
+        let all = self.match_choices();
+        let chosen = self.match_to();
+        let mut index = all.iter().position(|(to, _)| *to == chosen).unwrap_or(0);
+        let unreadable: Vec<String> = self
+            .saved_references
+            .iter()
+            .filter_map(|listed| {
+                let why = listed.read.as_ref().err()?;
+                Some(format!("{} cannot be read: {why}.", listed.name))
+            })
+            .collect();
+        let description = if unreadable.is_empty() {
+            MATCH_TO_DESCRIPTION.to_owned()
+        } else {
+            format!("{MATCH_TO_DESCRIPTION} {}", unreadable.join(" "))
+        };
+        let names: Vec<&str> = all.iter().map(|(_, name)| name.as_str()).collect();
+        let changed = navigation::at(ui, "match to", |ui| {
+            mxm_ui::control::selector(
+                ui,
+                tokens,
+                "Match to",
+                &names,
+                &mut index,
+                None,
+                None,
+                &description,
+            )
+        });
+        if changed && let Some((to, _)) = all.get(index) {
+            let readable = match to {
+                MatchTo::Saved(name) => self
+                    .saved_references
+                    .iter()
+                    .any(|listed| listed.name == *name && listed.read.is_ok()),
+                _ => true,
+            };
+            if readable {
+                self.set_match_to(to.clone());
+            }
+        }
     }
 
     /// The External selector (plan §7.8): Off, the side chain on a layout with the port, every

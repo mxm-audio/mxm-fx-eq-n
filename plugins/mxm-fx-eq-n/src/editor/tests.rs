@@ -89,6 +89,7 @@ impl Rig {
             params,
             telemetry: telemetry.clone(),
             audition: audition.clone(),
+            preview: Arc::new(crate::preview::Preview::default()),
             history: history::Shared::default(),
             analyser: None,
             instance: crate::instances::Instance::detached(),
@@ -515,6 +516,7 @@ fn the_cursor_reaches_and_operates_every_control() {
             params,
             telemetry: Arc::new(Telemetry::default()),
             audition: Arc::new(Audition::default()),
+            preview: Arc::new(crate::preview::Preview::default()),
             history: history::Shared::default(),
             analyser: None,
             instance: crate::instances::Instance::detached(),
@@ -552,8 +554,12 @@ fn the_cursor_reaches_and_operates_every_control() {
             "find",
             "apply all",
             "amount",
-            "match",
+            "learn",
             "match apply",
+            "preview",
+            "match to",
+            "save reference",
+            "open references",
             "match amount",
             "detail",
         ];
@@ -645,6 +651,7 @@ fn a_restore_while_the_editor_is_closed_starts_an_epoch_on_reopening() {
         params: rig.app.params.clone(),
         telemetry: rig.telemetry.clone(),
         audition: rig.audition.clone(),
+        preview: Arc::new(crate::preview::Preview::default()),
         history: rig.app.history.clone(),
         analyser: None,
         instance: crate::instances::Instance::detached(),
@@ -1695,6 +1702,7 @@ fn pair(select: Option<(Shape, Slope)>) -> (EqApp, EqApp) {
             params: params.clone(),
             telemetry: telemetry.clone(),
             audition: Arc::new(Audition::default()),
+            preview: Arc::new(crate::preview::Preview::default()),
             history: history::Shared::default(),
             analyser: None,
             instance: crate::instances::Instance::detached(),
@@ -1773,7 +1781,7 @@ fn every_card_passes_the_tree_checks_in_every_state_and_fits_the_column() {
             column::analyser_tree(vec!["Off".to_owned(), "Side chain".to_owned()])
         }),
         (column::RESONANCES_TITLE, |_| column::resonances_tree()),
-        (column::MATCH_TITLE, |_| column::match_tree()),
+        (column::MATCH_TITLE, |app| app.match_card_tree()),
     ];
     for (title, tree) in cards {
         let floor = settled(|ui| mxm_ui::tree::card_floor(ui, title, &tree(&build)));
@@ -3470,99 +3478,369 @@ fn a_low_rate_builds_the_analysers_once() {
 
 // ---- Match (plan §7.6) -----------------------------------------------------------------------
 
+use super::SaveRefusal;
 use super::matcher::{Fitted, MatchBand};
 use crate::analyser::{BLOCK_FRAMES, Block};
+use crate::instances::Instance;
+use crate::learned::{Learned, MatchTo};
 
-/// A rig on a layout with the side-chain port, Match on.
-fn match_rig() -> Rig {
-    let mut rig = Rig::new();
-    rig.telemetry.publish_side_chain_port(true);
-    rig.press(Vec::new());
-    rig.app.set_match(true);
-    rig.press(Vec::new());
-    rig
-}
-
-/// `seconds` of noise on the input and another on the side chain, straight into the matcher.
-fn match_heard(rig: &mut Rig, seconds: f32) {
-    let rate = 48_000.0f32;
+/// White noise uniform in ±0.3 (xorshift), the same run each time.
+fn noise() -> impl FnMut() -> f32 {
     let mut state = 0x2545_f491u32;
-    let mut noise = move || {
+    move || {
         state ^= state << 13;
         state ^= state >> 17;
         state ^= state << 5;
         0.3 * ((state as f32 / u32::MAX as f32) * 2.0 - 1.0)
-    };
-    for seq in 0..(rate * seconds) as u64 / BLOCK_FRAMES as u64 {
-        let mut block = Block {
-            seq,
-            generation: 0,
-            sample_rate: rate,
-            channels: 2,
-            pre: [[0.0; BLOCK_FRAMES]; 2],
-            post: [[0.0; BLOCK_FRAMES]; 2],
-            key: [[0.0; BLOCK_FRAMES]; 2],
-        };
-        for index in 0..BLOCK_FRAMES {
-            let (x, y) = (noise(), noise());
-            block.pre[0][index] = x;
-            block.pre[1][index] = x;
-            // The reference brighter: its own noise with a lift above 3 kHz.
-            block.key[0][index] = y;
-            block.key[1][index] = y;
-        }
-        rig.app.matcher.ingest(&block);
     }
 }
 
-/// **Match needs the side chain and the analyser, and is one proposal set of three** (plan §7.6):
-/// not offered without the port, ended by the analyser off or the port gone; Find, Match and
-/// Freeze each end the others; the key is copied while Match listens; Match is never saved.
-#[test]
-fn match_needs_the_side_chain_and_excludes_find_and_freeze() {
+/// `seconds` of blocks at 48 kHz, each filled sample by sample with what `next` gives: the input
+/// before the EQ, then the output after it.
+fn blocks(seconds: f32, mut next: impl FnMut() -> (f32, f32)) -> Vec<Block> {
+    let rate = 48_000.0f32;
+    (0..(rate * seconds) as u64 / BLOCK_FRAMES as u64)
+        .map(|seq| {
+            let mut block = Block {
+                seq,
+                generation: 0,
+                sample_rate: rate,
+                channels: 2,
+                pre: [[0.0; BLOCK_FRAMES]; 2],
+                post: [[0.0; BLOCK_FRAMES]; 2],
+                key: [[0.0; BLOCK_FRAMES]; 2],
+            };
+            for index in 0..BLOCK_FRAMES {
+                let (pre, post) = next();
+                block.pre[0][index] = pre;
+                block.pre[1][index] = pre;
+                block.post[0][index] = post;
+                block.post[1][index] = post;
+            }
+            block
+        })
+        .collect()
+}
+
+/// What another EQ learns of 11 s of noise whose output is tilted, `y[n] = x[n] + 0.9·x[n−1]`:
+/// louder in the lows, so a track of the plain noise matched to it is proposed bands.
+fn tilted_learned() -> Learned {
+    let mut matcher = matcher::Matcher::new(48_000.0);
+    let (mut next, mut last) = (noise(), 0.0f32);
+    for block in blocks(11.0, move || {
+        let x = next();
+        let y = x + 0.9 * last;
+        last = x;
+        (x, y)
+    }) {
+        matcher.ingest(&block);
+    }
+    matcher.learned()
+}
+
+/// Another EQ in this process, on a track named `name`, that has learned `learned`.
+fn other_eq(name: &str, learned: Option<Learned>) -> Arc<Instance> {
+    let identity = crate::instances::IdentityField::default();
+    let (_tap, consumer) = crate::analyser::ring_with(crate::instances::SHARE_BLOCKS);
+    let other = Instance::join(identity.shared(), consumer);
+    other.set_track(name);
+    other.store_learned(learned.map(Arc::new));
+    other
+}
+
+/// A rig whose EQ is matched to another's, which learned a tilted noise, and learns its own track;
+/// the other EQ, kept for the test's length.
+fn match_rig() -> (Rig, Arc<Instance>) {
+    let other = other_eq("zz-match Outro", Some(tilted_learned()));
     let mut rig = Rig::new();
     rig.press(Vec::new());
-    let settings = rig.app.params.view.get();
-    assert!(!rig.app.match_offered(&settings), "no port, no Match");
-    rig.telemetry.publish_side_chain_port(true);
+    rig.app.set_match_to(MatchTo::Track(other.id()));
+    rig.app.set_learn(true);
     rig.press(Vec::new());
-    assert!(rig.app.match_offered(&settings));
+    (rig, other)
+}
 
+/// `seconds` of plain noise, input and output alike, straight into the matcher while Learn is on.
+fn match_heard(rig: &mut Rig, seconds: f32) {
+    let mut next = noise();
+    for block in blocks(seconds, move || {
+        let x = next();
+        (x, x)
+    }) {
+        if rig.app.learning {
+            rig.app.matcher.ingest(&block);
+        }
+    }
+}
+
+/// **Match needs only the analyser, and is one proposal set of three** (plan §7.6): offered on
+/// every layout; Learn ends Find and a freeze, and each of them ends Learn, keeping what it
+/// learned; the analyser off ends it; Match is never saved in the view.
+#[test]
+fn learn_needs_the_analyser_and_excludes_find_and_freeze() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    assert!(rig.app.match_offered(&rig.app.params.view.get()));
     rig.app.set_find(true);
-    rig.app.set_match(true);
-    assert!(rig.app.matching && !rig.app.find, "Match ends Find");
+    rig.app.set_learn(true);
+    assert!(rig.app.learning && !rig.app.find, "Learn ends Find");
+    match_heard(&mut rig, 1.0);
     rig.app.set_find(true);
-    assert!(rig.app.find && !rig.app.matching, "Find ends Match");
-    rig.app.set_match(true);
+    assert!(rig.app.find && !rig.app.learning, "Find ends Learn");
+    assert!(
+        rig.app.params.learned.get().is_some(),
+        "and what it learned is kept"
+    );
+    rig.app.set_learn(true);
     rig.app.ask_freeze();
-    assert!(!rig.app.matching && rig.app.freezing(), "Freeze ends Match");
-    rig.app.set_match(true);
-    assert!(rig.app.matching && !rig.app.freezing(), "Match ends Freeze");
-
     rig.press(Vec::new());
     assert!(
-        rig.telemetry.side_chain_wanted(),
-        "the key is copied while Match listens, the view off"
+        !rig.app.learning && rig.app.freezing(),
+        "a freeze ends Learn"
     );
-    rig.app.set_match(false);
-    rig.press(Vec::new());
-    assert!(!rig.telemetry.side_chain_wanted());
+    rig.app.set_learn(true);
+    assert!(!rig.app.freezing(), "Learn ends a freeze");
 
-    rig.app.set_match(true);
     let mut quiet = rig.app.params.view.get();
     quiet.analyser = false;
     rig.app.set_view(quiet);
     rig.press(Vec::new());
-    assert!(!rig.app.matching, "the analyser off ends it");
+    assert!(!rig.app.learning, "the analyser off ends it");
     let mut on = quiet;
     on.analyser = true;
     rig.app.set_view(on);
     rig.press(Vec::new());
-    rig.app.set_match(true);
-    rig.telemetry.publish_side_chain_port(false);
+    assert_eq!(
+        rig.app.params.view.get(),
+        on,
+        "Match is never saved in the view"
+    );
+}
+
+/// **Learn keeps what it learned with the project** (plan §7.6): the lamp lit while it hears and
+/// dark once nothing comes; turned off, what it learned is the project's, read back whole by
+/// another instance, and nothing more is learned; on again, it learns anew.
+#[test]
+fn learn_keeps_what_it_learned_with_the_project() {
+    let (mut rig, _other) = match_rig();
+    assert!(!rig.app.hearing, "dark: nothing heard yet");
+    match_heard(&mut rig, 11.0);
     rig.press(Vec::new());
-    assert!(!rig.app.matching, "a layout without the port ends it");
-    assert_eq!(rig.app.params.view.get(), on, "Match is never saved");
+    assert!(rig.app.hearing, "lit while it hears");
+    for _ in 0..(super::LAMP_SECONDS * 60.0).ceil() as usize + 1 {
+        rig.press(Vec::new());
+    }
+    assert!(!rig.app.hearing, "dark once nothing comes");
+    rig.app.set_learn(false);
+    let kept = rig.app.params.learned.get().expect("kept");
+    assert!(kept.usable() && kept.seconds > 10.0);
+    let fields = rig.app.params.serialize_fields();
+    let restored = EqParams::default();
+    restored.deserialize_fields(&fields);
+    assert_eq!(
+        restored.learned.get(),
+        Some(kept.clone()),
+        "read back whole"
+    );
+    assert_eq!(
+        *restored.match_to.read().unwrap(),
+        rig.app.match_to(),
+        "and what it is matched to"
+    );
+    match_heard(&mut rig, 2.0);
+    assert_eq!(
+        rig.app.params.learned.get(),
+        Some(kept),
+        "nothing learned while off"
+    );
+    rig.app.set_learn(true);
+    assert_eq!(rig.app.learned_seconds(), 0.0, "anew");
+}
+
+/// **One EQ is matched to another** (plan §7.6): Match to lists every other EQ that has learned,
+/// by its track's name, never one that has not; chosen, the bands are proposed once this track is
+/// learned too; Find hides them, and choosing what to match to again ends Find and brings them
+/// back.
+#[test]
+fn one_eq_is_matched_to_another() {
+    let (mut rig, other) = match_rig();
+    let quiet = other_eq("zz-match Quiet", None);
+    let choices = rig.app.match_choices();
+    assert_eq!(choices[0], (MatchTo::Nothing, "Nothing".to_owned()));
+    // Other tests' EQs share the process, so this one's name may carry a number.
+    assert!(
+        choices
+            .iter()
+            .any(|(to, name)| *to == MatchTo::Track(other.id())
+                && name.starts_with("zz-match Outro")),
+        "{choices:?}"
+    );
+    assert!(
+        !choices
+            .iter()
+            .any(|(to, _)| *to == MatchTo::Track(quiet.id())),
+        "one that has learned nothing is not offered"
+    );
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    rig.press(Vec::new());
+    assert!(!rig.app.match_bands.is_empty(), "proposed");
+    rig.app.set_find(true);
+    rig.press(Vec::new());
+    assert!(rig.app.match_bands.is_empty(), "Find hides them");
+    rig.app.set_match_to(MatchTo::Nothing);
+    rig.app.set_match_to(MatchTo::Track(other.id()));
+    rig.press(Vec::new());
+    assert!(!rig.app.find, "choosing ends Find");
+    assert!(!rig.app.match_bands.is_empty(), "and brings them back");
+}
+
+/// **Preview hands the proposals over in the slots Apply writes** (plan §7.6): nothing while it is
+/// off; on, every proposal in its free slot as Apply would write it, and nothing else; nothing once
+/// it is off again or the window closes.
+#[test]
+fn preview_hands_the_proposals_to_the_free_slots() {
+    let (mut rig, _other) = match_rig();
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    rig.press(Vec::new());
+    assert!(!rig.app.match_bands.is_empty(), "proposed");
+    let read = |rig: &Rig| {
+        let mut out = [None; mxm_fx_eq_n_dsp::SLOTS];
+        rig.app.preview.read(&mut out);
+        out
+    };
+    assert!(read(&rig).iter().all(Option::is_none), "off: nothing");
+    rig.app.set_preview(true);
+    rig.press(Vec::new());
+    let bands = rig.app.match_bands.clone();
+    let slots: Vec<usize> = rig.app.free_slots().take(bands.len()).collect();
+    let out = read(&rig);
+    for (slot, band) in slots.iter().zip(&bands) {
+        let previewed = out[*slot].expect("in the slot Apply writes");
+        assert_eq!(previewed.shape, Some(band.shape));
+        assert!((previewed.gain_db - band.gain_db).abs() < 1.0e-4);
+        assert!((previewed.q - band.q).abs() < 1.0e-6);
+    }
+    assert_eq!(
+        out.iter().flatten().count(),
+        slots.len(),
+        "and nothing else"
+    );
+    rig.app.set_preview(false);
+    rig.press(Vec::new());
+    assert!(read(&rig).iter().all(Option::is_none), "off again");
+    rig.app.set_preview(true);
+    rig.press(Vec::new());
+    mxm_editor::Panel::closed(&mut rig.app, &GuiContext::new(rig.host.clone()));
+    assert!(read(&rig).iter().all(Option::is_none), "the window closed");
+    assert!(!rig.app.previewing);
+}
+
+/// **What this EQ learned is saved as a reference by name, and matched to** (plan §7.6, decision
+/// 48): Save asks for a name, this track's offered; saved, what it is matched to is unchanged; the
+/// saved one chosen is what this track sounded like; a name taken is replaced only on the second
+/// press; a file gone reads Missing and matches nothing.
+#[test]
+fn a_saved_reference_is_chosen_remembered_and_replaced_only_when_asked() {
+    let dir = std::env::temp_dir()
+        .join("mxm-fx-eq-n-references")
+        .join(format!("editor-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (mut rig, other) = match_rig();
+    rig.app.references_dir = Some(dir.clone());
+    assert!(!rig.app.can_save_reference(), "not while it learns");
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    assert!(rig.app.can_save_reference());
+
+    rig.app.press_save_reference();
+    let offered = rig.app.naming.clone().expect("a name asked for");
+    assert!(!offered.name.is_empty());
+    rig.app.naming.as_mut().unwrap().name = "Studio VO".to_owned();
+    rig.app.press_save_reference();
+    assert!(rig.app.naming.is_none(), "saved");
+    assert_eq!(rig.app.match_to(), MatchTo::Track(other.id()), "unchanged");
+    rig.app.set_match_to(MatchTo::Saved("Studio VO".to_owned()));
+    let sound = rig.app.params.learned.get().unwrap().sound();
+    assert_eq!(
+        rig.app.matched_reference(),
+        Some(sound),
+        "the file holds what this track sounded like"
+    );
+    let fields = rig.app.params.serialize_fields();
+    assert!(
+        fields
+            .get("match-to")
+            .is_some_and(|field| field.contains("Studio VO")),
+        "remembered with the project"
+    );
+
+    // Learned again and saved under the same name: replaced only on the second press.
+    rig.app.set_learn(true);
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    rig.app.press_save_reference();
+    rig.app.naming.as_mut().unwrap().name = "Studio VO".to_owned();
+    rig.app.press_save_reference();
+    assert!(
+        rig.app.naming.as_ref().is_some_and(|naming| naming.taken),
+        "taken: asks again"
+    );
+    assert_eq!(
+        rig.app.save_reference("Studio VO", false),
+        Err(SaveRefusal::Taken)
+    );
+    rig.app.press_save_reference();
+    assert!(rig.app.naming.is_none(), "replaced");
+    assert_eq!(rig.app.saved_references.len(), 1);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    rig.app.refresh_references(1.0e6);
+    let names: Vec<String> = rig
+        .app
+        .match_choices()
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    assert!(
+        names.contains(&"Missing: Studio VO".to_owned()),
+        "{names:?}"
+    );
+    assert_eq!(rig.app.matched_reference(), None, "nothing to match");
+}
+
+/// **What was learned is drawn at the analyser's level** (plan §7.6): nothing before Match has
+/// anything; then this track's line and the reference's, each reading at 1 kHz the twelfth-octave
+/// band power the analyser draws for it, within 1 dB: `4σ²·B/fs` for the white noise, and that
+/// raised by `|1 + 0.9·e^(−jω)|²` for the tilted one.
+#[test]
+fn what_was_learned_is_drawn_at_the_analysers_level() {
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    assert!(rig.app.learned_lines(0.0).is_none(), "nothing learned");
+    let (mut rig, _other) = match_rig();
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    let lines = rig.app.learned_lines(1.0).expect("drawn while matched");
+    // The noise is uniform in ±0.3: its variance is 0.3² / 3.
+    let half = 2f32.powf(super::spectrum::BAND_OCTAVES / 2.0);
+    let band = 1_000.0 * (half - half.recip());
+    let white = 10.0 * (4.0 * 0.03 * band / 48_000.0).log10();
+    let w = std::f32::consts::TAU * 1_000.0 / 48_000.0;
+    let tilted = white + 10.0 * (1.81 + 1.8 * w.cos()).log10();
+    assert!(
+        super::matcher::cell_at(&lines[2], 1_000.0).is_some_and(|weight| weight == 1.0),
+        "settled at 1 kHz"
+    );
+    for (cells, expected, which) in [(&lines[0], tilted, "Ref"), (&lines[1], white, "Track")] {
+        let cell = super::matcher::cell_at(cells, 1_000.0).expect("read at 1 kHz");
+        let drawn = graph::learned_display_db(cell, 1_000.0, 0.0);
+        assert!(
+            (drawn - expected).abs() <= 1.0,
+            "{which}: {drawn} dB against {expected} dB"
+        );
+    }
 }
 
 /// **Apply writes the match on its current basis only, every field, as one undo step** (plan
@@ -3570,7 +3848,7 @@ fn match_needs_the_side_chain_and_excludes_find_and_freeze() {
 /// unkeyed Stereo shelf and bell over a stale Off slot, and the match empties until the next fit.
 #[test]
 fn match_applies_on_its_current_basis_every_field_in_one_step() {
-    let mut rig = match_rig();
+    let (mut rig, _other) = match_rig();
     let stale = rig.app.slot_writes(
         0,
         mxm_fx_eq_n_dsp::Band {
@@ -3650,10 +3928,14 @@ fn match_applies_on_its_current_basis_every_field_in_one_step() {
 /// and what it proposes is current.
 #[test]
 fn a_fit_runs_on_the_worker_and_the_latest_basis_wins() {
-    let mut rig = match_rig();
+    let (mut rig, _other) = match_rig();
     rig.app.inline_search = false;
     match_heard(&mut rig, 11.0);
-    assert!(rig.app.matcher.spectra().listened());
+    assert!(
+        rig.app
+            .learned()
+            .is_some_and(|learned| learned.seconds > 10.0)
+    );
     rig.press(Vec::new());
     let mut moved = rig.app.params.view.get();
     moved.match_amount = 60;
@@ -3673,11 +3955,13 @@ fn a_fit_runs_on_the_worker_and_the_latest_basis_wins() {
     );
 }
 
-/// **The window opens holding the Match card** (plan §7.6, decision 34): under Resonances, the
-/// second column taller, the opening hugged to it inside the budget.
+/// **The Match card sits under the Band card** (plan §7.6, decision 34): in the first column, left
+/// of Output.
 #[test]
-fn the_match_card_sits_under_resonances() {
+fn the_match_card_sits_under_the_band_card() {
     let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
     // The cursor's registry is the frame before's.
     rig.press(Vec::new());
     rig.press(Vec::new());
@@ -3689,12 +3973,14 @@ fn the_match_card_sits_under_resonances() {
             .map(|spot| spot.rect)
             .unwrap_or_else(|| panic!("{key} is drawn"))
     };
-    let (find, matching) = (at("find"), at("match"));
-    assert!(matching.top() > find.bottom(), "under Resonances");
+    let (shape, delete) = (at("type_1"), at("delete"));
+    let (matching, output) = (at("match to"), at("output"));
+    assert!(matching.top() > delete.bottom(), "under the Band card");
     assert!(
-        (matching.left() - find.left()).abs() < 1.0,
+        matching.left() < shape.right() && matching.right() > shape.left(),
         "in the same column"
     );
+    assert!(matching.right() < output.left(), "left of Output");
 }
 
 // ---- Phase modes (plan §7.7) -------------------------------------------------------------------

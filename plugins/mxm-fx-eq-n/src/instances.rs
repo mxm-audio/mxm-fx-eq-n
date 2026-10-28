@@ -17,6 +17,8 @@
 //!   first keeps it, and the other gets a new one.
 //! - **Names**: the host's track name (CLAP's track-info, through the editor), else "Track n" in
 //!   the order instances were made; two of one name get " 2", " 3" ([`names`]).
+//! - **What each learned for Match** (plan §7.6): the entry shares the instance's persisted field
+//!   ([`crate::learned`]), so another editor matches to it ([`Instance::learned`]).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -105,6 +107,7 @@ pub struct Instance {
     made: u64,
     track: Mutex<Option<String>>,
     watchers: AtomicU32,
+    learned: crate::learned::Shared,
     feed: Mutex<Feed>,
 }
 
@@ -115,13 +118,23 @@ struct Feed {
 
 impl Instance {
     /// A new instance joins the registry, its id in `id` (its [`IdentityField`]'s), the share
-    /// tap's ring read through `consumer`.
+    /// tap's ring read through `consumer`, having learned nothing.
     pub fn join(id: Arc<AtomicU64>, consumer: rtrb::Consumer<Block>) -> Arc<Instance> {
+        Instance::join_learned(id, crate::learned::Shared::default(), consumer)
+    }
+
+    /// [`Instance::join`], what it learned for Match in `learned` (its persisted field's).
+    pub fn join_learned(
+        id: Arc<AtomicU64>,
+        learned: crate::learned::Shared,
+        consumer: rtrb::Consumer<Block>,
+    ) -> Arc<Instance> {
         let instance = Arc::new(Instance {
             id,
             made: MADE.fetch_add(1, Ordering::Relaxed),
             track: Mutex::new(None),
             watchers: AtomicU32::new(0),
+            learned,
             feed: Mutex::new(Feed {
                 consumer,
                 held: VecDeque::new(),
@@ -142,11 +155,26 @@ impl Instance {
             made: MADE.fetch_add(1, Ordering::Relaxed),
             track: Mutex::new(None),
             watchers: AtomicU32::new(0),
+            learned: crate::learned::Shared::default(),
             feed: Mutex::new(Feed {
                 consumer,
                 held: VecDeque::new(),
             }),
         })
+    }
+
+    /// What it learned for Match, as its project holds it (plan §7.6).
+    pub fn learned(&self) -> Option<Arc<crate::learned::Learned>> {
+        self.learned
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Stores what it learned, as its editor does, for a test.
+    #[cfg(test)]
+    pub fn store_learned(&self, learned: Option<Arc<crate::learned::Learned>>) {
+        *self.learned.write().unwrap_or_else(PoisonError::into_inner) = learned;
     }
 
     pub fn id(&self) -> u64 {

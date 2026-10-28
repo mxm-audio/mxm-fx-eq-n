@@ -251,6 +251,21 @@ pub fn side_chain_label_at(axes: &Axes, end: Pos2) -> Pos2 {
 /// Room for the "SC" label's text, at its 11-point size.
 const SIDE_CHAIN_LABEL_HEIGHT: f32 = 16.0;
 
+/// The learned lines' width (plan §7.6): heavier than the live spectra's outline.
+const LEARNED_STROKE: f32 = 1.5;
+/// How much a cell must count in the match for its learned line to be drawn solid, and how
+/// strongly a line is drawn where it counts less, still settling.
+const SETTLED_DRAWN: f32 = 0.5;
+const UNSETTLED_ALPHA: f32 = 0.35;
+
+/// A learned level at `freq`, power per hertz in dB, as the analyser draws a level there: the
+/// power in the display's band, a twelfth of an octave, both scaled so a full-scale sine reads
+/// 0 dB, tilted as the display is (plan §4, §7.6).
+pub fn learned_display_db(cell_db: f32, freq: f32, tilt: f32) -> f32 {
+    let half = 2f32.powf(super::spectrum::BAND_OCTAVES / 2.0);
+    cell_db + 10.0 * (freq * (half - half.recip())).log10() + tilt * (freq / 1_000.0).log2()
+}
+
 /// The hover over a frozen peak (plan §7.4).
 const PEAK_DESCRIPTION: &str =
     "Drag up or down to make a bell at this peak, its width set from the peak's.";
@@ -1372,10 +1387,8 @@ impl EqApp {
             }
         }
 
-        // The spectra, behind everything: post as a fill, pre as an outline. While Match listens,
-        // the side chain it matches to is drawn as the Side chain view draws it (plan §7.6).
-        let mut settings = self.params.view.get();
-        settings.side_chain |= self.matching;
+        // The spectra, behind everything: post as a fill, pre as an outline.
+        let settings = self.params.view.get();
         if !settings.analyser && (self.freezing() || self.hold_basis.is_some()) {
             self.unfreeze();
         }
@@ -1556,6 +1569,67 @@ impl EqApp {
             self.paint_collisions(&painter, axes, curves, &marks, tokens);
             self.collision_marks = marks;
             self.external_name = name;
+            // What Match has learned (plan §7.6): the reference and the track, smoothed as the
+            // match reads them, at the level they sound, lettered, never told apart by hue alone:
+            // "Ref" above its line's end, "Track" below its own; solid where the match uses it,
+            // faint where it is still settling.
+            if let Some([reference, track, settled]) = self.learned_lines(now) {
+                let tilt = settings.tilt.db_per_octave();
+                for (cells, label, colour, below) in [
+                    (&reference, "Ref", tokens.warning, false),
+                    (&track, "Track", tokens.text_primary, true),
+                ] {
+                    // Runs of one style, each joined to the one before; a gap breaks them.
+                    let mut runs: Vec<(bool, Vec<Pos2>)> = Vec::new();
+                    let mut broken = true;
+                    for (&x, &freq) in curves.xs.iter().zip(&curves.freqs) {
+                        let Some(db) = super::matcher::cell_at(cells, freq)
+                            .map(|db| learned_display_db(db, freq, tilt))
+                            .filter(|db| *db > SPECTRUM_BOTTOM_DB)
+                        else {
+                            broken = true;
+                            continue;
+                        };
+                        let at = pos2(x, axes.spectrum_y(db));
+                        let firm = super::matcher::cell_at(&settled, freq)
+                            .is_some_and(|weight| weight >= SETTLED_DRAWN);
+                        let joint = runs.last().and_then(|(_, run)| run.last().copied());
+                        let same = !broken && runs.last().is_some_and(|(style, _)| *style == firm);
+                        if same {
+                            if let Some((_, run)) = runs.last_mut() {
+                                run.push(at);
+                            }
+                        } else {
+                            let joint = joint.filter(|_| !broken);
+                            runs.push((firm, joint.into_iter().chain([at]).collect()));
+                        }
+                        broken = false;
+                    }
+                    let end = runs.last().and_then(|(_, run)| run.last().copied());
+                    for (firm, run) in runs.into_iter().filter(|(_, run)| run.len() > 1) {
+                        let colour = if firm {
+                            colour
+                        } else {
+                            colour.gamma_multiply(UNSETTLED_ALPHA)
+                        };
+                        painter.add(Painted::line(run, Stroke::new(LEARNED_STROKE, colour)));
+                    }
+                    if let Some(end) = end {
+                        let (at, align) = if below {
+                            (
+                                pos2(
+                                    end.x - 4.0,
+                                    (end.y + 4.0).min(axes.rect.bottom() - SIDE_CHAIN_LABEL_HEIGHT),
+                                ),
+                                egui::Align2::RIGHT_TOP,
+                            )
+                        } else {
+                            (side_chain_label_at(axes, end), egui::Align2::RIGHT_BOTTOM)
+                        };
+                        painter.text(at, align, label, egui::FontId::proportional(11.0), colour);
+                    }
+                }
+            }
             // A freeze's peaks (plan §7.4): a marker and its frequency, strongest first, a label
             // that would overlap a stronger one's not drawn; the keyboard's peak ringed.
             if let Some(frozen) = &self.frozen {
@@ -1787,7 +1861,7 @@ impl EqApp {
         // hollow diamond at each band's centre and gain with its frequency and gain, told apart
         // from Find's triangles by shape, never hue; a label that would overlap a stronger one's
         // is not drawn.
-        if self.matching && !self.match_bands.is_empty() {
+        if !self.match_bands.is_empty() {
             let current = self
                 .match_curve
                 .as_ref()

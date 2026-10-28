@@ -15,10 +15,12 @@ use crate::view::ViewSettings;
 pub const WHEEL_GESTURE_SECONDS: f64 = 0.4;
 
 impl EqApp {
-    /// Whether another surface owns the keyboard this frame: a value being typed or the preset
-    /// browser. The cursor reads text fields and open menus itself.
+    /// Whether another surface owns the keyboard this frame: a value or a reference's name being
+    /// typed, or the preset browser. The cursor reads text fields and open menus itself.
     pub(crate) fn inert(&self) -> bool {
-        self.text.values().any(Option::is_some) || self.presets.holds_the_keyboard()
+        self.text.values().any(Option::is_some)
+            || self.naming.as_ref().is_some_and(|naming| naming.focused)
+            || self.presets.holds_the_keyboard()
     }
 
     /// The frame's blocks, after the spectrum has observed the frame's time (`now`), so audio after
@@ -54,7 +56,8 @@ impl EqApp {
                     if self.listening {
                         self.finder.ingest(&block);
                     }
-                    if self.matching {
+                    // Match's Learn (plan §7.6): this track before the EQ and after it.
+                    if self.learning {
                         self.matcher.ingest(&block);
                     }
                 }
@@ -63,11 +66,9 @@ impl EqApp {
     }
 
     /// Another track's blocks (plan §7.8): watched while it is chosen, the analyser on and the
-    /// window open, and not while Match shows the side chain; a track gone is dropped, and found
-    /// again when it comes back.
+    /// window open. A track gone is dropped, and found again when it comes back.
     fn drain_other(&mut self, settings: &ViewSettings, now: f64) {
-        let wanted = (settings.analyser && settings.external != 0 && !self.matching)
-            .then_some(settings.external);
+        let wanted = (settings.analyser && settings.external != 0).then_some(settings.external);
         if self.other.as_ref().map(|other| other.id) != wanted {
             let rate = self.telemetry.sample_rate();
             self.other = wanted
@@ -135,24 +136,26 @@ impl EqApp {
         }
         let settings = self.params.view.get();
         self.telemetry.set_analyser_on(settings.analyser);
-        // Find needs the analyser: the analyser off ends a listen, and back on leaves it off
-        // (plan §7.5). Match needs it and the side chain too (plan §7.6).
+        // Find and Match need the analyser: the analyser off ends them, and back on leaves them
+        // off (plan §7.5, §7.6).
         if !settings.analyser && self.find {
             self.end_find();
         }
-        if self.matching && !self.match_offered(&settings) {
+        if !self.match_offered(&settings) && (self.learning || !self.match_bands.is_empty()) {
             self.end_match();
         }
-        // The key is copied while it is drawn or Match listens to it.
-        self.telemetry
-            .set_side_chain_view(settings.side_chain || self.matching);
+        // The key is copied while it is drawn.
+        self.telemetry.set_side_chain_view(settings.side_chain);
         let now = ctx.input(|input| input.time);
+        self.refresh_references(now);
         self.drain_analyser(&settings, now);
         self.drain_other(&settings, now);
+        self.update_lamp(now);
         self.end_stale_freeze(&settings);
         self.take_done();
         self.update_find(now, &settings);
         self.update_match(now, &settings);
+        self.update_preview();
         self.pointer_solo = None;
         // A band turned Off outside the editor (automation, the host) takes its gesture with it,
         // ended where the host has it.
@@ -325,7 +328,7 @@ impl EqApp {
             ui.add_space(SPACE_3);
             self.meter_rail(ui, tokens, height);
             ui.add_space(SPACE_3);
-            // Two columns of cards (decision 30): the Band card alone, then Output, Analyser and
+            // Two columns of cards (decisions 30, 34): Band and Match, then Output, Analyser and
             // Resonances. They scroll vertically together.
             ui.allocate_ui_with_layout(
                 vec2(super::COLUMNS_WIDTH, height),
