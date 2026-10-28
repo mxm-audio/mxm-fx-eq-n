@@ -3111,6 +3111,7 @@ fn candidate(freq: f32, bands: &[(finder::Domain, f32, f32)]) -> finder::Candida
             .reduce(f32::max)
             .unwrap(),
         bands,
+        seen: 0.0,
     }
 }
 
@@ -4730,4 +4731,30 @@ fn a_card_slider_s_group_stops_at_a_limit_without_nesting() {
     );
     assert!(rig.gestures_balanced(), "no gesture begun twice");
     assert_eq!(rig.depth(), depth + 1, "one undo step");
+}
+
+/// **Find off holds what it learned; on again learns anew** (plan §7.5): off ends the learn and
+/// keeps its proposals, as a noise reduction keeps its profile; on starts a learn from nothing,
+/// replacing them.
+#[test]
+fn find_off_holds_what_it_learned_and_on_again_learns_anew() {
+    let mut rig = finding_rig(vec![candidate(
+        2_000.0,
+        &[(finder::Domain::Average, 10.0, 6.0)],
+    )]);
+    assert!(rig.app.listening);
+    assert_eq!(rig.app.proposals.len(), 1);
+    rig.app.set_find(false);
+    rig.press(Vec::new());
+    assert!(
+        rig.app.find && !rig.app.listening,
+        "off ends the learn, not Find"
+    );
+    assert_eq!(rig.app.proposals.len(), 1, "what it learned is held");
+    rig.app.set_find(true);
+    assert!(rig.app.listening);
+    assert!(
+        rig.app.proposals.is_empty() && rig.app.candidates.is_empty(),
+        "a new learn replaces what was held"
+    );
 }

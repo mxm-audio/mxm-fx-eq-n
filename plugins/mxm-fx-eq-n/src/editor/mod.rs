@@ -295,9 +295,11 @@ pub struct EqApp {
     /// The peak labels drawn last frame, by their place in `frozen.peaks`: a label is part of its
     /// peak for the pointer (plan §7.4).
     pub(crate) peak_labels: Vec<(usize, egui::Rect)>,
-    /// Find (plan §7.5): on or off, the editor's moment, never saved; what it has heard; the
-    /// candidates found last and when; the proposals shown, what they were made on and when.
+    /// Find (plan §7.5): on or off, the editor's moment, never saved; whether it is learning from
+    /// what plays, or holds what it learned; what it has heard; the candidates found last and
+    /// when; the proposals shown, what they were made on and when.
     pub(crate) find: bool,
+    pub(crate) listening: bool,
     pub(crate) finder: finder::Finder,
     candidates: Vec<finder::Candidate>,
     found_at: Option<f64>,
@@ -414,6 +416,7 @@ impl EqApp {
             focus_peak: None,
             peak_labels: Vec::new(),
             find: false,
+            listening: false,
             finder,
             candidates: Vec::new(),
             found_at: None,
@@ -999,25 +1002,28 @@ impl EqApp {
 
     // ---- Find (plan §7.5) -----------------------------------------------------------------
 
-    /// Turns Find on, ending a freeze (the two exclude each other), with a listen from nothing;
-    /// or off.
+    /// Find's button (plan §7.5). On learns from what plays, from nothing, ending a freeze (the
+    /// two exclude each other) and replacing what was learned before; off ends the learn and
+    /// holds what it learned, as a noise reduction holds its profile, its proposals kept.
     pub(crate) fn set_find(&mut self, on: bool) {
         if on {
-            if !self.find {
+            if !self.listening {
                 self.unfreeze();
                 self.end_match();
                 self.finder.restart();
-                self.listen_seen = self.finder.listen();
+                self.forget_listen();
                 self.find = true;
+                self.listening = true;
             }
         } else {
-            self.end_find();
+            self.listening = false;
         }
     }
 
-    /// Ends a listen: what it heard and proposed goes with it.
+    /// Ends Find, learning or held: what it heard and proposed goes with it.
     pub(crate) fn end_find(&mut self) {
         self.find = false;
+        self.listening = false;
         self.finder.restart();
         self.listen_seen = self.finder.listen();
         self.candidates.clear();
@@ -1131,6 +1137,11 @@ impl EqApp {
         let search = finder::Search {
             evidence: self.finder.evidence().clone(),
             candidates: (!refind).then(|| self.candidates.clone()),
+            held: if refind {
+                self.candidates.clone()
+            } else {
+                Vec::new()
+            },
             heard: self.heard_eq(),
             amount: settings.amount_share(),
             free_slots: self.free_slots().count(),

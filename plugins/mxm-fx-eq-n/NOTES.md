@@ -298,7 +298,9 @@ The full text of each follows, in *The editor in full*.
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
 - **Find in short** (plan §7.5, decisions 27–30): the Resonances card's toggle, offered only
   with the analyser on; Find and Freeze each end the other, the analyser off or the editor closed
-  ends it, and it is never saved. It listens to the pre-EQ input (`finder.rs`) and proposes static
+  ends it, and it is never saved. On, it learns from the pre-EQ input that plays (`finder.rs`);
+  off, it holds what it learned, as a noise reduction holds its profile, until on again learns
+  anew (the owner, 2026-10-27: "Just the audio you play to it"). It proposes static
   cut bells, never a continuous curve: dashed curve and labelled downward triangles on the graph;
   a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
   all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
@@ -307,7 +309,7 @@ The full text of each follows, in *The editor in full*.
   the GUI thread pays only for listening and a copy of the evidence, inside
   `spectrum::BUDGET_MS` (`finder_cost`).
 - **Find, the resonance finder** (plan §7.5, `editor/finder.rs`), in the order the work goes:
-  - *Listening.* The analyser's pre-EQ blocks, while Find is on, into three rungs: the input
+  - *Listening.* The analyser's pre-EQ blocks, while Find learns, into three rungs: the input
     decimated to at most 64 kHz, then a quarter and a sixteenth of that, each a frequency's only
     home (from 1.6 kHz, from 400 Hz, below), the display's anti-alias low pass on left and right;
     above 64 kHz a fourth at the full rate owns the top octaves. A rung reads to Nyquist, or to
@@ -351,6 +353,13 @@ The full text of each follows, in *The editor in full*.
     resonance (an 8 kHz resonance lost its verdict), and one odd frame flipped a yes/no flag.
     Only persisting peaks enter the placement rule, so a note's line on the other channel does
     not make a one-channel resonance a pair.
+  - *Held* (`hold`, `MISSING_SECONDS`): a candidate a search no longer finds stays, as last
+    measured, until that much heard input passes without it; one found within a sixth of an
+    octave is it, measured again. Every rule has an edge: over the owner's voice-over
+    (2026-10-28) the 1.5 kHz, 97 Hz and 370 Hz candidates stood out in 0.41–0.55 of their frames,
+    the 7 kHz one at a 6.0–6.2 dB prominence, and the 370 Hz one moved between Stereo and Left;
+    each came and went with the half-second updates. Held, the minute's proposals moved (the
+    7 kHz one between 6.9 and 7.5 kHz) but went only twice.
   - *What the EQ takes* is the difference of two fits from the same guess, without and with the EQ
     as heard on that spectrum: two fits from different starts settle up to 0.5 dB apart with no EQ
     at all.

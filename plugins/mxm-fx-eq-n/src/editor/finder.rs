@@ -31,6 +31,9 @@
 //!   ([`stands_out`]), and under at least two excitations, what is playing elsewhere in the rung.
 //!   The counts are kept per 1/48 octave as the frames come, so a candidate found later is judged
 //!   on everything heard.
+//! - **What was found stays a while** ([`hold`]): a candidate a search no longer finds is kept, as
+//!   last measured, until [`MISSING_SECONDS`] of heard input pass without it, so one at the edge
+//!   of a rule does not come and go as the listen goes on.
 //! - **Proposals** ([`propose`]): what the EQ as heard has not already taken off, at `Amount × P`,
 //!   the depths solved together by projected Gauss–Seidel on the bells' actual responses.
 
@@ -63,6 +66,9 @@ const TOP_SHARE: f32 = LONG_CUTOFF as f32;
 pub const HEARD_DBFS: f32 = -60.0;
 /// Proposals appear after this much heard input.
 pub const LISTEN_SECONDS: f64 = 4.0;
+/// A candidate a search no longer finds is kept, as last measured, until this much heard input
+/// passes without it ([`hold`]).
+pub const MISSING_SECONDS: f64 = 10.0;
 /// How often the candidates are found again, in the editor's seconds.
 pub const UPDATE_SECONDS: f64 = 0.5;
 /// Half a semitone, in octaves: how close two peaks are to be one.
@@ -610,6 +616,8 @@ pub struct Candidate {
     pub freq: f32,
     pub bands: Vec<Measured>,
     pub audibility: f32,
+    /// The heard seconds when a search last found it ([`hold`]).
+    pub seen: f64,
 }
 
 /// The finder: everything heard since Find was turned on.
@@ -1209,6 +1217,7 @@ impl Evidence {
             freq: centre,
             bands,
             audibility,
+            seen: self.heard_seconds,
         })
     }
 
@@ -1439,6 +1448,30 @@ fn solve5(mut system: [[f64; 5]; 5], mut rhs: [f64; 5]) -> Option<[f64; 5]> {
         x[row] = (rhs[row] - known) / system[row][row];
     }
     x.iter().all(|value| value.is_finite()).then_some(x)
+}
+
+/// The candidates a search `found`, and those found before (`held`) that it did not find again,
+/// each kept as last measured until [`MISSING_SECONDS`] of heard input pass without it (plan
+/// §7.5): a resonance at the edge of a rule — standing out in about half its frames, a prominence
+/// about [`PROMINENCE_DB`], between two placements or two neighbouring peaks — does not come and
+/// go as the listen goes on. One found within [`SPACING_OCTAVES`] of a held one is it, measured
+/// again. Ranked again.
+pub fn hold(found: Vec<Candidate>, held: &[Candidate], heard_seconds: f64) -> Vec<Candidate> {
+    let mut all = found;
+    let again: Vec<bool> = held
+        .iter()
+        .map(|old| {
+            all.iter()
+                .any(|new| octaves(new.freq, old.freq).abs() < SPACING_OCTAVES)
+        })
+        .collect();
+    all.extend(
+        held.iter()
+            .zip(again)
+            .filter(|&(old, again)| !again && heard_seconds - old.seen < MISSING_SECONDS)
+            .map(|(old, _)| old.clone()),
+    );
+    rank(all)
 }
 
 /// Candidates ranked by audibility (plan §7.5): at most [`MAX_CANDIDATES`], a sixth of an
@@ -1941,11 +1974,14 @@ pub fn solve(proposals: &mut [Proposal], heard: &HeardEq) {
 // ---- the search, away from the editor's frame ------------------------------------------------
 
 /// One search for Find (plan §7.5), on `evidence`, a copy of what the finder has heard: its
-/// candidates found again, or `candidates` kept where the finder has heard nothing new, then the
-/// proposals for them on the EQ as heard.
+/// candidates found again, those of `held` it does not find kept a while ([`hold`]), or
+/// `candidates` kept where the finder has heard nothing new, then the proposals for them on the EQ
+/// as heard.
 pub struct Search {
     pub evidence: Evidence,
     pub candidates: Option<Vec<Candidate>>,
+    /// The candidates found before, in this listen.
+    pub held: Vec<Candidate>,
     pub heard: HeardEq,
     pub amount: f32,
     pub free_slots: usize,
@@ -1977,9 +2013,13 @@ impl Job for Search {
 impl Search {
     /// Runs it, where it is.
     pub fn run(self) -> Found {
-        let candidates = self
-            .candidates
-            .unwrap_or_else(|| self.evidence.candidates());
+        let candidates = self.candidates.unwrap_or_else(|| {
+            hold(
+                self.evidence.candidates(),
+                &self.held,
+                self.evidence.heard_seconds,
+            )
+        });
         let proposals = propose(
             &self.evidence,
             &candidates,

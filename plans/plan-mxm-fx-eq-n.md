@@ -1067,7 +1067,11 @@ legal advice; continuous suppression stays out of this plan unless the owner has
 boosts are never taken for resonances and editing bands does not disturb it. Like Freeze it is
 offered only with the analyser on; turning one of Find and Freeze on turns the other off; the
 analyser off turns Find off, and back on leaves it off. The listen runs from when Find is turned on.
-A reset breaks its frames, as a dropped block does, and keeps what it heard, since a host resets
+**Turned off, Find holds what it learned**, as a noise reduction holds the profile it learned: it
+stops listening and keeps its proposals, which still answer the EQ and Amount, until it is turned
+on again, which learns anew, or Freeze, Match, the analyser off or the editor closed ends it. What
+it learns from is just the audio played to it (the owner, 2026-10-27: "Just the audio you play to
+it"), so what it proposes is what that audio showed, however the session goes on. A reset breaks its frames, as a dropped block does, and keeps what it heard, since a host resets
 whenever it resumes processing: Resolve, played on through a voice-over of 22 clips, found
 resonances and lost them again as it went (the owner, 2026-10-27). A reset into other channels
 starts the listen again.
@@ -1143,6 +1147,14 @@ starts the listen again.
   sixth of an octave apart; a pair is one candidate with two bands at one centre. In rank order a
   candidate is proposed only if its bands fit the free slots still left; one that does not is passed
   over.
+- **What was found stays a while.** A candidate a search no longer finds is kept, as last measured,
+  until 10 s of heard input pass without it; one found within a sixth of an octave of it is it,
+  measured again. Each rule above has an edge a resonance can stand at — present in about half its
+  frames, a prominence about 6 dB, between two placements or two neighbouring peaks — and such a
+  one came and went with the updates as the listen went on: over the owner's voice-over
+  (2026-10-28: "It gets and looses ressonance frequencies over time") 1.5 kHz was lost four times
+  in a minute, the last at its end. Held, that minute lost two proposals, each ten seconds after it
+  was last found, and ended with five.
 
 **How much** (decision 29). One **Amount**, 0–100 %, **20 % by default** (Grachten's median): each
 proposal's target is **−Amount × P**, never deeper than **−12 dB** (Ramos & López, §8.4), and its
@@ -1212,8 +1224,9 @@ is applied.
 notes is found within a forty-eighth of an octave, its Q within 20 %, and neither the melody's
 harmonics nor a lone note's in a region nothing else reaches; resonances at 60 Hz (Q 15) and 8 kHz
 (Q 20) found; every rate read without a gap to as high as a band runs; a left-only resonance a Left band, a side-only one a Side band, unequal channels a
-Left and Right pair, and a centred one Stereo; quiet frames not counting, a reset restarting the
-listen; at 100 % the applied bell cancelling a cookbook-shaped peak within 1 dB across its width;
+Left and Right pair, and a centred one Stereo; quiet frames not counting, a reset keeping the
+listen unless into other channels; a candidate no longer found kept for 10 s of heard input, one
+near it standing for it; at 100 % the applied bell cancelling a cookbook-shaped peak within 1 dB across its width;
 two candidates a sixth of an octave apart, applied together, each within 0.5 dB of its target, and
 two overlapping in different placements within 1 dB; a target past the cap held at −12 dB; the Q
 bounds; a treated candidate not proposed, and proposed again when its band is bypassed or Amount

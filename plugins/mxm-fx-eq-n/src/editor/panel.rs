@@ -51,7 +51,7 @@ impl EqApp {
             while let Ok(block) = consumer.pop() {
                 if settings.analyser {
                     self.spectrum.ingest(&block);
-                    if self.find {
+                    if self.listening {
                         self.finder.ingest(&block);
                     }
                     if self.matching {

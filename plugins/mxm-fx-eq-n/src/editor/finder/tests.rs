@@ -412,6 +412,7 @@ fn candidate(bands: Vec<Measured>) -> Candidate {
             .reduce(f32::max)
             .unwrap(),
         bands,
+        seen: 0.0,
     }
 }
 
@@ -556,6 +557,34 @@ fn a_treated_candidate_is_not_proposed_and_comes_back_when_it_is_not() {
     assert_eq!(
         propose(finder.evidence(), one, 0.2, 24, &nearly, &shown).len(),
         1
+    );
+}
+
+/// **A candidate a search no longer finds stays a while** (plan §7.5): as last measured, until
+/// [`MISSING_SECONDS`] of heard input pass without it; one found within a sixth of an octave of it
+/// is it, measured again.
+#[test]
+fn a_candidate_no_longer_found_stays_a_while() {
+    let at = |freq: f32, prominence: f32, seen: f64| Candidate {
+        seen,
+        ..candidate(vec![measured(Domain::Average, freq, prominence, 4.0)])
+    };
+    let held = [at(500.0, 10.0, 20.0), at(2_000.0, 10.0, 20.0)];
+    let freqs = |candidates: Vec<Candidate>| -> Vec<f32> {
+        let mut freqs: Vec<f32> = candidates.iter().map(|c| c.freq).collect();
+        freqs.sort_by(f32::total_cmp);
+        freqs
+    };
+    let found = vec![at(2_100.0, 8.0, 25.0)];
+    assert_eq!(
+        freqs(hold(found.clone(), &held, 25.0)),
+        [500.0, 2_100.0],
+        "500 Hz kept, 2 kHz measured again at 2.1 kHz"
+    );
+    assert_eq!(
+        freqs(hold(found, &held, 20.0 + MISSING_SECONDS)),
+        [2_100.0],
+        "gone once that much is heard without it"
     );
 }
 
@@ -744,6 +773,7 @@ fn the_gain_scale_bounds_how_deep_a_proposal_cuts() {
     let deep = [Candidate {
         freq: 1_000.0,
         audibility: 20.0,
+        seen: 0.0,
         bands: vec![Measured {
             domain: Domain::Average,
             rung: 0,
@@ -772,6 +802,7 @@ fn dropping_the_worker_ends_its_thread() {
     let search = Search {
         evidence: Finder::new(RATE).evidence().clone(),
         candidates: None,
+        held: Vec::new(),
         heard: flat(),
         amount: 0.2,
         free_slots: 24,

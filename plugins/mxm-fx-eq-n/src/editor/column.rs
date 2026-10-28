@@ -153,9 +153,10 @@ const SPLIT_DESCRIPTION: &str = "Splits the band into a left and a right copy, t
 const SPLIT_PLACED_DESCRIPTION: &str =
     "This band already works on one channel. Only a Stereo band splits.";
 const SPLIT_FULL_DESCRIPTION: &str = "Every band slot is in use, so there is no room for a copy.";
-const FIND_DESCRIPTION: &str = "Listens to the sound coming in for resonances, peaks that stay put \
-     while the notes move, and proposes a cut for each. Below about 200 Hz a fast bass line can \
-     look like one. Needs the analyser.";
+const FIND_DESCRIPTION: &str = "Learns the resonances in what you play while it is on, peaks that \
+     stay put while the notes move, and proposes a cut for each. Turn it off to keep what it \
+     learned; on again learns anew. Below about 200 Hz a fast bass line can look like one. Needs \
+     the analyser.";
 const FIND_FULL_DESCRIPTION: &str =
     "Every band slot is in use, so no cut can be proposed. Delete a band to make room.";
 const FIND_NO_GAIN_DESCRIPTION: &str =
@@ -1247,7 +1248,7 @@ impl EqApp {
             }
             Leaf::Find => {
                 let analyser = self.params.view.get().analyser;
-                let mut on = self.find;
+                let mut on = self.listening;
                 let description = match self.find_refusal() {
                     Some(FindRefusal::Full) if self.find => FIND_FULL_DESCRIPTION,
                     Some(FindRefusal::NoGain) if self.find => FIND_NO_GAIN_DESCRIPTION,
