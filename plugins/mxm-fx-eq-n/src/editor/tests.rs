@@ -557,6 +557,7 @@ fn the_cursor_reaches_and_operates_every_control() {
             "learn",
             "match apply",
             "preview",
+            "match lines",
             "match to",
             "save reference",
             "open references",
@@ -3854,12 +3855,13 @@ fn a_saved_reference_is_chosen_remembered_and_replaced_only_when_asked() {
     assert_eq!(rig.app.matched_reference(), None, "nothing to match");
 }
 
-/// **What was learned is drawn at the analyser's level** (plan §7.6): nothing before Match has
+/// **What was learned reads at the analyser's level** (plan §7.6): nothing before Match has
 /// anything; then this track's line and the reference's, each reading at 1 kHz the twelfth-octave
 /// band power the analyser draws for it, within 1 dB: `4σ²·B/fs` for the white noise, and that
-/// raised by `|1 + 0.9·e^(−jω)|²` for the tilted one.
+/// raised by `|1 + 0.9·e^(−jω)|²` for the tilted one. The graph draws them on the EQ's scale,
+/// each about its mean.
 #[test]
-fn what_was_learned_is_drawn_at_the_analysers_level() {
+fn what_was_learned_reads_at_the_analysers_level() {
     let mut rig = Rig::new();
     rig.press(Vec::new());
     assert!(rig.app.learned_lines(0.0).is_none(), "nothing learned");
@@ -3881,6 +3883,42 @@ fn what_was_learned_is_drawn_at_the_analysers_level() {
             "{which}: {drawn} dB against {expected} dB"
         );
     }
+}
+
+/// **Match's Lines show or hide its lines and proposals** (plan §7.6; the owner, 2026-10-29: *"it
+/// should be possible to hide all the other lines, so I only see the eq curve"*): on, the graph
+/// letters Ref and Track and draws the proposed match; off, neither.
+#[test]
+fn match_s_lines_show_or_hide_its_lines_and_proposals() {
+    let (mut rig, _other) = match_rig();
+    match_heard(&mut rig, 11.0);
+    rig.app.set_learn(false);
+    let settings = rig.app.params.view.get();
+    let basis = rig.app.match_basis(&settings);
+    rig.app.accept_fit(Fitted {
+        bands: vec![MatchBand {
+            shape: Shape::Bell,
+            freq: 2_000.0,
+            gain_db: -2.0,
+            q: 1.5,
+        }],
+        listen: rig.app.matcher.listen(),
+        basis,
+    });
+    let shown = |rig: &mut Rig| {
+        rig.app.match_curve = None;
+        let output = rig.frame(Rig::opening(), Vec::new());
+        let (texts, _) = painted(&output);
+        let lettered = ["Ref", "Track"]
+            .iter()
+            .all(|label| texts.iter().any(|text| text == label));
+        (lettered, rig.app.match_curve.is_some())
+    };
+    assert_eq!(shown(&mut rig), (true, true), "on");
+    let mut settings = rig.app.params.view.get();
+    settings.match_lines = false;
+    rig.app.set_view(settings);
+    assert_eq!(shown(&mut rig), (false, false), "off: the EQ's curve alone");
 }
 
 /// **Apply replaces the bands Match applied; a band changed by hand is the player's** (plan §7.6,

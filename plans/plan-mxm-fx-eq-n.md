@@ -1,5 +1,11 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 44 — Match's lines on the EQ's scale, and a Lines toggle** (2026-10-29; §7.6). The
+Ref and Track lines sat on the analyser's scale, 96 dB over the graph's height against the EQ's
+60, so the gap between them looked smaller than the dashed match it makes. They now sit on the EQ's
+scale, each about its mean (the owner: *"make them share a scale"*), and **Lines**, on the Match
+card, hides them and the proposals, leaving the EQ's curve (*"so I only see the eq curve"*).
+**Built** (2026-10-29).
 **Revision 43 — Reset makes the instance as new** (2026-10-29; §5.4). After a Reset the graph
 still showed Match's lines and proposals, and the owner: *"reset should delete everything from the
 plugin instance and set the init values"*. Reset still writes Init as one undo action, and now also
@@ -151,6 +157,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
+| 44 | **Match's lines on the EQ's scale, and a Lines toggle** (2026-10-29), §7.6, from the owner after a match drawn larger than the gap between its lines: Ref and Track drawn with `Axes::y`, each about its mean; `ViewSettings::match_lines`, the card's Lines; `match_s_lines_show_or_hide_its_lines_and_proposals`; two of Match's hover texts mended, joined with stray spaces in F5.14 |
 | 43 | **Reset makes the instance as new** (2026-10-29), §5.4, from the owner after a Reset that left Match's proposals on the graph: everything the instance holds deleted or at its default, the parameters as one undo action (`EqApp::reset`, `is_fresh`); `reset_empties_the_eq_in_one_undo_step` became `reset_makes_the_instance_as_new` |
 | 42 | **Match owns the bands it applies** (2026-10-29), §7.6, decision 51, from the owner's 24 stacked bands: F5.14 |
 | 41 | **The VST3 wrapper fixed for Resolve** (2026-10-29), §4, §7.6, from Resolve freezing and the voice-over's EQ keeping no edit: nice-plug's VST3 wrapper on a review branch (its `PATCHES.md`); `a_restore_that_reads_back_changed_keeps_its_bands` through the VST3 too |
@@ -1543,8 +1550,10 @@ kit's banks are: **Folder** shows it, and a reference is renamed or deleted ther
 (*no change* when none); **Save** and **Folder**, which shows the folder;
 **Match to** (*Nothing*, every other EQ that has learned by its track's name, then the saved
 references by name, one sharing a track's name marked *saved*); **Amount** and **Detail** side by
-side; **Preview** and **Apply**, whose hover says why it is disabled: nothing differing enough to
-hear at this Amount, or a fit on its way. Hover only, no help text. **The lamp** (the owner, 2026-10-28) is green and
+side; **Preview**, **Apply**, whose hover says why it is disabled: nothing differing enough to
+hear at this Amount, or a fit on its way, and **Lines**, on unless turned off, view state, which
+shows Ref, Track and the proposals: off, the graph draws the EQ's curve alone (the owner,
+2026-10-29: *"so I only see the eq curve"*). Hover only, no help text. **The lamp** (the owner, 2026-10-28) is green and
 filled while Learn hears sound, its seconds heard rising within the last `LAMP_SECONDS`, and a ring
 otherwise, so its state never rests on hue: on and dark says nothing is playing on this track. The
 card sits **under the Band card in the first column**, which is then the taller, and the window
@@ -1566,9 +1575,11 @@ it is on, the dashed curve is the one heard.
 this window, or while this track is matched to something, the graph draws the reference matched to
 and this track's input as learned as two solid lines, lettered
 **Ref** and **Track** at their ends and never told apart by hue alone, behind the bands, each
-smoothed as the match reads it. They sit on the analyser's scale, so they line up with the live
-spectrum: a cell's power per hertz times the display's twelfth-of-an-octave band, both scaled so a
-full-scale sine reads 0 dB, tilted as the display is (`learned_display_db`). **A learn's level is
+smoothed as the match reads it: a cell's power per hertz times the display's
+twelfth-of-an-octave band, both scaled so a full-scale sine reads 0 dB, tilted as the display is
+(`learned_display_db`). **They sit on the EQ's scale**, each about its mean where both were read
+(the owner, 2026-10-29: *"make them share a scale"*), so the gap between them is the shape the
+match makes at 100 %, beside its dashed curve: the level the match takes out is not drawn. **A learn's level is
 read while it sounds**: every frame counts towards its long-term mean, pauses too, so its cells are
 raised by the seconds learned over the seconds heard; a learn left on through a voice-over's
 pauses reads the level of the voice. It is one level for every cell, so it changes no match, and a
@@ -1601,8 +1612,9 @@ turned off, read back whole from the project's state by another instance, and le
 turned on again, the lamp lit while it hears and dark once nothing comes, a reset keeping what it
 heard and a restart forgetting it; one EQ matched to another that has learned, proposing, one that
 has learned nothing not offered; a learn with pauses reading within 0.5 dB of one without, from
-60 Hz to 8 kHz; the learned lines of white noise and of a tilted one at the analyser's level at
-1 kHz, within 1 dB; a reference saved and read back whole, cell for cell; a sine's power read from a
+60 Hz to 8 kHz; the learned lines of white noise and of a tilted one read at the analyser's
+level at 1 kHz, within 1 dB; Lines on lettering Ref and Track and drawing the proposals, off
+neither; a reference saved and read back whole, cell for cell; a sine's power read from a
 reference learned at 44.1 kHz and at 96 kHz the same within 0.2 dB at 1 and 8 kHz, and 0.5 dB at
 100 Hz, where a cell is a few bins (two noise learns at different rates differ by their noise, up
 to 1 dB in 11 s, and test nothing); a reference's unread cells weighing nothing; a file that does

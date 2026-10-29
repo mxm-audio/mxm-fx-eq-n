@@ -109,6 +109,8 @@ pub enum Leaf {
     MatchApply,
     /// Plays the match's bands while on, before they are applied.
     Preview,
+    /// Shows the reference, the track and the proposed match on the graph.
+    MatchLines,
     /// Zero latency or Linear phase (plan §7.7).
     PhaseMode,
     /// Linear phase's resolution.
@@ -202,14 +204,18 @@ const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
 const MATCH_HEARD_DESCRIPTION: &str = "How long this track has been learned, and how many bands \
      the match proposes. Thirty seconds or more makes a steadier match.";
-const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in place of the ones the last      Apply made, in one step Undo takes back.";
+const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in place of the ones the last \
+     Apply made, in one step Undo takes back.";
 const MATCH_NOTHING_DESCRIPTION: &str = "Nothing to apply: what differs is less than you would hear \
      at this Amount. Raise Amount, or learn longer for a surer match.";
-const MATCH_APPLIED_DESCRIPTION: &str = "This match is applied. Move Amount or Detail and Apply      replaces the bands it made; a band you have changed since stays yours.";
+const MATCH_APPLIED_DESCRIPTION: &str = "This match is applied. Move Amount or Detail and Apply \
+     replaces the bands it made; a band you have changed since stays yours.";
 const MATCH_WAITING_DESCRIPTION: &str =
     "The bands are being fitted again for the change; Apply waits for them.";
 const PREVIEW_DESCRIPTION: &str = "While on, plays the proposed bands as if applied, following \
      Amount and Detail as they move. Off plays the EQ as it is. Nothing is written until Apply.";
+const MATCH_LINES_DESCRIPTION: &str = "Shows the reference, this track and the proposed match on \
+     the graph. Off, the graph shows the EQ's curve alone; Analyser hides the live spectrum.";
 const MATCH_AMOUNT_KEY: &str = "match amount";
 const DETAIL_KEY: &str = "detail";
 /// The heard reading's height, and its width: "Learning 999 s" whole.
@@ -753,7 +759,8 @@ pub fn resonances_tree() -> Node<Leaf> {
 }
 
 /// The Match card (plan §7.6), top to bottom as it is used: Learn with its lamp and how long it
-/// has learned; Save and Folder; what it is matched to; Amount and Detail; Preview and Apply.
+/// has learned; Save and Folder; what it is matched to; Amount and Detail; Preview, Apply and
+/// Lines.
 pub fn match_tree(choices: Vec<String>) -> Node<Leaf> {
     let lamp = |key: Leaf| {
         leaf(
@@ -808,6 +815,7 @@ pub fn match_tree(choices: Vec<String>) -> Node<Leaf> {
         tree::row(vec![
             toggle(Leaf::Preview, "Preview"),
             button_leaf(Leaf::MatchApply, "Apply"),
+            toggle(Leaf::MatchLines, "Lines"),
         ]),
     ])
 }
@@ -1493,6 +1501,24 @@ impl EqApp {
                 });
                 if changed {
                     self.set_preview(on);
+                }
+            }
+            Leaf::MatchLines => {
+                let mut settings = self.params.view.get();
+                let changed = navigation::at(ui, "match lines", |ui| {
+                    mxm_ui::control::toggle_sized(
+                        ui,
+                        tokens,
+                        "Lines",
+                        "Lines",
+                        &mut settings.match_lines,
+                        false,
+                        MATCH_LINES_DESCRIPTION,
+                        0.0,
+                    )
+                });
+                if changed {
+                    self.set_view(settings);
                 }
             }
             Leaf::LearnLamp => {

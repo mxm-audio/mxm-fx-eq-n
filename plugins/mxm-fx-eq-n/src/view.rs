@@ -155,17 +155,21 @@ pub struct ViewSettings {
     pub match_amount: u8,
     /// The EQ match's Detail (plan §7.6): at most how many bands it proposes, 1 to 24.
     pub match_detail: u8,
+    /// Match's lines on the graph (plan §7.6): the reference, the track and the proposed match;
+    /// off, the EQ's curve alone (the owner, 2026-10-29). Not part of what the display shows.
+    pub match_lines: bool,
 }
 
 impl ViewSettings {
     /// The settings that decide what the display shows: every one but the Amounts and Detail,
-    /// another track and Collisions. A freeze is held on these (plan §7.4, §7.8).
+    /// Match's lines, another track and Collisions. A freeze is held on these (plan §7.4, §7.8).
     pub fn display(self) -> ViewSettings {
         let defaults = ViewSettings::default();
         ViewSettings {
             amount: defaults.amount,
             match_amount: defaults.match_amount,
             match_detail: defaults.match_detail,
+            match_lines: defaults.match_lines,
             external: defaults.external,
             collisions: defaults.collisions,
             ..self
@@ -203,6 +207,7 @@ impl Default for ViewSettings {
             amount: crate::editor::finder::DEFAULT_AMOUNT,
             match_amount: crate::editor::matcher::DEFAULT_AMOUNT,
             match_detail: crate::editor::matcher::DEFAULT_DETAIL,
+            match_lines: true,
         }
     }
 }

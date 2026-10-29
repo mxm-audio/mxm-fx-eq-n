@@ -1572,26 +1572,55 @@ impl EqApp {
             self.collision_marks = marks;
             self.external_name = name;
             // What Match has learned (plan §7.6): the reference and the track, smoothed as the
-            // match reads them, at the level they sound, lettered, never told apart by hue alone:
-            // "Ref" above its line's end, "Track" below its own. Solid throughout: a voice's
-            // lines stop changing long before its spread is small, and drawn faint by it they only
-            // flickered (the owner, 2026-10-28).
-            if let Some([reference, track]) = self.learned_lines(now) {
+            // match reads them, lettered, never told apart by hue alone: "Ref" above its line's
+            // end, "Track" below its own. Solid throughout: a voice's lines stop changing long
+            // before its spread is small, and drawn faint by it they only flickered (the owner,
+            // 2026-10-28). **On the EQ's own scale**, each about its mean where both were read, so
+            // the gap between them is the shape the match makes at 100 %, beside its dashed curve
+            // (the owner, 2026-10-29: *"make them share a scale"*); the level the match takes out
+            // is not drawn. Hidden with Match's Lines off.
+            let learned = settings
+                .match_lines
+                .then(|| self.learned_lines(now))
+                .flatten();
+            if let Some([reference, track]) = learned {
                 let tilt = settings.tilt.db_per_octave();
-                for (cells, label, colour, below) in [
-                    (&reference, "Ref", tokens.warning, false),
-                    (&track, "Track", tokens.text_primary, true),
+                let read = |cells: &[Option<f32>]| -> Vec<Option<f32>> {
+                    curves
+                        .freqs
+                        .iter()
+                        .map(|&freq| {
+                            super::matcher::cell_at(cells, freq)
+                                .map(|db| learned_display_db(db, freq, tilt))
+                                .filter(|db| *db > SPECTRUM_BOTTOM_DB)
+                        })
+                        .collect()
+                };
+                let read = [read(&reference), read(&track)];
+                let both = |at: usize| read[0][at].is_some() && read[1][at].is_some();
+                let shared = (0..curves.freqs.len()).any(both);
+                let centre = |line: &[Option<f32>]| {
+                    let (sum, count) = line
+                        .iter()
+                        .enumerate()
+                        .filter(|&(at, _)| !shared || both(at))
+                        .filter_map(|(_, db)| *db)
+                        .fold((0.0, 0usize), |(sum, count), db| (sum + db, count + 1));
+                    if count > 0 { sum / count as f32 } else { 0.0 }
+                };
+                let range = GAIN_RANGE as f32;
+                for (line, label, colour, below) in [
+                    (&read[0], "Ref", tokens.warning, false),
+                    (&read[1], "Track", tokens.text_primary, true),
                 ] {
+                    let centre = centre(line);
                     // Runs between what was not read.
                     let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
-                    for (&x, &freq) in curves.xs.iter().zip(&curves.freqs) {
-                        let db = super::matcher::cell_at(cells, freq)
-                            .map(|db| learned_display_db(db, freq, tilt))
-                            .filter(|db| *db > SPECTRUM_BOTTOM_DB);
+                    for (&x, db) in curves.xs.iter().zip(line.iter()) {
                         match db {
                             Some(db) => {
                                 if let Some(run) = runs.last_mut() {
-                                    run.push(pos2(x, axes.spectrum_y(db)));
+                                    run.push(pos2(x, axes.y((db - centre).clamp(-range, range))));
                                 }
                             }
                             None if runs.last().is_some_and(|run| !run.is_empty()) => {
@@ -1852,8 +1881,11 @@ impl EqApp {
         // shape, never hue. Only the diamond under the pointer is labelled with its frequency and
         // gain: eight labels buried the lines (the owner, 2026-10-29).
         // Not while the match shown is applied as it stands: its curve is the EQ's, its bands
-        // the ones drawn (decision 51).
-        if !self.match_bands.is_empty() && !self.match_applied_as_shown() {
+        // the ones drawn (decision 51); nor with Match's Lines off.
+        if !self.match_bands.is_empty()
+            && self.params.view.get().match_lines
+            && !self.match_applied_as_shown()
+        {
             let current = self
                 .match_curve
                 .as_ref()

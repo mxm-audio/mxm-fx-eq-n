@@ -191,7 +191,7 @@ transaction.
   - **Every command is one undo step**: a proposal written (Find, Match's Apply), Split, a Phase
     or Resolution change, an edit of a selection's primary, which moves the group (`group_edit`).
   - **Nothing they hold is saved but view state** (`view.rs`, persisted, dirty-only): the
-    analyser's settings, the External line, Collisions, Find's Amount, Match's Amount and Detail;
+    analyser's settings, the External line, Collisions, Find's Amount, Match's Amount, Detail and Lines;
     and Match's, what this EQ learned, what it is matched to and the bands it applied
     (`EqParams::learned`, `match_to`, `match_applied`, host state beside it, every other EQ
     reading the first through the registry); a band still as Match applied it is Match's, which

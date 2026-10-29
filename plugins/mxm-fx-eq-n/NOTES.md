@@ -431,7 +431,9 @@ The full text of each follows, in *The editor in full*.
   Learn and a choice end Find and Freeze;
   Find and Freeze end Learn, keeping what it learned, and hide the proposals. It proposes bells and
   shelves for the free slots and its own, the EQ as heard counted but for its own bands; dashed
-  curve and hollow diamonds on the graph, the one under the pointer labelled; **Apply** writes
+  curve and hollow diamonds on the graph, the one under the pointer labelled, and the Ref and
+  Track lines on the EQ's scale, each about its mean, so their gap reads as the match does (the
+  owner, 2026-10-29), all hidden by the card's **Lines**, view state; **Apply** writes
   them all, every field, one undo step, only on the basis they were fitted on, what was learned and
   what it is matched to part of it. **Match owns the bands it applies** (decision 51,
   `EqParams::match_applied`): a band still as Apply wrote it is Match's, left out of the fit and
