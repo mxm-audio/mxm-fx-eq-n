@@ -540,6 +540,10 @@ pub struct EqParams {
     pub learned: crate::learned::LearnedField,
     #[persist = "match-to"]
     pub match_to: RwLock<crate::learned::MatchTo>,
+    /// The bands Match's Apply wrote, the newest `learned::APPLIED_KEPT` (plan §7.6, decision 51):
+    /// host state, so the next Apply replaces them after a reload too.
+    #[persist = "match-applied"]
+    pub match_applied: RwLock<Vec<crate::learned::AppliedBand>>,
 }
 
 /// The persisted keys of the fields whose restore may install other than what was saved, each the
@@ -612,6 +616,7 @@ impl Default for EqParams {
             identity: crate::instances::IdentityField::default(),
             learned: crate::learned::LearnedField::default(),
             match_to: RwLock::new(crate::learned::MatchTo::default()),
+            match_applied: RwLock::new(Vec::new()),
         }
     }
 }

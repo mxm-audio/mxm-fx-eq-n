@@ -100,8 +100,9 @@ Plan §7.6, decision 50; the kit's exception for a transient, non-value action
   when they differ. Latest wins: it is a state, not a queue of acts, so nothing is dropped that a
   later write does not replace.
 - **The process boundary.** `MxmFxEqN::sync`, each block: only with an editor connected, whatever
-  the host's mode, as solo (above); a band only in a slot that is Off, played static, unkeyed and Stereo, as Apply writes
-  it; each slot set once a block, since the engine starts a band's transition on any change. A
+  the host's mode, as solo (above); a band in an Off slot, or in place of a band of Match's
+  where the editor marks it to replace one (Off where Apply would turn it Off), played static,
+  unkeyed and Stereo, as Apply writes it; each slot set once a block, since the engine starts a band's transition on any change. A
   reset or a restore leaves it to the editor, which hands it over anew whenever the proposals
   change. **The editor ends it** on close; after Apply it holds what it played for
   `PREVIEW_HOLD_FRAMES`, while the host takes the bands written, so the sound does not dip.
@@ -425,9 +426,14 @@ The full text of each follows, in *The editor in full*.
   holds what it played for `PREVIEW_HOLD_FRAMES`, while the host takes the bands written.
   Learn and a choice end Find and Freeze;
   Find and Freeze end Learn, keeping what it learned, and hide the proposals. It proposes bells and
-  shelves for the free slots, the EQ as heard counted; dashed curve and hollow diamonds on the
-  graph, the one under the pointer labelled; **Apply** writes them all, every field, one undo step,
-  only on the basis they were fitted on, what was learned and what it is matched to part of it.
+  shelves for the free slots and its own, the EQ as heard counted but for its own bands; dashed
+  curve and hollow diamonds on the graph, the one under the pointer labelled; **Apply** writes
+  them all, every field, one undo step, only on the basis they were fitted on, what was learned and
+  what it is matched to part of it. **Match owns the bands it applies** (decision 51,
+  `EqParams::match_applied`): a band still as Apply wrote it is Match's, left out of the fit and
+  replaced by the next Apply, so Amount and Detail resize the match; before, each Apply added the
+  difference left on top of the last, and moving Amount up and down filled all 24 slots with bands
+  undoing each other (the owner, 2026-10-29). A band changed by hand is the player's.
   **Amount** (`DEFAULT_AMOUNT` up to `MAX_AMOUNT`, past the whole difference) and **Detail**
   (`DEFAULT_DETAIL` bands) are view state, saved. **Why Amount starts at the whole difference**:
   at the mastering tools' 40 % a voice-over's match was hardly heard (the owner, 2026-10-29: *"I

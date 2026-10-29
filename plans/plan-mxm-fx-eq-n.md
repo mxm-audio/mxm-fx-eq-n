@@ -1,5 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 42 — Match owns the bands it applies** (2026-10-29; §7.6, decision 51). The owner,
+moving Amount up and down and applying a few times: *"I end up with this chaos"*, all 24 slots
+taken by bands undoing each other, since each Apply added the difference left on top of the last.
+Now the fit leaves Match's own bands out and Apply replaces them: Amount and Detail resize the match.
+**Built** (2026-10-29, F5.14).
 **Revision 41 — The VST3 wrapper fixed for Resolve** (2026-10-29; §4, §7.6). Resolve froze when
 the voice-over's EQ marked the project dirty, and that EQ kept no edit: nice-plug's VST3 wrapper
 waited on the audio thread for an editor's state, and applied an edit only through a block, both
@@ -225,6 +230,7 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 46 | **Copy and paste through a clipboard in the process**, shared by every instance as the registry is, pasting into free slots and never over a band; the alternative uses the system clipboard as text, which also reaches other processes and programs, through each system's clipboard in the window library (§7.9) | **Settled** (owner, 2026-10-16) | F8.2 |
 | 48 | **What an EQ learned is saved by name as a reference**, a file per reference in a folder beside the EQ's user presets, listed in Match to and chosen for any track in any project, the choice saved with the project; the alternative keeps a reference only while the editor is open and keeps a match by saving the applied bands as an ordinary preset, which matches only material like the track it was fitted on (§7.6) | **Settled** (owner, 2026-10-28: the reference saved) | F5.6 |
 | 49 | **No fixed time; an unsure difference is shrunk by how unsure it is**: a learn read in two halves, a second of sound each in turn, whose agreement after smoothing is its spread; the difference's shape about its mean shrunk by the track's and the reference's spreads together, `s·s²/(s² + u²)`, so a difference well over its spread is kept and one within it mostly taken back, and nothing is asked where nothing is known yet; the alternatives waited 10 s of each for every frequency, or left out every frequency less sure than 0.5 to 1 dB, which left a voice's almost all out (§7.6) | **Settled** (owner, 2026-10-28: *"Yes drop the 10 secs"*; *"that seems like too little"*) | F5.10, F5.11 |
+| 51 | **Match owns the bands it applies**: a record of the bands Apply wrote, kept with the project (`EqParams::match_applied`, the newest `APPLIED_KEPT`); a slot still holding one as written, static, unbypassed, unkeyed and Stereo, is Match's. The fit leaves Match's bands out, Apply rewrites them first and turns Off those it no longer needs, and Preview plays the new match in their place; a band changed by hand is the player's. The alternative added each Apply's bands to the free slots, on top of the last (§7.6) | **Settled** (owner, 2026-10-29: *"yes build it"*) | F5.14 |
 | 50 | **Preview plays the proposals before they are applied**, following Amount and Detail, as a transient command as band solo is (§5.2): no parameter written, only with an editor, whatever mode the host says it runs in, since Resolve says offline as it plays; the alternative applied, listened and undid (§7.6) | **Settled** (owner, 2026-10-28: *"Yes"*; 2026-10-29: *"I never render with open audio effects anyway"*) | F5.10, F5.13 |
 | 47 | **Global transforms come from the selection**: Select all, then drag or the arrows, and Invert gain on the menu; no Shift parameter; the alternative adds Bitwig's and DMG's **Shift**, an automatable parameter moving every band by one ratio in the DSP, a host able to ride it (§7.9) | **Settled** (owner, 2026-10-16) | F8.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
@@ -1484,9 +1490,17 @@ as F4's, and each proposed band a **hollow diamond** at its centre and gain, tol
 triangles by shape, never hue; **only the diamond under the pointer is labelled** with its
 frequency and gain (`2.4 kHz +1.8 dB`), since eight labels at once buried the lines (the owner,
 2026-10-29: *"this is a kind of busy display"*). The proposals are one fit, so they are applied together: **Apply**, on the
-card, writes every proposal into the lowest free slots as one undo step, each slot's every field
-(`slot_writes`), a static, unkeyed Stereo bell or shelf. With every slot in use nothing is
-proposed and Match's hover says why.
+card, writes every proposal as one undo step, each slot's every field (`slot_writes`), a static,
+unkeyed Stereo bell or shelf. **Match owns the bands it applies** (decision 51; the owner,
+2026-10-29: *"up and down on the amount and apply a few times and I end up with this chaos"*): it
+keeps a record of the bands Apply wrote, with the project, and a slot still holding one as written
+(static, unbypassed, unkeyed, Stereo) holds Match's band. The fit leaves those out, so it is always
+the whole match at the current Amount and Detail, and Apply writes into Match's slots first, then
+the lowest free ones, turning Off those of Match's it no longer needs: moving Amount and applying
+again resizes the match. A band changed by hand is the player's and is left alone. While the match
+shown is applied as it stands, Apply is disabled and says so, the card reads *applied*, and the
+graph draws no proposals. With no slot to write, of Match's or free, nothing is proposed and
+Match's hover says why.
 
 **One proposal set at a time**: turning Learn on, or choosing something to match to, ends Find and
 Freeze; turning on Find or Freeze, or the analyser off, ends Learn, keeping what it learned, and
@@ -1531,8 +1545,9 @@ as they move; off plays the EQ as it is, so the switch is the comparison. **A tr
 as band solo is (§5.2; `plugins/AGENTS.md`'s exception): no parameter is written, so a project never
 reopens previewing and the host's undo and automation see nothing.
 The editor hands the bands over (`preview.rs`); each block the shell plays them only with an editor
-connected, whatever mode the host says it runs in, as solo (§5.2), each only in a slot that is Off, static, unkeyed and Stereo, so a slot
-the player has since used is the player's; closing the window ends it. After Apply what it played
+connected, whatever mode the host says it runs in, as solo (§5.2), each in the slot Apply would
+write, static, unkeyed and Stereo: in an Off slot, or in place of a band of Match's there (Off where
+Apply would turn it Off, decision 51), so a slot the player has since used is the player's; closing the window ends it. After Apply what it played
 is held for half a second, while the host takes the bands written, so the sound does not dip. While
 it is on, the dashed curve is the one heard.
 
@@ -1602,6 +1617,7 @@ opening size hugged to the first column, and the keyboard reaching it; the liste
 | **F5.5** | The learns: the matcher's reference and track learned apart, each held; the reference as cells; its three sources, another track watched while it is learned; a reset keeping a learn; the fit reading cells, unread ones unweighted. **Built** (2026-10-28) | Unit tests at the end |
 | **F5.6** | Saved references: the folder, the file and its version, Save and Replace, the list, *Missing*, Folder; the card's new rows; the chosen name saved with the project; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.7** | The owner by ear, in Resolve: one voice-over clip matched to another | Owner sign-off |
+| **F5.14** | Decision 51: `EqParams::match_applied` and `learned::AppliedBand`; `EqApp::match_owned_slots`, `match_slots`, `heard_eq_except`, `match_writes`, `match_applied_as_shown`, Apply replacing Match's bands; Preview's entries replacing a slot's band or turning it Off (`preview::Entry`, `Previewed`); the card's *applied*, Apply's hover; tests `apply_replaces_the_bands_match_applied`, the shell's preview test; the DOX. **Built** (2026-10-29) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.13** | Decision 50 revised: solo and Preview gated on an open editor alone (`MxmFxEqN::sync`), the host's offline mode no longer; their two shell tests; the DOX: the plugin's `AGENTS.md` and `NOTES.md`, and this plan's §5.2, §7.6, status line and rows. **Built** (2026-10-29) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.12** | Decision 33's Amount: 0–200 % (`matcher::MAX_AMOUNT`), 100 % by default, a percent a fine step; a proposed band's label only under the pointer; the DOX: the plugin's `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-29) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.11** | Decision 49, rewritten: the difference's shape shrunk by its spread (`matcher::shrunk`), no cell left out for it; the learned lines solid; the card's reading the bands proposed, Apply's hover why it waits; the DOX: the plugin's `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |

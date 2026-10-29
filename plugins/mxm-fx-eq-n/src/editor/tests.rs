@@ -3761,9 +3761,10 @@ fn preview_hands_the_proposals_to_the_free_slots() {
     let out = read(&rig);
     for (slot, band) in slots.iter().zip(&bands) {
         let previewed = out[*slot].expect("in the slot Apply writes");
-        assert_eq!(previewed.shape, Some(band.shape));
-        assert!((previewed.gain_db - band.gain_db).abs() < 1.0e-4);
-        assert!((previewed.q - band.q).abs() < 1.0e-6);
+        assert_eq!(previewed.band.shape, Some(band.shape));
+        assert!((previewed.band.gain_db - band.gain_db).abs() < 1.0e-4);
+        assert!((previewed.band.q - band.q).abs() < 1.0e-6);
+        assert!(!previewed.replace, "an Off slot's");
     }
     assert_eq!(
         out.iter().flatten().count(),
@@ -3880,6 +3881,103 @@ fn what_was_learned_is_drawn_at_the_analysers_level() {
             "{which}: {drawn} dB against {expected} dB"
         );
     }
+}
+
+/// **Apply replaces the bands Match applied; a band changed by hand is the player's** (plan §7.6,
+/// decision 51; the owner, 2026-10-29: *"up and down on the amount and apply a few times and I end
+/// up with this chaos"*): the match applied as it stands has nothing to apply; a smaller match, as a
+/// lower Amount gives, is previewed in Match's slots, one Off, and applied there in one step, so the
+/// bands never pile up; Undo brings the earlier bands back as Match's; a band changed by hand is
+/// left alone, the next Apply going to a free slot; and the record is kept with the project.
+#[test]
+fn apply_replaces_the_bands_match_applied() {
+    let (mut rig, _other) = match_rig();
+    let fit = |rig: &mut Rig, bands: Vec<MatchBand>| {
+        let settings = rig.app.params.view.get();
+        let basis = rig.app.match_basis(&settings);
+        rig.app.accept_fit(Fitted {
+            bands,
+            listen: rig.app.matcher.listen(),
+            basis,
+        });
+    };
+    let shelf = |gain_db: f32| MatchBand {
+        shape: Shape::LowShelf,
+        freq: 120.0,
+        gain_db,
+        q: matcher::SHELF_Q,
+    };
+    let bell = || MatchBand {
+        shape: Shape::Bell,
+        freq: 2_000.0,
+        gain_db: -2.0,
+        q: 1.5,
+    };
+    let in_use = |rig: &Rig| {
+        (0..mxm_fx_eq_n_dsp::SLOTS)
+            .filter(|&slot| rig.band(slot).shape.is_some())
+            .count()
+    };
+    let settings = rig.app.params.view.get();
+    fit(&mut rig, vec![shelf(3.0), bell()]);
+    assert_eq!(rig.app.apply_match(&settings), [0, 1]);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.match_owned_slots(), [0, 1]);
+
+    fit(&mut rig, vec![shelf(3.0), bell()]);
+    assert!(rig.app.match_applied_as_shown());
+    assert!(
+        rig.app.apply_match(&settings).is_empty(),
+        "nothing to apply"
+    );
+
+    // A smaller match: heard in Match's slots, the one it no longer needs Off.
+    fit(&mut rig, vec![shelf(1.0)]);
+    rig.app.set_preview(true);
+    rig.app.update_preview();
+    let mut out = [None; mxm_fx_eq_n_dsp::SLOTS];
+    rig.app.preview.read(&mut out);
+    let first = out[0].expect("previewed in Match's first slot");
+    assert!(first.replace && (first.band.gain_db - 1.0).abs() < 0.05);
+    let second = out[1].expect("and its second");
+    assert!(second.replace && second.band.shape.is_none(), "Off");
+    rig.app.set_preview(false);
+
+    let depth = rig.depth();
+    assert_eq!(rig.app.apply_match(&settings), [0]);
+    rig.press(Vec::new());
+    assert!((rig.band(0).gain_db - 1.0).abs() < 0.05);
+    assert!(rig.band(1).shape.is_none(), "Match's other band turned Off");
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+    assert_eq!(in_use(&rig), 1, "nothing piles up");
+
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert_eq!(
+        rig.app.match_owned_slots(),
+        [0, 1],
+        "Undo brings Match's bands back"
+    );
+
+    // A band changed by hand is the player's.
+    let gain = band_index(0, Field::Gain);
+    rig.app.instant(&[(gain, rig.app.normalised(gain, 6.0))]);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.match_owned_slots(), [1]);
+    fit(&mut rig, vec![shelf(1.0), bell()]);
+    assert_eq!(rig.app.apply_match(&settings), [1, 2]);
+    rig.press(Vec::new());
+    assert!((rig.band(0).gain_db - 6.0).abs() < 0.05, "left alone");
+    assert_eq!(in_use(&rig), 3);
+
+    let fields = rig.app.params.serialize_fields();
+    let restored = EqParams::default();
+    restored.deserialize_fields(&fields);
+    assert_eq!(
+        *restored.match_applied.read().unwrap(),
+        *rig.app.params.match_applied.read().unwrap(),
+        "kept with the project"
+    );
 }
 
 /// **Apply writes the match on its current basis only, every field, as one undo step** (plan

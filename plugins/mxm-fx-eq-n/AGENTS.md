@@ -128,7 +128,8 @@ transaction.
 
 - **No id, state or preset value**, as solo (plan §7.6, decision 50); `preview.rs`, the bands by
   the slot Apply writes, one writer, latest wins. **The shell plays it** each block only with an
-  editor connected, whatever the host's mode, only in an Off slot; **the editor ends it** on close.
+  editor connected, whatever the host's mode, in an Off slot or in place of a band of Match's the
+  editor marks to replace (decision 51); **the editor ends it** on close.
 - `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode` and
   `preview_hands_the_proposals_to_the_free_slots`.
 
@@ -187,8 +188,10 @@ transaction.
     or Resolution change, an edit of a selection's primary, which moves the group (`group_edit`).
   - **Nothing they hold is saved but view state** (`view.rs`, persisted, dirty-only): the
     analyser's settings, the External line, Collisions, Find's Amount, Match's Amount and Detail;
-    and Match's, what this EQ learned and what it is matched to (`EqParams::learned`, `match_to`,
-    host state beside it, every other EQ reading the first through the registry). A saved
+    and Match's, what this EQ learned, what it is matched to and the bands it applied
+    (`EqParams::learned`, `match_to`, `match_applied`, host state beside it, every other EQ
+    reading the first through the registry); a band still as Match applied it is Match's, which
+    the next Apply replaces (decision 51). A saved
     reference is a file, never a preset (`references.rs`). A change to them marks the project
     dirty through `GuiContext::set_state`, nice-plug's dirty-only transaction, which neither
     wrapper may answer by waiting on the audio thread ([NOTES.md § Marking the project dirty](NOTES.md#marking-the-project-dirty)).

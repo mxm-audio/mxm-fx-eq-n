@@ -289,7 +289,7 @@ pub struct EqApp {
     /// is held after an Apply, until the host has the bands.
     preview: Arc<crate::preview::Preview>,
     pub(crate) previewing: bool,
-    preview_published: Option<u64>,
+    preview_published: Option<(u64, u32)>,
     preview_hold: u32,
     pub(crate) history: history::Shared,
     analyser: Option<rtrb::Consumer<Block>>,
@@ -1127,9 +1127,16 @@ impl EqApp {
     /// The EQ as heard (plan §7.5): every band in the sound, at its drawn gain under the gain
     /// scale, with its placement; a bypassed band and a placed band in mono are not in it.
     pub(crate) fn heard_eq(&self) -> finder::HeardEq {
+        self.heard_eq_except(&[])
+    }
+
+    /// [`heard_eq`](Self::heard_eq) without the bands in `skip`: Match's own, which its next fit
+    /// leaves out (plan §7.6, decision 51).
+    pub(crate) fn heard_eq_except(&self, skip: &[usize]) -> finder::HeardEq {
         let sample_rate = self.sample_rate();
         let scale = self.gain_scale_now();
         let bands = (0..SLOTS)
+            .filter(|slot| !skip.contains(slot))
             .filter_map(|slot| {
                 let band = self.band_now(slot);
                 let shape = band
@@ -1152,6 +1159,52 @@ impl EqApp {
             bands,
             sample_rate,
             deepest_db: mxm_fx_eq_n_dsp::GAIN_RANGE as f32 * scale,
+        }
+    }
+
+    /// The slots holding a band Match applied, as it was written (plan §7.6, decision 51): static,
+    /// unbypassed, unkeyed and Stereo, not held by a gesture, its shape, frequency, gain and Q those
+    /// of a band in `match_applied`. The next fit leaves them out and the next Apply replaces them;
+    /// a band edited by hand since is the player's.
+    pub(crate) fn match_owned_slots(&self) -> Vec<usize> {
+        let applied = self
+            .params
+            .match_applied
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if applied.is_empty() {
+            return Vec::new();
+        }
+        (0..SLOTS)
+            .filter(|&slot| {
+                let band = self.band_now(slot);
+                band.shape.is_some()
+                    && !band.bypass
+                    && !self.open.holds(band_index(slot, Field::Type))
+                    && self.dynamics_now(slot).range_db == 0.0
+                    && !self.key_now(slot)
+                    && self.placement_now(slot) == mxm_fx_eq_n_dsp::Placement::Stereo
+                    && applied.iter().any(|written| written.is(&band))
+            })
+            .collect()
+    }
+
+    /// The slots Apply writes, in its order: Match's own, then the Off ones, lowest first each.
+    pub(crate) fn match_slots(&self) -> Vec<usize> {
+        let mut slots = self.match_owned_slots();
+        slots.extend(self.free_slots());
+        slots
+    }
+
+    /// Why Match proposes nothing although it is matched: no slot to write, of its own or Off, or
+    /// the gain scale at 0 %, where a bell is flat.
+    pub(crate) fn match_refusal(&self) -> Option<FindRefusal> {
+        if self.match_slots().is_empty() {
+            Some(FindRefusal::Full)
+        } else if self.gain_scale_now() <= f32::EPSILON {
+            Some(FindRefusal::NoGain)
+        } else {
+            None
         }
     }
 
@@ -1453,13 +1506,16 @@ impl EqApp {
         self.previewing = on;
     }
 
-    /// What Preview plays, given the shell whenever the proposals change: each in the free slot
-    /// Apply would write, its gain under the gain scale as Apply writes it; nothing while Preview
+    /// What Preview plays, given the shell whenever the proposals or Match's own slots change: each
+    /// band in the slot Apply would write, as Apply writes it, replacing a band of Match's there,
+    /// and Off in a slot of Match's that Apply would turn Off (decision 51); nothing while Preview
     /// is off or there are none. After an Apply what it played is held for [`PREVIEW_HOLD_FRAMES`],
     /// so the bands written take over from it without a gap.
     pub(crate) fn update_preview(&mut self) {
-        let wanted =
-            (self.previewing && !self.match_bands.is_empty()).then_some(self.match_version);
+        let owned = self.match_owned_slots();
+        let owned_mask = owned.iter().fold(0u32, |mask, &slot| mask | 1 << slot);
+        let wanted = (self.previewing && !self.match_bands.is_empty())
+            .then_some((self.match_version, owned_mask));
         if wanted == self.preview_published {
             return;
         }
@@ -1467,26 +1523,28 @@ impl EqApp {
             self.preview_hold -= 1;
             return;
         }
-        let scale = self.gain_scale_now();
-        if wanted.is_some() && scale > f32::EPSILON {
-            let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
-            let slots: Vec<usize> = self.free_slots().collect();
-            let bands: Vec<(usize, Shape, f32, f32, f32)> = slots
-                .into_iter()
-                .zip(&self.match_bands)
-                .map(|(slot, band)| {
-                    (
-                        slot,
-                        band.shape,
-                        self.clamp_freq(band.freq),
-                        (band.gain_db / scale).clamp(-range, range),
-                        band.q,
-                    )
-                })
-                .collect();
-            self.preview.publish(&bands);
-        } else {
-            self.preview.clear();
+        match self.match_writes().filter(|_| wanted.is_some()) {
+            Some((placed, _)) => {
+                let mut entries: Vec<crate::preview::Entry> = placed
+                    .iter()
+                    .filter_map(|&(slot, band)| {
+                        let shape = band.shape?;
+                        Some((
+                            slot,
+                            Some((shape, band.freq, band.gain_db, band.q)),
+                            owned.contains(&slot),
+                        ))
+                    })
+                    .collect();
+                entries.extend(
+                    owned
+                        .iter()
+                        .skip(placed.len())
+                        .map(|&slot| (slot, None, true)),
+                );
+                self.preview.publish(&entries);
+            }
+            None => self.preview.clear(),
         }
         self.preview_hold = 0;
         self.preview_published = wanted;
@@ -1772,6 +1830,23 @@ impl EqApp {
             basis.push(stamp as u32);
             basis.push((stamp >> 32) as u32);
         }
+        // What Match applied, which decides which bands are its own: how many, and the newest.
+        {
+            let applied = self
+                .params
+                .match_applied
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            basis.push(applied.len() as u32);
+            if let Some(newest) = applied.last() {
+                basis.extend([
+                    newest.kind as u32,
+                    newest.freq.to_bits(),
+                    newest.gain_db.to_bits(),
+                    newest.q.to_bits(),
+                ]);
+            }
+        }
         basis.push(u32::from(settings.match_amount));
         basis.push(u32::from(settings.match_detail()));
         basis.push(u32::from(self.telemetry.mono()));
@@ -1828,7 +1903,7 @@ impl EqApp {
             }
             return;
         };
-        if self.find_refusal().is_some() {
+        if self.match_refusal().is_some() {
             self.match_asked_on = basis;
             if !self.match_bands.is_empty() {
                 self.match_bands.clear();
@@ -1837,12 +1912,15 @@ impl EqApp {
             return;
         }
         let revision = self.matcher.revision();
+        // The whole match each time, on the EQ without Match's own bands, which Apply replaces
+        // (decision 51): Amount and Detail resize what was applied rather than add to it.
+        let owned = self.match_owned_slots();
         let fit = matcher::Fit {
             track,
             reference,
-            heard: self.heard_eq(),
+            heard: self.heard_eq_except(&owned),
             amount: settings.match_amount_share(),
-            max_bands: usize::from(settings.match_detail()).min(self.free_slots().count()),
+            max_bands: usize::from(settings.match_detail()).min(self.match_slots().len()),
             listen: self.matcher.listen(),
             basis: basis.clone(),
         };
@@ -1886,36 +1964,96 @@ impl EqApp {
         !self.match_bands.is_empty() && self.match_fitted_on == self.match_basis(settings)
     }
 
-    /// Applies the match (plan §7.6): every band a static, unkeyed Stereo bell or shelf in the
-    /// lowest Off slots, every field written, its gain the gain heard under the gain scale. One
-    /// undo step. Returns the slots, empty when the bands are not current or do not fit.
-    pub(crate) fn apply_match(&mut self, settings: &ViewSettings) -> Vec<usize> {
+    /// What Apply writes for the bands shown (plan §7.6, decision 51): each, a static, unkeyed
+    /// Stereo bell or shelf, every field, its gain the gain heard under the gain scale, into the
+    /// slots Apply writes, Match's own first; and Match's own slots it no longer needs turned Off.
+    /// The bands as written in their slots, and the writes; `None` when there are none, they do not
+    /// fit, or the gain scale is 0 %.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn match_writes(
+        &self,
+    ) -> Option<(Vec<(usize, mxm_fx_eq_n_dsp::Band)>, Vec<(usize, f32)>)> {
         let scale = self.gain_scale_now();
-        let bands = self.match_bands.clone();
-        let slots: Vec<usize> = self.free_slots().take(bands.len()).collect();
-        if !self.match_current(settings) || slots.len() < bands.len() || scale <= f32::EPSILON {
-            return Vec::new();
+        let owned = self.match_owned_slots();
+        let mut slots = owned.clone();
+        slots.extend(self.free_slots());
+        let bands = &self.match_bands;
+        if bands.is_empty() || slots.len() < bands.len() || scale <= f32::EPSILON {
+            return None;
         }
         let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+        let placed: Vec<(usize, mxm_fx_eq_n_dsp::Band)> = slots
+            .iter()
+            .zip(bands)
+            .map(|(&slot, band)| {
+                (
+                    slot,
+                    mxm_fx_eq_n_dsp::Band {
+                        shape: Some(band.shape),
+                        bypass: false,
+                        freq: self.clamp_freq(band.freq),
+                        gain_db: (band.gain_db / scale).clamp(-range, range),
+                        q: band.q,
+                        slope: DEFAULT_SLOPE,
+                    },
+                )
+            })
+            .collect();
         let mut writes: Vec<(usize, f32)> = Vec::new();
-        for (&slot, band) in slots.iter().zip(&bands) {
+        for &(slot, band) in &placed {
             writes.extend(self.slot_writes(
                 slot,
-                mxm_fx_eq_n_dsp::Band {
-                    shape: Some(band.shape),
-                    bypass: false,
-                    freq: self.clamp_freq(band.freq),
-                    gain_db: (band.gain_db / scale).clamp(-range, range),
-                    q: band.q,
-                    slope: DEFAULT_SLOPE,
-                },
+                band,
                 mxm_fx_eq_n_dsp::Dynamics::STATIC,
                 false,
                 mxm_fx_eq_n_dsp::Placement::Stereo,
             ));
         }
+        for &slot in owned.iter().skip(placed.len()) {
+            writes.push((band_index(slot, Field::Type), 0.0));
+        }
+        Some((placed, writes))
+    }
+
+    /// Whether the match shown is applied as it stands: Apply would change nothing.
+    pub(crate) fn match_applied_as_shown(&self) -> bool {
+        self.match_writes().is_some_and(|(_, writes)| {
+            writes
+                .iter()
+                .all(|&(index, value)| (self.normalised_now(index) - value).abs() <= 1.0e-6)
+        })
+    }
+
+    /// Applies the match (plan §7.6, decision 51): [`match_writes`](Self::match_writes), replacing
+    /// the bands Match applied before, as one undo step, and the bands written kept as Match's.
+    /// Returns their slots, empty when the bands are not current, do not fit or are applied as they
+    /// stand.
+    pub(crate) fn apply_match(&mut self, settings: &ViewSettings) -> Vec<usize> {
+        if !self.match_current(settings) || self.match_applied_as_shown() {
+            return Vec::new();
+        }
+        let Some((placed, writes)) = self.match_writes() else {
+            return Vec::new();
+        };
+        let bands = self.match_bands.clone();
+        let slots: Vec<usize> = placed.iter().map(|&(slot, _)| slot).collect();
         self.close_open();
         self.instant(&writes);
+        {
+            let mut applied = self
+                .params
+                .match_applied
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            applied.extend(
+                placed
+                    .iter()
+                    .filter_map(|(_, band)| crate::learned::AppliedBand::of(band)),
+            );
+            let excess = applied.len().saturating_sub(crate::learned::APPLIED_KEPT);
+            applied.drain(..excess);
+        }
+        self.mark_dirty();
         self.select_set(&slots, slots.first().copied());
         self.edge = None;
         if let Some(band) = bands.first() {

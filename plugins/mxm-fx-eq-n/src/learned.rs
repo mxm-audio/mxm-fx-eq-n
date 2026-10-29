@@ -81,6 +81,44 @@ impl<'a> PersistentField<'a, Option<Learned>> for LearnedField {
     }
 }
 
+/// A band Match's Apply wrote (plan §7.6, decision 51), as written: a slot that still holds one
+/// like it, static, unbypassed and Stereo, holds Match's band, which the next fit leaves out and
+/// the next Apply replaces; one edited by hand since is the player's.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppliedBand {
+    /// The shape as the `type` parameter holds it (`params::type_of`).
+    pub kind: i32,
+    pub freq: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+
+/// How many bands Match keeps a record of, the newest: enough for Undo through a few Applies to
+/// find the bands of the one it lands on.
+pub const APPLIED_KEPT: usize = 96;
+
+impl AppliedBand {
+    /// `band` as Apply wrote it; `None` for an Off one.
+    pub fn of(band: &mxm_fx_eq_n_dsp::Band) -> Option<Self> {
+        band.shape.map(|shape| Self {
+            kind: crate::params::type_of(Some(shape)),
+            freq: band.freq,
+            gain_db: band.gain_db,
+            q: band.q,
+        })
+    }
+
+    /// Whether `band` is this one as the host reads it back: the same shape, its values within what
+    /// the parameters' rounding moves them.
+    pub fn is(&self, band: &mxm_fx_eq_n_dsp::Band) -> bool {
+        let close = |a: f32, b: f32| (a - b).abs() <= 1.0e-3 * a.abs().max(b.abs()).max(1.0);
+        crate::params::type_of(band.shape) == self.kind
+            && close(band.freq, self.freq)
+            && close(band.gain_db, self.gain_db)
+            && close(band.q, self.q)
+    }
+}
+
 /// What this EQ is matched to (plan §7.6): nothing, another EQ by its instance's id (plan §7.8),
 /// or a saved reference by name (decision 48).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

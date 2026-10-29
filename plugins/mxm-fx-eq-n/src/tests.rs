@@ -260,7 +260,9 @@ fn solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell() {
 
 /// **Match's Preview is heard in an Off slot, with an editor, whatever the mode** (plan §7.6): a
 /// +12 dB bell at 1 kHz previewed in slot 3 is not heard without an editor, is heard with one, gives
-/// way to a band the player puts in that slot, and is heard offline too, as Resolve plays.
+/// way to a band the player puts in that slot, and is heard offline too, as Resolve plays. One
+/// marked to replace a band Match applied plays in its place, and an Off one silences it
+/// (decision 51).
 #[test]
 fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     let tone = |plugin: &mut MxmFxEqN| -> f64 {
@@ -274,7 +276,7 @@ fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     let mut plugin = prepared(2);
     plugin
         .preview
-        .publish(&[(3, Shape::Bell, 1_000.0, 12.0, 1.0)]);
+        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), false)]);
     assert!(tone(&mut plugin).abs() < 0.01, "no editor: not heard");
     plugin.telemetry.connect(true);
     let heard = tone(&mut plugin);
@@ -289,6 +291,17 @@ fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     );
     let heard = tone(&mut plugin);
     assert!((heard + 6.0).abs() < 0.05, "the player's band: {heard}");
+    plugin
+        .preview
+        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), true)]);
+    let heard = tone(&mut plugin);
+    assert!((heard - 12.0).abs() < 0.05, "in place of Match's: {heard}");
+    plugin.preview.publish(&[(3, None, true)]);
+    let heard = tone(&mut plugin);
+    assert!(heard.abs() < 0.01, "Match's turned Off: {heard}");
+    plugin
+        .preview
+        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), false)]);
     set_band(
         &plugin.params.bands[3],
         None,
@@ -342,7 +355,7 @@ fn with_an_editor_open_processing_never_allocates() {
             assert!(plugin.audition.request(endings, Some(4)));
             plugin
                 .preview
-                .publish(&[(1, Shape::Bell, 1_000.0, 3.0, 1.0)]);
+                .publish(&[(1, Some((Shape::Bell, 1_000.0, 3.0, 1.0)), false)]);
         }
         let (left, right) = buffers.split_at_mut(1);
         let mut channels: [&mut [f32]; 2] = [&mut left[0], &mut right[0]];

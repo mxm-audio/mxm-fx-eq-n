@@ -40,7 +40,7 @@ pub struct MxmFxEqN {
     audition: Arc<Audition>,
     /// Match's Preview (plan §7.6), and the bands last read from it whole, by slot.
     preview: Arc<preview::Preview>,
-    previewed: [Option<mxm_fx_eq_n_dsp::Band>; mxm_fx_eq_n_dsp::SLOTS],
+    previewed: [Option<preview::Previewed>; mxm_fx_eq_n_dsp::SLOTS],
     /// The undo history: the instance's, so it survives the editor closing (plan §5.4).
     history: editor::history::Shared,
     engine: Box<Engine>,
@@ -99,8 +99,9 @@ impl MxmFxEqN {
     /// The parameters, the solo request and Match's Preview, into the engine. Solo and Preview are
     /// auditions, played only while an editor holds them, whatever mode the host says it runs in:
     /// Resolve says offline as it plays (the owner, 2026-10-29). A previewed band plays in its slot
-    /// only while the slot is Off, static, unkeyed and Stereo, as Apply writes it; each slot is set
-    /// once, so a band's transitions run as any band's.
+    /// while the slot is Off, or in place of the slot's own band where the editor marks it to
+    /// replace one Match applied (Off where Apply would turn it Off), static, unkeyed and Stereo, as
+    /// Apply writes it; each slot is set once, so a band's transitions run as any band's.
     fn sync(&mut self) {
         let auditioning = self.telemetry.connected();
         if auditioning {
@@ -111,7 +112,9 @@ impl MxmFxEqN {
         let mut previewing = [false; mxm_fx_eq_n_dsp::SLOTS];
         for (slot, band) in self.params.bands.iter().enumerate() {
             let band = band.band();
-            let previewed = self.previewed[slot].filter(|_| band.shape.is_none());
+            let previewed = self.previewed[slot]
+                .filter(|previewed| previewed.replace || band.shape.is_none())
+                .map(|previewed| previewed.band);
             previewing[slot] = previewed.is_some();
             self.engine.set_band(slot, previewed.unwrap_or(band));
         }

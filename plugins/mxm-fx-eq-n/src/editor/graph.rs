@@ -735,10 +735,11 @@ impl EqApp {
             .flat_map(|proposal| &proposal.bands)
             .map(|band| (band.cascade(rate), band.domain.placement()))
             .collect();
-        self.lines_with(curves, extra)
+        self.lines_with(curves, extra, &[])
     }
 
-    /// The lines the match would make (plan §7.6), as [`proposal_lines`](Self::proposal_lines)'.
+    /// The lines the match would make (plan §7.6), as [`proposal_lines`](Self::proposal_lines)':
+    /// in place of Match's own bands, which Apply replaces (decision 51).
     fn match_lines(&self, curves: &Curves) -> Vec<Vec<f32>> {
         let rate = self.sample_rate();
         let extra: Vec<(Cascade, Placement)> = self
@@ -746,14 +747,19 @@ impl EqApp {
             .iter()
             .map(|band| (band.cascade(rate), Placement::Stereo))
             .collect();
-        self.lines_with(curves, extra)
+        self.lines_with(curves, extra, &self.match_owned_slots())
     }
 
     /// The lines of the EQ as heard with `extra` bands, over `curves`' frequencies: the one curve,
     /// or with placed bands among them each channel's.
-    fn lines_with(&self, curves: &Curves, extra: Vec<(Cascade, Placement)>) -> Vec<Vec<f32>> {
+    fn lines_with(
+        &self,
+        curves: &Curves,
+        extra: Vec<(Cascade, Placement)>,
+        skip: &[usize],
+    ) -> Vec<Vec<f32>> {
         use super::finder::{Domain, domain_db, stages};
-        let heard = self.heard_eq();
+        let heard = self.heard_eq_except(skip);
         let rate = heard.sample_rate;
         let mut bands: Vec<(Cascade, Placement)> = heard.bands;
         bands.extend(extra);
@@ -1845,7 +1851,9 @@ impl EqApp {
         // hollow diamond at each band's centre and gain, told apart from Find's triangles by
         // shape, never hue. Only the diamond under the pointer is labelled with its frequency and
         // gain: eight labels buried the lines (the owner, 2026-10-29).
-        if !self.match_bands.is_empty() {
+        // Not while the match shown is applied as it stands: its curve is the EQ's, its bands
+        // the ones drawn (decision 51).
+        if !self.match_bands.is_empty() && !self.match_applied_as_shown() {
             let current = self
                 .match_curve
                 .as_ref()

@@ -202,9 +202,10 @@ const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
 const MATCH_HEARD_DESCRIPTION: &str = "How long this track has been learned, and how many bands \
      the match proposes. Thirty seconds or more makes a steadier match.";
-const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in one step Undo takes back.";
+const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in place of the ones the last      Apply made, in one step Undo takes back.";
 const MATCH_NOTHING_DESCRIPTION: &str = "Nothing to apply: what differs is less than you would hear \
      at this Amount. Raise Amount, or learn longer for a surer match.";
+const MATCH_APPLIED_DESCRIPTION: &str = "This match is applied. Move Amount or Detail and Apply      replaces the bands it made; a band you have changed since stays yours.";
 const MATCH_WAITING_DESCRIPTION: &str =
     "The bands are being fitted again for the change; Apply waits for them.";
 const PREVIEW_DESCRIPTION: &str = "While on, plays the proposed bands as if applied, following \
@@ -1375,7 +1376,7 @@ impl EqApp {
             Leaf::Learn => {
                 let analyser = self.params.view.get().analyser;
                 let mut on = self.learning;
-                let description = match self.find_refusal() {
+                let description = match self.match_refusal() {
                     Some(FindRefusal::Full) => MATCH_FULL_DESCRIPTION,
                     Some(FindRefusal::NoGain) => MATCH_NO_GAIN_DESCRIPTION,
                     None => LEARN_DESCRIPTION,
@@ -1445,9 +1446,12 @@ impl EqApp {
             }
             Leaf::MatchApply => {
                 let settings = self.params.view.get();
-                let current = self.match_current(&settings);
+                let applied = self.match_applied_as_shown();
+                let current = self.match_current(&settings) && !applied;
                 let description = if current {
                     MATCH_APPLY_DESCRIPTION
+                } else if applied {
+                    MATCH_APPLIED_DESCRIPTION
                 } else if self.match_bands.is_empty() {
                     MATCH_NOTHING_DESCRIPTION
                 } else {
@@ -1531,7 +1535,9 @@ impl EqApp {
                 };
                 // What the match proposes, while it is matched to something it can read.
                 if seconds > 0.0 && self.matched_reference().is_some() {
+                    let applied = self.match_applied_as_shown();
                     reading.push_str(&match self.match_bands.len() {
+                        _ if applied => ", applied".to_owned(),
                         0 => ", no change".to_owned(),
                         1 => ", 1 band".to_owned(),
                         bands => format!(", {bands} bands"),
