@@ -642,8 +642,9 @@ owner, 2026-10-29).
 
 The same host showed the VST3 wrapper's other wait: it applied an edit only through a block while
 the host had the plugin processing, so with no block coming a band drawn read back unchanged and
-the editor stopped showing it after `history::PENDING_FRAMES`. The fork now applies the edit itself
-once no block has come for a while (its `PATCHES.md`, *suspended processing*).
+the editor stopped showing it after `history::PENDING_FRAMES`. The fork now applies such an edit
+where it is made when no block is running, or as the running block ends, never during one, and a
+save applies the waiting ones first (its `PATCHES.md`, *suspended processing*).
 
 ## A restore that reads back changed
 

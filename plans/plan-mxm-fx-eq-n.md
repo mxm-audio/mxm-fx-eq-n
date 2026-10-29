@@ -4,10 +4,12 @@
 the voice-over's EQ marked the project dirty, and that EQ kept no edit: nice-plug's VST3 wrapper
 waited on the audio thread for an editor's state, and applied an edit only through a block, both
 without end while the host kept the plugin processing and ran no block. A code review with a second
-model (`/agent-loop`) found these and four more in the fork's VST3 wrapper, fixed there on a review
-branch: the dirty-only transaction and the state transaction ported from the CLAP wrapper, edits
-applied once no block has come for a while, the processing mode read before it is stored, and the
-side-chain bus indexed within the host's buses. **Built** (2026-10-29), not yet published.
+model (`/agent-loop`, ten rounds, approved in the tenth) found these and more in the fork's VST3
+wrapper, fixed there on a review branch: the dirty-only transaction and the state transaction
+ported from the CLAP wrapper; an edit made while the host keeps the plugin processing applied where
+it is made, or as the running block ends, never during one, and saved by `getState`; the processing
+mode read before it is stored; the side-chain bus indexed within the host's buses. In the EQ, a
+refused restore keeps the undo history. **Built** (2026-10-29), not yet published.
 **Revision 40 — Reset in the app bar** (2026-10-29; §5.4). The owner: *"I would rather just have a
 "reset" button up here"*, beside Undo. Reset writes Init as one undo action. **Built**
 (2026-10-29).
