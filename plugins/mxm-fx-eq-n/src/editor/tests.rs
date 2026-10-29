@@ -15,8 +15,6 @@ pub struct Host {
     pub log: Mutex<Vec<(char, ParamPtr)>>,
     pub states: Mutex<usize>,
     pub delayed: std::sync::atomic::AtomicBool,
-    /// Whether it hosts the VST3 rather than the CLAP.
-    pub vst3: std::sync::atomic::AtomicBool,
     queued: Mutex<Vec<(ParamPtr, f32)>>,
 }
 
@@ -41,11 +39,7 @@ unsafe impl Sync for Host {}
 
 impl nice_plug::context::gui::GuiContextInner for Host {
     fn plugin_api(&self) -> nice_plug::context::PluginApi {
-        if self.vst3.load(std::sync::atomic::Ordering::Relaxed) {
-            nice_plug::context::PluginApi::Vst3
-        } else {
-            nice_plug::context::PluginApi::Clap
-        }
+        nice_plug::context::PluginApi::Clap
     }
     fn request_restart(&self) {}
     unsafe fn raw_begin_set_parameter(&self, param: ParamPtr) {
@@ -3368,21 +3362,6 @@ fn find_s_toggles_follow_their_rules_and_amount_is_view_state() {
     assert_eq!(rig.app.params.view.get().amount, 50);
     assert_eq!(*rig.host.states.lock().unwrap(), states + 1, "marked dirty");
     assert!(rig.app.frozen.is_some(), "an Amount edit ends no freeze");
-
-    // As a VST3 the state is never handed over: nice-plug's VST3 wrapper would wait on the audio
-    // thread for it, for ever while the host runs no block (Resolve, 2026-10-29).
-    rig.host
-        .vst3
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    settings.amount = 60;
-    rig.app.set_view(settings);
-    rig.press(Vec::new());
-    assert_eq!(rig.app.params.view.get().amount, 60, "kept all the same");
-    assert_eq!(
-        *rig.host.states.lock().unwrap(),
-        states + 1,
-        "not handed over"
-    );
 }
 
 /// **A larger Amount proposes deeper, and with every slot in use nothing is proposed** (plan

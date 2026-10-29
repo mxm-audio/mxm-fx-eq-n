@@ -628,25 +628,22 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
   read this repository's own `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle
   there first).
 
-## Marking the project dirty, never as a VST3
+## Marking the project dirty
 
 A change to view state, a learn or what Match is matched to is no parameter, so the editor tells
-the host through `GuiContext::set_state`, a state with no parameters (`EqApp::mark_dirty`). The
-CLAP wrapper takes that as dirty-only and calls the host's `mark_dirty` (nice-plug's `PATCHES.md`,
-*GUI-authored state dirty*). The VST3 wrapper has no such path: while the host has the plugin
-processing, it hands the state to the audio thread over a channel and waits until a block takes it
-and hands it back, retrying a one-second send without end. A host that keeps a plugin processing
-but runs no block, as Resolve did with the voice-over's EQ, so leaves the window's thread, the
-host's own, waiting for ever: Resolve stopped responding and was closed (the owner, 2026-10-29).
-So as a VST3 the editor does not call it; the host reads the state when it saves (Resolve saves
-every few seconds), and only its mark of unsaved changes misses such a change. The same wait
-reaches every plugin that calls `set_state` from its editor in a VST3 host; the fix for all of them
-is the VST3 wrapper's, in the fork.
+the host through `GuiContext::set_state`, a state with no parameters and the fields already
+installed (`EqApp::mark_dirty`): nice-plug's dirty-only transaction (its `PATCHES.md`,
+*GUI-authored state dirty*), which the CLAP wrapper answers with the host's `mark_dirty` and the
+VST3 wrapper with `IComponentHandler2::setDirty`, restoring nothing. **Why it matters**: upstream's
+VST3 wrapper handed any editor state to the audio thread and waited until a block took it, without
+end while the host kept the plugin processing and ran no block. DaVinci Resolve does that with an
+idle track's plugins, and stopped responding when the voice-over's EQ turned its analyser on (the
+owner, 2026-10-29).
 
-The same host shows a second sign: the VST3 wrapper changes a parameter the editor writes only when
-the plugin is not processing, else it waits for the host to pass the change back in a block. While
-no block runs, a band drawn reads back unchanged, and the editor stops showing it after
-`history::PENDING_FRAMES`: it seems to vanish.
+The same host showed the VST3 wrapper's other wait: it applied an edit only through a block while
+the host had the plugin processing, so with no block coming a band drawn read back unchanged and
+the editor stopped showing it after `history::PENDING_FRAMES`. The fork now applies the edit itself
+once no block has come for a while (its `PATCHES.md`, *suspended processing*).
 
 ## A restore that reads back changed
 

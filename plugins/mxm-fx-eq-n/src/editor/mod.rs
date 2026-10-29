@@ -2543,15 +2543,11 @@ impl EqApp {
     }
 
     /// Tells the host the project changed outside its parameters: view state, the reference
-    /// chosen. **Never as a VST3**: nice-plug's VST3 wrapper hands the state to the audio thread
-    /// and waits until a block takes it, for ever while the host has the plugin processing but
-    /// runs no block, and the window's thread is the host's. Resolve froze so on the voice-over's
-    /// EQ (the owner, 2026-10-29). A VST3 host reads the state when it saves; only its mark of
-    /// unsaved changes misses a change to these alone.
+    /// chosen. The fields are installed already, so this is nice-plug's dirty-only transaction,
+    /// which both wrappers answer by marking the host dirty without restoring anything or
+    /// waiting on the audio thread (its `PATCHES.md`, *GUI-authored state dirty*).
     fn mark_dirty(&self) {
-        if let Some(host) = &self.host
-            && !matches!(host.plugin_api(), nice_plug::context::PluginApi::Vst3)
-        {
+        if let Some(host) = &self.host {
             // The parameter-free transaction: the wrapper marks the project dirty and restores
             // nothing (nice-plug's PATCHES.md, *GUI-authored state dirty*).
             host.set_state(PluginState {

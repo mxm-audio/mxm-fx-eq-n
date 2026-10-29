@@ -190,8 +190,8 @@ transaction.
     and Match's, what this EQ learned and what it is matched to (`EqParams::learned`, `match_to`,
     host state beside it, every other EQ reading the first through the registry). A saved
     reference is a file, never a preset (`references.rs`). A change to them marks the project
-    dirty through `GuiContext::set_state`, **never as a VST3**, whose wrapper can wait on the
-    audio thread for ever ([NOTES.md § Never as a VST3](NOTES.md#marking-the-project-dirty-never-as-a-vst3)).
+    dirty through `GuiContext::set_state`, nice-plug's dirty-only transaction, which neither
+    wrapper may answer by waiting on the audio thread ([NOTES.md § Marking the project dirty](NOTES.md#marking-the-project-dirty)).
   - **The GUI thread's budget**: the analyser and Find's and Match's listening inside
     `spectrum::BUDGET_MS` of a frame (`analyser_cost`, `finder_cost`, `match_cost`), their
     searches and fits on `finder::Worker`.

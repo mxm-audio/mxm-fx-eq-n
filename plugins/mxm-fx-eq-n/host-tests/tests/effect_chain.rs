@@ -472,28 +472,106 @@ fn a_restored_broadband_boost_with_auto_gain_renders_at_the_dry_level() {
     assert!(change.abs() < 0.1, "{change} dB");
 }
 
+/// The EQ's VST3 class as a host names it: `mxm_vst3_host`'s prefix and its `moduleinfo.json` CID.
+const VST3_ID: &str = "vst3:18E77858447698700CE2E56DD9FAC675";
+
+/// This plugin's VST3 release bundle beside its CLAP, or `None` when it has not been built.
+fn eq_n_vst3() -> Option<PathBuf> {
+    let found = eq_n()
+        .map(|clap| clap.with_extension("vst3"))
+        .filter(|vst3| vst3.exists());
+    if found.is_none() {
+        eprintln!("skipping the VST3: run `cargo xtask bundle mxm-fx-eq-n --release`");
+    }
+    found
+}
+
+/// The plugin's state, nice-plug's JSON: under the CLAP its whole stream after a length, under the
+/// VST3 `mxm_vst3_host`'s blob's component part (`MXV3`, a version, then each part's length).
+fn state_of(instance: &mut PluginInstance<MxmHost>, vst3: bool) -> Value {
+    if !vst3 {
+        return save_state(instance);
+    }
+    let state: PluginState = instance
+        .plugin_shared_handle()
+        .get_extension()
+        .expect("state extension");
+    let mut blob = Vec::new();
+    state
+        .save(&mut instance.plugin_handle(), &mut blob)
+        .expect("state saves");
+    assert_eq!(&blob[..4], b"MXV3");
+    let length = u64::from_le_bytes(blob[8..16].try_into().expect("a part's length")) as usize;
+    serde_json::from_slice(&blob[16..16 + length]).expect("uncompressed nice-plug state")
+}
+
+/// `value` restored, as [`state_of`] frames it, the controller's part empty; the host's refusal
+/// as an error.
+fn restore(
+    instance: &mut PluginInstance<MxmHost>,
+    value: &Value,
+    vst3: bool,
+) -> Result<(), String> {
+    let json = serde_json::to_vec(value).expect("state JSON");
+    let mut bytes = Vec::new();
+    if vst3 {
+        bytes.extend_from_slice(b"MXV3");
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(json.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&json);
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+    } else {
+        bytes.extend_from_slice(&(json.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&json);
+    }
+    let state: PluginState = instance
+        .plugin_shared_handle()
+        .get_extension()
+        .expect("state extension");
+    state
+        .load(&mut instance.plugin_handle(), &mut &bytes[..])
+        .map_err(|error| format!("{error:?}"))
+}
+
 /// **A restore that reads back changed keeps its bands** (plan §7.8): nice-plug rolls back a whole
 /// restore when a persisted field reads back other than it was saved without saying so. One EQ's
 /// state into a second in the same process, as a duplicated track has it: the second takes a new
 /// id and keeps the band. Then a state whose view settings and learn are from before fields they
-/// now have: each band still comes back.
+/// now have: each band still comes back. **A state a field refuses is refused whole**, the bands as
+/// they were. Through the CLAP and, as DaVinci Resolve loads it, the VST3.
 #[test]
 fn a_restore_that_reads_back_changed_keeps_its_bands() {
     let Some(effect) = eq_n() else {
         return;
     };
-    let effects = [(effect.as_path(), EFFECT_ID), (effect.as_path(), EFFECT_ID)];
+    restore_reads_back_changed(&effect, EFFECT_ID, false);
+    if let Some(vst3) = eq_n_vst3() {
+        restore_reads_back_changed(&vst3, VST3_ID, true);
+    }
+}
+
+fn restore_reads_back_changed(effect: &Path, id: &str, vst3: bool) {
+    let format = if vst3 { "VST3" } else { "CLAP" };
+    let effects = [(effect, id), (effect, id)];
     let mut harness =
         Harness::with_fx(&source(), SOURCE_ID, 1, &effects).expect("the chain builds");
-    let mut state = dynamic_bell(&mut harness.fx[0].instance);
-    load_state(&mut harness.fx[0].instance, &state);
-    let held = save_state(&mut harness.fx[0].instance)["fields"]["instance"].clone();
-    load_state(&mut harness.fx[1].instance, &state);
-    assert_eq!(text(&mut harness.fx[1].instance, "Band 1 type"), "Bell");
+    let mut state = state_of(&mut harness.fx[0].instance, vst3);
+    let params = state["params"].as_object_mut().expect("parameter map");
+    params.insert("type_1".into(), json!({"i32": 1}));
+    params.insert("freq_1".into(), json!({"f32": 262.0}));
+    restore(&mut harness.fx[0].instance, &state, vst3).expect("the state loads");
+    let held = state_of(&mut harness.fx[0].instance, vst3)["fields"]["instance"].clone();
+    restore(&mut harness.fx[1].instance, &state, vst3)
+        .unwrap_or_else(|error| panic!("{format}: a taken id refused the state: {error}"));
+    assert_eq!(
+        text(&mut harness.fx[1].instance, "Band 1 type"),
+        "Bell",
+        "{format}"
+    );
     assert_ne!(
-        save_state(&mut harness.fx[1].instance)["fields"]["instance"],
+        state_of(&mut harness.fx[1].instance, vst3)["fields"]["instance"],
         held,
-        "the id was taken"
+        "{format}: the id was taken"
     );
 
     let older = [
@@ -513,13 +591,29 @@ fn a_restore_that_reads_back_changed_keeps_its_bands() {
         fields.insert(key.into(), saved);
         let params = state["params"].as_object_mut().expect("parameter map");
         params.insert("type_1".into(), json!({"i32": kind}));
-        load_state(&mut harness.fx[0].instance, &state);
+        restore(&mut harness.fx[0].instance, &state, vst3)
+            .unwrap_or_else(|error| panic!("{format} {key}: refused: {error}"));
         assert_eq!(
             text(&mut harness.fx[0].instance, "Band 1 type"),
             shape,
-            "{key}"
+            "{format} {key}"
         );
     }
+
+    // A field that cannot be read: refused, and the high shelf stays.
+    let fields = state["fields"].as_object_mut().expect("persisted fields");
+    fields.insert("match-to".into(), json!("not a target"));
+    let params = state["params"].as_object_mut().expect("parameter map");
+    params.insert("type_1".into(), json!({"i32": 4}));
+    assert!(
+        restore(&mut harness.fx[0].instance, &state, vst3).is_err(),
+        "{format}: a field refused the state"
+    );
+    assert_eq!(
+        text(&mut harness.fx[0].instance, "Band 1 type"),
+        "High shelf",
+        "{format}: rolled back whole"
+    );
     harness.shutdown();
 }
 

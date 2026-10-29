@@ -1,9 +1,13 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
-**Revision 41 — As a VST3 the editor never hands the host a state** (2026-10-29; §4, §7.6).
-Resolve froze when the voice-over's EQ marked the project dirty: nice-plug's VST3 wrapper waits on
-the audio thread for such a state, for ever while the host runs no block. The editor no longer
-calls it as a VST3 (plugin `NOTES.md`). **Built** (2026-10-29).
+**Revision 41 — The VST3 wrapper fixed for Resolve** (2026-10-29; §4, §7.6). Resolve froze when
+the voice-over's EQ marked the project dirty, and that EQ kept no edit: nice-plug's VST3 wrapper
+waited on the audio thread for an editor's state, and applied an edit only through a block, both
+without end while the host kept the plugin processing and ran no block. A code review with a second
+model (`/agent-loop`) found these and four more in the fork's VST3 wrapper, fixed there on a review
+branch: the dirty-only transaction and the state transaction ported from the CLAP wrapper, edits
+applied once no block has come for a while, the processing mode read before it is stored, and the
+side-chain bus indexed within the host's buses. **Built** (2026-10-29), not yet published.
 **Revision 40 — Reset in the app bar** (2026-10-29; §5.4). The owner: *"I would rather just have a
 "reset" button up here"*, beside Undo. Reset writes Init as one undo action. **Built**
 (2026-10-29).
@@ -135,7 +139,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
-| 41 | **As a VST3 the editor never hands the host a state** (2026-10-29), §4, §7.6, from Resolve freezing: `EqApp::mark_dirty` skips `set_state` under the VST3 wrapper, whose handoff waits on the audio thread without end; the view-settings test holds it |
+| 41 | **The VST3 wrapper fixed for Resolve** (2026-10-29), §4, §7.6, from Resolve freezing and the voice-over's EQ keeping no edit: nice-plug's VST3 wrapper on a review branch (its `PATCHES.md`); `a_restore_that_reads_back_changed_keeps_its_bands` through the VST3 too |
 | 40 | **Reset in the app bar** (2026-10-29), §5.4, from the owner: Reset before Undo, Init's values as one undo action (`EqApp::reset`); `reset_empties_the_eq_in_one_undo_step` |
 | 39 | **A restore that reads back changed keeps its bands** (2026-10-29), §4, §7.6, §7.8, from the owner's empty EQ in Resolve: the `instance`, `view` and `match-learned` fields tell nice-plug's wrapper when they install other than what was saved, so it no longer rolls the whole restore back; the host test `a_restore_that_reads_back_changed_keeps_its_bands` |
 | 38 | **Solo and Preview play whenever the editor is open** (2026-10-29), §5.2, §7.6, from the owner's trial in Resolve, which says offline as it plays: the shell's offline gate on both removed, decision 50 revised |
