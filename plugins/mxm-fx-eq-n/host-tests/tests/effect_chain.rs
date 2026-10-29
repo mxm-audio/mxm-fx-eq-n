@@ -617,6 +617,76 @@ fn restore_reads_back_changed(effect: &Path, id: &str, vst3: bool) {
     harness.shutdown();
 }
 
+/// **A refused state leaves the sound as it was** (VST3 review, 2026-10-29): a ringing bell under
+/// a held note, a state a field refuses loaded between two blocks, and the render goes on to the
+/// bit as if nothing had been loaded: no reactivation, no reset. Through the CLAP and the VST3.
+#[test]
+fn a_refused_state_leaves_the_sound_as_it_was() {
+    let Some(effect) = eq_n() else {
+        return;
+    };
+    refused_state_leaves_the_sound(&effect, EFFECT_ID, false);
+    if let Some(vst3) = eq_n_vst3() {
+        refused_state_leaves_the_sound(&vst3, VST3_ID, true);
+    }
+}
+
+fn refused_state_leaves_the_sound(effect: &Path, id: &str, vst3: bool) {
+    let render = |refuse: bool| -> Vec<f32> {
+        let mut harness =
+            Harness::with_fx(&source(), SOURCE_ID, 1, &[(effect, id)]).expect("the chain builds");
+        let mut state = state_of(&mut harness.fx[0].instance, vst3);
+        let params = state["params"].as_object_mut().expect("parameter map");
+        params.insert("type_1".into(), json!({"i32": 1}));
+        params.insert("freq_1".into(), json!({"f32": 262.0}));
+        params.insert("gain_1".into(), json!({"f32": 12.0}));
+        params.insert("q_1".into(), json!({"f32": 8.0}));
+        restore(&mut harness.fx[0].instance, &state, vst3).expect("the bell loads");
+        let mut refused = state.clone();
+        refused["fields"]
+            .as_object_mut()
+            .expect("persisted fields")
+            .insert("match-to".into(), json!("not a target"));
+        refused["params"]
+            .as_object_mut()
+            .expect("parameter map")
+            .insert("gain_1".into(), json!({"f32": -12.0}));
+        let mut output = Vec::with_capacity(200 * BLOCK * CHANNELS);
+        for block in 0..200 {
+            if block == 2 {
+                assert!(harness.push_at(
+                    0,
+                    0,
+                    Payload::NoteOn {
+                        channel: 0,
+                        key: 60,
+                        velocity: 100.0 / 127.0,
+                    },
+                ));
+            }
+            if refuse && block == 60 {
+                assert!(
+                    restore(&mut harness.fx[0].instance, &refused, vst3).is_err(),
+                    "the state is refused"
+                );
+            }
+            output.extend_from_slice(harness.render(BLOCK));
+        }
+        harness.shutdown();
+        output
+    };
+    let format = if vst3 { "VST3" } else { "CLAP" };
+    let (heard, untouched) = (render(true), render(false));
+    assert!(
+        untouched.iter().any(|sample| *sample != 0.0),
+        "the note sounds"
+    );
+    assert!(
+        heard == untouched,
+        "{format}: the refused state changed the sound"
+    );
+}
+
 /// **The instance id is the host's state, never a preset's** (plan §7.8): restored, it is saved
 /// again as it came.
 #[test]

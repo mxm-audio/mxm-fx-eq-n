@@ -9,7 +9,7 @@
 //! which starts a new undo epoch (plan §5.4).
 
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use nice_plug::params::persist::PersistentField;
 use serde::{Deserialize, Serialize};
@@ -212,6 +212,10 @@ impl Default for ViewSettings {
 pub struct ViewField {
     settings: RwLock<ViewSettings>,
     restores: AtomicU64,
+    /// The last restore set, not yet counted: counted when [`restores`](Self::restores) is read or
+    /// the next restore is set, and dropped if a refused state's rollback sets the field first, so
+    /// a refused state starts no new undo epoch (VST3 review, 2026-10-29).
+    uncounted: AtomicBool,
 }
 
 impl ViewField {
@@ -230,19 +234,29 @@ impl ViewField {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
     }
 
-    /// How many times a host has restored the plugin's state.
+    /// How many times a host has restored the plugin's state, a refused one not counted.
     pub fn restores(&self) -> u64 {
-        self.restores.load(Ordering::Acquire)
+        if self.uncounted.swap(false, Ordering::AcqRel) {
+            self.restores.fetch_add(1, Ordering::AcqRel) + 1
+        } else {
+            self.restores.load(Ordering::Acquire)
+        }
     }
 }
 
 impl<'a> PersistentField<'a, ViewSettings> for ViewField {
     /// A host's restore: the wrapper calls this only when it deserialises saved state. Settings
     /// saved before one existed read back with its default: told to the wrapper, which otherwise
-    /// rolls back the whole restore.
+    /// rolls back the whole restore. A refused state's rollback (`nice_plug::wrapper::rolling_back`)
+    /// puts back what the attempt replaced, and the attempt is no restore either.
     fn set(&self, new_value: ViewSettings) {
         self.edit(new_value);
-        self.restores.fetch_add(1, Ordering::AcqRel);
+        if nice_plug::wrapper::rolling_back() {
+            self.uncounted.store(false, Ordering::Release);
+        } else if self.uncounted.swap(true, Ordering::AcqRel) {
+            // An earlier restore nobody read yet: counted now, before this one may be refused.
+            self.restores.fetch_add(1, Ordering::AcqRel);
+        }
         nice_plug::wrapper::accept_canonicalized_persistent_field(crate::params::VIEW_KEY);
     }
 
@@ -271,6 +285,18 @@ mod tests {
         PersistentField::set(&field, ViewSettings::default());
         assert_eq!(field.restores(), 1);
         assert!(field.get().analyser);
+
+        // A refused state: its set, then the rollback's putting back what it replaced. No restore.
+        PersistentField::set(&field, quiet);
+        nice_plug::wrapper::as_rollback(|| PersistentField::set(&field, ViewSettings::default()));
+        assert_eq!(field.restores(), 1, "a refused state is no restore");
+        assert!(field.get().analyser);
+
+        // Two restores unread, the second refused: the first still counts.
+        PersistentField::set(&field, quiet);
+        PersistentField::set(&field, ViewSettings::default());
+        nice_plug::wrapper::as_rollback(|| PersistentField::set(&field, quiet));
+        assert_eq!(field.restores(), 2);
     }
 
     #[test]
