@@ -15,6 +15,8 @@ pub struct Host {
     pub log: Mutex<Vec<(char, ParamPtr)>>,
     pub states: Mutex<usize>,
     pub delayed: std::sync::atomic::AtomicBool,
+    /// Whether it hosts the VST3 rather than the CLAP.
+    pub vst3: std::sync::atomic::AtomicBool,
     queued: Mutex<Vec<(ParamPtr, f32)>>,
 }
 
@@ -39,7 +41,11 @@ unsafe impl Sync for Host {}
 
 impl nice_plug::context::gui::GuiContextInner for Host {
     fn plugin_api(&self) -> nice_plug::context::PluginApi {
-        nice_plug::context::PluginApi::Clap
+        if self.vst3.load(std::sync::atomic::Ordering::Relaxed) {
+            nice_plug::context::PluginApi::Vst3
+        } else {
+            nice_plug::context::PluginApi::Clap
+        }
     }
     fn request_restart(&self) {}
     unsafe fn raw_begin_set_parameter(&self, param: ParamPtr) {
@@ -3362,6 +3368,21 @@ fn find_s_toggles_follow_their_rules_and_amount_is_view_state() {
     assert_eq!(rig.app.params.view.get().amount, 50);
     assert_eq!(*rig.host.states.lock().unwrap(), states + 1, "marked dirty");
     assert!(rig.app.frozen.is_some(), "an Amount edit ends no freeze");
+
+    // As a VST3 the state is never handed over: nice-plug's VST3 wrapper would wait on the audio
+    // thread for it, for ever while the host runs no block (Resolve, 2026-10-29).
+    rig.host
+        .vst3
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    settings.amount = 60;
+    rig.app.set_view(settings);
+    rig.press(Vec::new());
+    assert_eq!(rig.app.params.view.get().amount, 60, "kept all the same");
+    assert_eq!(
+        *rig.host.states.lock().unwrap(),
+        states + 1,
+        "not handed over"
+    );
 }
 
 /// **A larger Amount proposes deeper, and with every slot in use nothing is proposed** (plan
@@ -4489,6 +4510,33 @@ fn delete_and_duplicate_take_the_whole_selection() {
     rig.hold(&[duplicate], &[Key::ArrowUp]);
     assert_eq!(rig.app.selection(), vec![slots[0], slots[1]]);
     assert_eq!(rig.depth(), depth, "nothing copied, no undo step");
+}
+
+/// **Reset empties the EQ in one undo step** (the owner, 2026-10-29): every band Off and the
+/// output back to Init's, which Undo takes back whole; at Init it has nothing to write.
+#[test]
+fn reset_empties_the_eq_in_one_undo_step() {
+    let mut rig = Rig::new();
+    let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
+    rig.app.select_set(&[slots[0], slots[2]], Some(slots[2]));
+    let output = rig.app.params.param(OUTPUT_INDEX).default_normalised();
+    rig.app.instant(&[(OUTPUT_INDEX, 0.7)]);
+    rig.press(Vec::new());
+    let depth = rig.depth();
+    rig.app.reset();
+    rig.press(Vec::new());
+    assert!((0..SLOTS).all(|slot| rig.band(slot).shape.is_none()));
+    assert_eq!(rig.app.normalised_now(OUTPUT_INDEX), output);
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+    assert!(
+        rig.app.reset_writes().is_empty(),
+        "at Init, nothing to write"
+    );
+
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert!(slots.iter().all(|&slot| rig.band(slot).shape.is_some()));
+    assert_eq!(rig.app.normalised_now(OUTPUT_INDEX), 0.7);
 }
 
 /// **Copy, cut and paste** (plan §7.9, decision 46): every field copied, pasted in slot order onto

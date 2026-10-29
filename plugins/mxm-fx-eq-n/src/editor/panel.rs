@@ -14,6 +14,10 @@ use crate::view::ViewSettings;
 /// How long a pause in the wheel ends its gesture.
 pub const WHEEL_GESTURE_SECONDS: f64 = 0.4;
 
+/// Reset's hover, in the app bar beside Undo.
+const RESET_DESCRIPTION: &str = "Empties the EQ: every band removed, and Output, Gain scale, \
+     Phase and Auto gain as new. Undo brings it all back.";
+
 impl EqApp {
     /// Whether another surface owns the keyboard this frame: a value or a reference's name being
     /// typed, or the preset browser. The cursor reads text fields and open menus itself.
@@ -238,6 +242,8 @@ impl EqApp {
             let history = history::lock(&self.history);
             (history.can_undo(), history.can_redo())
         };
+        let can_reset = !self.reset_writes().is_empty();
+        let mut reset = false;
         let mut undo = false;
         let mut redo = false;
         mxm_ui::AppBar::new(crate::NAME).show_with(
@@ -255,6 +261,10 @@ impl EqApp {
                     );
                     self.finish_replacing(ui.ctx());
                 }
+                reset = ui
+                    .add_enabled(can_reset, egui::Button::new("Reset"))
+                    .on_hover_text(RESET_DESCRIPTION)
+                    .clicked();
                 undo = ui
                     .add_enabled(can_undo, egui::Button::new("Undo"))
                     .on_hover_text("Takes back the last change to the bands.")
@@ -269,6 +279,9 @@ impl EqApp {
                 mxm_ui::shell::editor_theme_control(ui);
             },
         );
+        if reset {
+            self.reset();
+        }
         if undo {
             self.undo();
         }

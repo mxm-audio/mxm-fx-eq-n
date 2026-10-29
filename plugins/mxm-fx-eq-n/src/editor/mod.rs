@@ -2004,6 +2004,33 @@ impl EqApp {
         }
     }
 
+    /// What Reset writes: every parameter not at Init's value, to it, as the preset bar's Init
+    /// patch writes them (`mxm_preset::ui::init_patch`); none when the EQ is at Init already.
+    pub(crate) fn reset_writes(&self) -> Vec<(usize, f32)> {
+        (0..crate::params::PARAMETERS)
+            .filter_map(|index| {
+                let default = self.erased(index).default_normalised();
+                (self.normalised_now(index) != default).then_some((index, default))
+            })
+            .collect()
+    }
+
+    /// Reset, beside Undo (the owner, 2026-10-29: *"I would rather just have a "reset" button up
+    /// here"*): the EQ back to Init, empty, as one undo step, so Undo brings it all back, which
+    /// the preset bar's Init, a new undo epoch, cannot. The bar then names no preset, as after its
+    /// Init. What Match learned, what it matches to and the view stay: the project's, never a
+    /// preset's.
+    pub(crate) fn reset(&mut self) {
+        let writes = self.reset_writes();
+        if writes.is_empty() {
+            return;
+        }
+        self.close_open();
+        self.instant(&writes);
+        self.select_none();
+        mxm_preset::identity::mark_none(self.params.as_ref());
+    }
+
     pub(crate) fn set_shape(&mut self, slot: usize, shape: Shape) {
         self.close_open();
         let index = band_index(slot, Field::Type);
@@ -2516,9 +2543,15 @@ impl EqApp {
     }
 
     /// Tells the host the project changed outside its parameters: view state, the reference
-    /// chosen.
+    /// chosen. **Never as a VST3**: nice-plug's VST3 wrapper hands the state to the audio thread
+    /// and waits until a block takes it, for ever while the host has the plugin processing but
+    /// runs no block, and the window's thread is the host's. Resolve froze so on the voice-over's
+    /// EQ (the owner, 2026-10-29). A VST3 host reads the state when it saves; only its mark of
+    /// unsaved changes misses a change to these alone.
     fn mark_dirty(&self) {
-        if let Some(host) = &self.host {
+        if let Some(host) = &self.host
+            && !matches!(host.plugin_api(), nice_plug::context::PluginApi::Vst3)
+        {
             // The parameter-free transaction: the wrapper marks the project dirty and restores
             // nothing (nice-plug's PATCHES.md, *GUI-authored state dirty*).
             host.set_state(PluginState {

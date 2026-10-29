@@ -244,7 +244,9 @@ The full text of each follows, in *The editor in full*.
   binding needed no observer. BACK during a drag puts the band back (`mxm_ui::drag::cancelled`),
   as the shared controls do. An action is the parameters one gesture changed; undo writes their
   "before" values as one gesture, redo their "after" values: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or
-  Ctrl+Y, and the app bar's buttons. **Epochs**: whatever the preset bar writes (a load, Init) is a
+  Ctrl+Y, and the app bar's buttons. **Reset**, before them, writes Init's values as one action,
+  not a replacement, so Undo takes it back, which the bar's Init cannot (the owner, 2026-10-29).
+  **Epochs**: whatever the preset bar writes (a load, Init) is a
   whole-patch replacement, and a host restore is counted by the view field's `set`; either clears
   the history, and **ends a gesture still open where the host has it, writing nothing**
   (`abandon_gesture`), so BACK can put back nothing from before. That is every gesture the
@@ -625,6 +627,26 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
   a restore that reads back changed keeping its bands, and the player's bypass bit-exact dry. They
   read this repository's own `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle
   there first).
+
+## Marking the project dirty, never as a VST3
+
+A change to view state, a learn or what Match is matched to is no parameter, so the editor tells
+the host through `GuiContext::set_state`, a state with no parameters (`EqApp::mark_dirty`). The
+CLAP wrapper takes that as dirty-only and calls the host's `mark_dirty` (nice-plug's `PATCHES.md`,
+*GUI-authored state dirty*). The VST3 wrapper has no such path: while the host has the plugin
+processing, it hands the state to the audio thread over a channel and waits until a block takes it
+and hands it back, retrying a one-second send without end. A host that keeps a plugin processing
+but runs no block, as Resolve did with the voice-over's EQ, so leaves the window's thread, the
+host's own, waiting for ever: Resolve stopped responding and was closed (the owner, 2026-10-29).
+So as a VST3 the editor does not call it; the host reads the state when it saves (Resolve saves
+every few seconds), and only its mark of unsaved changes misses such a change. The same wait
+reaches every plugin that calls `set_state` from its editor in a VST3 host; the fix for all of them
+is the VST3 wrapper's, in the fork.
+
+The same host shows a second sign: the VST3 wrapper changes a parameter the editor writes only when
+the plugin is not processing, else it waits for the host to pass the change back in a block. While
+no block runs, a band drawn reads back unchanged, and the editor stops showing it after
+`history::PENDING_FRAMES`: it seems to vanish.
 
 ## A restore that reads back changed
 

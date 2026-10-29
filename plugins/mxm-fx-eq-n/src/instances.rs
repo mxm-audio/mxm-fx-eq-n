@@ -327,7 +327,9 @@ mod tests {
         (instance, tap, identity)
     }
 
-    /// An instance joins the registry when it is made and leaves it when it is dropped.
+    /// An instance joins the registry when it is made and leaves it when it is dropped. Another
+    /// test listing the registry at once holds every entry for a moment, so the leaving is waited
+    /// for, a second at most.
     #[test]
     fn an_instance_joins_and_leaves() {
         let (instance, _tap, identity) = joined();
@@ -335,6 +337,10 @@ mod tests {
         assert_eq!(id, identity.get());
         assert!(find(id).is_some_and(|found| Arc::ptr_eq(&found, &instance)));
         drop(instance);
+        let start = std::time::Instant::now();
+        while find(id).is_some() && start.elapsed() < std::time::Duration::from_secs(1) {
+            std::thread::yield_now();
+        }
         assert!(find(id).is_none());
     }
 
