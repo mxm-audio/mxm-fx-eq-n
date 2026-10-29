@@ -1842,9 +1842,9 @@ impl EqApp {
         }
 
         // Match's proposals (plan §7.6): the curve they would make, dashed over the EQ's, and a
-        // hollow diamond at each band's centre and gain with its frequency and gain, told apart
-        // from Find's triangles by shape, never hue; a label that would overlap a stronger one's
-        // is not drawn.
+        // hollow diamond at each band's centre and gain, told apart from Find's triangles by
+        // shape, never hue. Only the diamond under the pointer is labelled with its frequency and
+        // gain: eight labels buried the lines (the owner, 2026-10-29).
         if !self.match_bands.is_empty() {
             let current = self
                 .match_curve
@@ -1866,40 +1866,43 @@ impl EqApp {
                     ));
                 }
             }
-            let font = egui::FontId::proportional(11.0);
-            let marks: Vec<(Pos2, String, Rect)> = self
+            let marks: Vec<Pos2> = self
                 .match_bands
                 .iter()
-                .map(|band| {
-                    let at = match_marker(axes, band);
-                    let text = match_text(band);
-                    let size = painter
-                        .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
-                        .size();
-                    (
-                        at,
-                        text,
-                        peak_label(axes, at - vec2(0.0, DIAMOND_RADIUS), size),
-                    )
-                })
+                .map(|band| match_marker(axes, band))
                 .collect();
-            let rects: Vec<Rect> = marks.iter().map(|(_, _, rect)| *rect).collect();
-            let drawn = grab::unobstructed(&rects, None);
-            for ((at, text, rect), drawn) in marks.into_iter().zip(drawn) {
+            for &at in &marks {
                 painter.add(Painted::convex_polygon(
                     match_diamond(at).to_vec(),
                     tokens.surface_1,
                     Stroke::new(EMPHASIS_STROKE, tokens.text_primary),
                 ));
-                if drawn {
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        text,
-                        font.clone(),
-                        tokens.text_primary,
-                    );
-                }
+            }
+            let pointer = ui
+                .input(|input| input.pointer.hover_pos())
+                .filter(|at| rect.contains(*at));
+            if let Some((band, at)) = pointer.and_then(|pointer| {
+                self.match_bands
+                    .iter()
+                    .zip(marks)
+                    .map(|(band, at)| (band, at, at.distance(pointer)))
+                    .filter(|(_, _, distance)| *distance <= HIT_RADIUS)
+                    .min_by(|a, b| a.2.total_cmp(&b.2))
+                    .map(|(band, at, _)| (band, at))
+            }) {
+                let font = egui::FontId::proportional(11.0);
+                let text = match_text(band);
+                let size = painter
+                    .layout_no_wrap(text.clone(), font.clone(), tokens.text_primary)
+                    .size();
+                let label = peak_label(axes, at - vec2(0.0, DIAMOND_RADIUS), size);
+                painter.text(
+                    label.center(),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    font,
+                    tokens.text_primary,
+                );
             }
         }
 

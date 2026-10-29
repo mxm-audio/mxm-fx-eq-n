@@ -420,10 +420,14 @@ The full text of each follows, in *The editor in full*.
   holds what it played for `PREVIEW_HOLD_FRAMES`, while the host takes the bands written.
   Learn and a choice end Find and Freeze;
   Find and Freeze end Learn, keeping what it learned, and hide the proposals. It proposes bells and
-  shelves for the free slots, the EQ as heard counted; dashed curve and labelled hollow diamonds on
-  the graph; **Apply** writes them all, every field, one undo step, only on the basis they were
-  fitted on, what was learned and what it is matched to part of it. **Amount** (40 %) and
-  **Detail** (8 bands) are view state, saved. Its fits run on the same worker, one job at a time
+  shelves for the free slots, the EQ as heard counted; dashed curve and hollow diamonds on the
+  graph, the one under the pointer labelled; **Apply** writes them all, every field, one undo step,
+  only on the basis they were fitted on, what was learned and what it is matched to part of it.
+  **Amount** (`DEFAULT_AMOUNT` up to `MAX_AMOUNT`, past the whole difference) and **Detail**
+  (`DEFAULT_DETAIL` bands) are view state, saved. **Why Amount starts at the whole difference**:
+  at the mastering tools' 40 % a voice-over's match was hardly heard (the owner, 2026-10-29: *"I
+  would have guessed 100% and then it could go up and down"*), and decision 49's shrinking already
+  takes back what is unsure. Its fits run on the same worker, one job at a time
   (`editor::Task`); learning stays inside `spectrum::BUDGET_MS` (`match_cost`).
 - **Saved references** (plan §7.6, decision 48; `references.rs`): **Save** names this track's
   output as learned, in a text field where Match to was, a name taken replaced only on a second

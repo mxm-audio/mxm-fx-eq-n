@@ -52,8 +52,11 @@ pub use crate::learned::Learned;
 
 /// How much sound each half of a learn takes before the other does, in seconds heard.
 pub const CHUNK_SECONDS: f64 = 1.0;
-/// Amount's default, in percent (decision 33): Ozone advises under 50 %, Melda 30–40 % (§10.3).
-pub const DEFAULT_AMOUNT: u8 = 40;
+/// Amount's default, in percent (decision 33): the whole difference, as Logic's Apply starts, so it
+/// can be turned down or up from there (the owner, 2026-10-29).
+pub const DEFAULT_AMOUNT: u8 = 100;
+/// Amount's most, in percent: twice the difference, as far as Logic's Apply reaches.
+pub const MAX_AMOUNT: u8 = 200;
 /// Detail's default, at most how many bands (decision 33): Ramos & López's error was about 0.5 dB
 /// by five to ten sections (§10.4).
 pub const DEFAULT_DETAIL: u8 = 8;

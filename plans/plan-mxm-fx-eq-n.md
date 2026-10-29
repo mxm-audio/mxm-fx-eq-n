@@ -1,5 +1,11 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 37 — Match's Amount starts at 100 %, and the graph labels only the band pointed at**
+(2026-10-29; §7.6, decision 33). The owner, having matched two voice-overs: *"why does it start at
+40% ?? I would have guessed 100% and then it could go up and down. At 40% i could hardly hear a
+difference"*, and *"this is a kind of busy display"*. Amount now runs 0–200 % from 100 %, as Logic's
+Apply, and a proposed band's frequency and gain are written only under the pointer. **Built**
+(2026-10-29, F5.12).
 **Revision 36 — An unsure difference is shrunk, never left out** (2026-10-28; §7.6, decision 49).
 The owner, matching a voice-over in Resolve, found one +3 dB bell proposed, nothing at 40 %, and the
 lines' shape still while only their drawing changed: *"that seems like too little"*. A voice's
@@ -111,6 +117,7 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
+| 37 | **Match's Amount starts at 100 %, and the graph labels only the band pointed at** (2026-10-29), §7.6, from the owner's trial: decision 33's Amount 0–200 %, 100 % by default; a proposed band's label drawn only under the pointer |
 | 36 | **An unsure difference is shrunk, never left out** (2026-10-28), §7.6, from the owner's trial in Resolve: decision 49 rewritten, each difference's shape shrunk by its spread, `s·s²/(s² + u²)`; the learned lines solid; the card's reading the bands proposed; Apply's hover why it is disabled |
 | 35 | **Match settles by frequency, and is heard before it is applied** (2026-10-28), §7.6, the owner's asking: no fixed 10 s, each frequency counting once the halves of both learns agree there (decision 49); Preview, the proposals played in the free slots as a transient command (decision 50); the card five rows |
 | 34 | **One learn per EQ, matched to another's** (2026-10-28), §7.6, the owner's asking: Learn learns this track, its input and its output, kept with the project; Match to chooses another EQ that has learned, or a saved reference (decision 31, rewritten; 48); the From list, the two learns and learning another track while it plays gone; the card four rows |
@@ -174,7 +181,7 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 29 | **One Amount, 20 % by default**: each cut takes that share of its peak's prominence, at most 12 dB; the alternative starts at 50 % (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
 | 31 | **Each EQ learns its own track, and is matched to another's**, as every maker's match works (Pro-Q's instances, Ozone's snapshots, §10.1): one toggle, **Learn**, learning this track's input before the EQ and its output after it anew while on, and off keeping them with the project; **Match to** chooses another EQ that has learned, by its track's name (§7.8), or a saved reference; the alternative learned the reference and the track in one window, from this track, the side chain or another track while that one played (§7.6) | **Settled** (owner, 2026-10-28: *"yes, rebuild it that way"*) | F5.9 |
 | 32 | **The fit writes only into free slots, the EQ as heard counted**, so the player's bands never change; the alternative replaces the EQ, every band refitted (§7.6) | **Settled** (owner, 2026-10-15) | F5.1 |
-| 33 | **One Amount, 40 % by default, and Pro-Q's detail control, a band count the player sets**; the proposal had no detail control, the fit stopping only where what is left is just audible or the slots run out (§7.6) | **Settled** (owner, 2026-10-15: the alternative) | F5.2 |
+| 33 | **One Amount, 0–200 % from 100 %, and Pro-Q's detail control, a band count the player sets**; the proposal had no detail control, the fit stopping only where what is left is just audible or the slots run out, and its Amount ran 0–100 % from 40 %, the mastering tools' advice, which left a voice-over's match hardly heard (§7.6) | **Settled** (owner, 2026-10-15: the alternative; 2026-10-29: *"I would have guessed 100% and then it could go up and down"*) | F5.2, F5.12 |
 | 34 | **The Match card goes under the Band card** in the first column, which is then the taller, the window opening hugged to it (§7.6) | **Settled** (owner, 2026-10-28: *"could the match card not be under the band card?"*) | F5.8 |
 | 35 | **Two phase modes, Zero latency and Linear phase**; the alternative adds Pro-Q's Natural phase, the analogue phase at a small latency, which Zero latency already follows below the top octave (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
 | 36 | **Three resolutions for Linear phase, Low, Medium and High, Medium by default** (171 ms kernel, 91 ms latency at 48 kHz); the alternative is one fixed resolution, Medium (§7.7) | **Settled** (owner, 2026-10-15) | F6.1 |
@@ -1424,22 +1431,25 @@ fitted on the current basis** — the EQ, the free slots, Amount and Detail as t
 heard moves on with every frame, and a fit half a second old is still the match — and is
 disabled while they are not.
 
-**How much** (decision 33). One **Amount**, 0–100 %, **40 % by default** (Ozone: keep it under
-50 %; Melda suggests 30–40 %; §10.3): `D` scaled in dB, as Pro-Q's gain scale and Logic's Apply
-scale theirs, not a dry/wet (§10.3, *Derived*). **Detail**, Pro-Q's control, is **at most how many
+**How much** (decision 33). One **Amount**, **0–200 %, 100 % by default**, the whole difference,
+turned down or up from there as Logic's Apply is (§10.3): `D` scaled in dB, as Pro-Q's gain scale
+and Logic's Apply scale theirs, not a dry/wet (§10.3, *Derived*). Ozone's advice to keep it under
+50 %, and Melda's 30–40 %, are for mastering; a voice-over matched at 40 % was hardly heard to
+change (the owner, 2026-10-29), and an unsure difference is already shrunk (decision 49). **Detail**, Pro-Q's control, is **at most how many
 bands the match proposes**, 1–24, **8 by default** (Ramos & López's error was about 0.5 dB by five
 to ten sections, §10.4): since bands come in order of importance, a lower Detail keeps the most
 important ones, and the fit still stops where nothing left is just audible, so a higher Detail
 never adds an inaudible band. Amount and Detail are view state, saved with the analyser's settings
-(§4), Amount in whole percent: a project from before loads 40 % and 8, a change marks the project
+(§4), Amount in whole percent: a project from before loads 100 % and 8, a change marks the project
 dirty. What each EQ learned and what it is matched to are host state, saved with the project
 beside the view settings (`EqParams::learned`, `match_to`); the proposals are the editor's moment,
 never saved.
 
 **On the graph**, while Match has proposals: **the curve they would make**, dashed over the EQ's,
-as F4's, and each proposed band a **hollow diamond** at its centre and gain, labelled with its
-frequency and gain (`2.4 kHz +1.8 dB`), told apart from F4's triangles by shape, never hue; labels
-overlap by F3's rule. The proposals are one fit, so they are applied together: **Apply**, on the
+as F4's, and each proposed band a **hollow diamond** at its centre and gain, told apart from F4's
+triangles by shape, never hue; **only the diamond under the pointer is labelled** with its
+frequency and gain (`2.4 kHz +1.8 dB`), since eight labels at once buried the lines (the owner,
+2026-10-29: *"this is a kind of busy display"*). The proposals are one fit, so they are applied together: **Apply**, on the
 card, writes every proposal into the lowest free slots as one undo step, each slot's every field
 (`slot_writes`), a static, unkeyed Stereo bell or shelf. With every slot in use nothing is
 proposed and Match's hover says why.
@@ -1543,7 +1553,7 @@ the fit deterministic, the region rules' edges (a zero point, a region at each e
 the tie); a newer request superseding a waiting one, an older listen's result dropped, Apply
 refused on a stale basis; Learn's rules against Find, a freeze and the analyser, Find hiding the
 proposals and choosing again bringing them back; Apply one undo step, every field written over a stale Off slot; Amount and Detail
-saved, an old project at 40 % and 8, Match never saved; the Match card under the Band card, the
+saved, an old project at 100 % and 8, Match never saved; the Match card under the Band card, the
 opening size hugged to the first column, and the keyboard reaching it; the listening inside the analyser's 2 ms budget (§4) at 192 kHz.
 
 **Delivery** (tests at the end, one review over F5.1–F5.2):
@@ -1558,6 +1568,7 @@ opening size hugged to the first column, and the keyboard reaching it; the liste
 | **F5.5** | The learns: the matcher's reference and track learned apart, each held; the reference as cells; its three sources, another track watched while it is learned; a reset keeping a learn; the fit reading cells, unread ones unweighted. **Built** (2026-10-28) | Unit tests at the end |
 | **F5.6** | Saved references: the folder, the file and its version, Save and Replace, the list, *Missing*, Folder; the card's new rows; the chosen name saved with the project; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.7** | The owner by ear, in Resolve: one voice-over clip matched to another | Owner sign-off |
+| **F5.12** | Decision 33's Amount: 0–200 % (`matcher::MAX_AMOUNT`), 100 % by default, a percent a fine step; a proposed band's label only under the pointer; the DOX: the plugin's `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-29) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.11** | Decision 49, rewritten: the difference's shape shrunk by its spread (`matcher::shrunk`), no cell left out for it; the learned lines solid; the card's reading the bands proposed, Apply's hover why it waits; the DOX: the plugin's `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.10** | Decisions 49 and 50: a learn's halves and spreads, kept and saved; the fit's weights by how settled each cell is, no fixed time; the learned lines faint where unsettled; Preview (`preview.rs`), the shell playing it in the Off slots; the card's five rows; the DOX: the plugin's `AGENTS.md` and `NOTES.md`, and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |
 | **F5.9** | Decision 31, rewritten again, and 48: one Learn per EQ, its input and its output kept with the project (`crate::learned`, the registry sharing it); Match to and its choices; the fit reading cells; the card's four rows; the DOX: the plugin's `AGENTS.md` and `NOTES.md` (*Match*), and this plan's status line and rows. **Built** (2026-10-28) | On Windows `cargo fmt --all -- --check`, `cargo clippy` on the plugin, `cargo test -p mxm-fx-eq-n` |

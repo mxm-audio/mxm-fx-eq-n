@@ -151,7 +151,7 @@ pub struct ViewSettings {
     /// freeze ([`ViewSettings::display`]).
     pub amount: u8,
     /// The EQ match's Amount (plan §7.6), in whole percent: the share of the difference from the
-    /// reference the match takes.
+    /// reference the match takes, up to `matcher::MAX_AMOUNT`.
     pub match_amount: u8,
     /// The EQ match's Detail (plan §7.6): at most how many bands it proposes, 1 to 24.
     pub match_detail: u8,
@@ -177,9 +177,9 @@ impl ViewSettings {
         f32::from(self.amount.min(100)) / 100.0
     }
 
-    /// The match's Amount as a share, 0 to 1.
+    /// The match's Amount as a share, 0 to 2.
     pub fn match_amount_share(self) -> f32 {
-        f32::from(self.match_amount.min(100)) / 100.0
+        f32::from(self.match_amount.min(crate::editor::matcher::MAX_AMOUNT)) / 100.0
     }
 
     /// The match's Detail, held inside 1 to 24.
@@ -285,8 +285,8 @@ mod tests {
             serde_json::from_str(r#"{"analyser":true,"show":"Both","side_chain":true}"#).unwrap();
         assert_eq!(before_f4.amount, 20);
         assert!(before_f4.side_chain);
-        // F5's Amount and Detail (plan §7.6): a project from before them loads 40 % and 8.
-        assert_eq!((before_f4.match_amount, before_f4.match_detail), (40, 8));
+        // F5's Amount and Detail (plan §7.6): a project from before them loads 100 % and 8.
+        assert_eq!((before_f4.match_amount, before_f4.match_detail), (100, 8));
         let changed = ViewSettings {
             match_amount: 70,
             match_detail: 3,

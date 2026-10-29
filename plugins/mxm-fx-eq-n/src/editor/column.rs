@@ -196,8 +196,8 @@ const MATCH_FULL_DESCRIPTION: &str =
     "Every band slot is in use, so no band can be proposed. Delete a band to make room.";
 const MATCH_NO_GAIN_DESCRIPTION: &str =
     "The gain scale is at 0 %, where a bell or a shelf does nothing, so no band is proposed.";
-const MATCH_AMOUNT_DESCRIPTION: &str =
-    "How much of the difference from the reference the match takes.";
+const MATCH_AMOUNT_DESCRIPTION: &str = "How much of the difference from the reference the match \
+     takes: at 100 % all of it, below less, above more than the difference.";
 const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
 const MATCH_HEARD_DESCRIPTION: &str = "How long this track has been learned, and how many bands \
@@ -259,14 +259,24 @@ impl ViewSlider {
     fn widest(self) -> &'static str {
         match self {
             ViewSlider::Detail => "24 bands",
-            _ => "100 %",
+            ViewSlider::MatchAmount => "200 %",
+            ViewSlider::FindAmount => "100 %",
+        }
+    }
+
+    /// An Amount's most, in percent: the whole travel.
+    fn percent_span(self) -> f64 {
+        match self {
+            ViewSlider::MatchAmount => f64::from(super::matcher::MAX_AMOUNT),
+            _ => 100.0,
         }
     }
 
     fn normalised(self, settings: &ViewSettings) -> f64 {
+        let span = self.percent_span();
         match self {
-            ViewSlider::FindAmount => f64::from(settings.amount.min(100)) / 100.0,
-            ViewSlider::MatchAmount => f64::from(settings.match_amount.min(100)) / 100.0,
+            ViewSlider::FindAmount => f64::from(settings.amount).min(span) / span,
+            ViewSlider::MatchAmount => f64::from(settings.match_amount).min(span) / span,
             ViewSlider::Detail => f64::from(settings.match_detail() - 1) / DETAIL_SPAN,
         }
     }
@@ -283,7 +293,14 @@ impl ViewSlider {
                 coarse_up: 4.0 / DETAIL_SPAN,
                 coarse_down: 4.0 / DETAIL_SPAN,
             },
-            _ => mxm_ui::control::Steps::DEFAULT,
+            // A percent fine and ten coarse, over whatever travel.
+            ViewSlider::MatchAmount => mxm_ui::control::Steps {
+                fine_up: 1.0 / self.percent_span(),
+                fine_down: 1.0 / self.percent_span(),
+                coarse_up: 10.0 / self.percent_span(),
+                coarse_down: 10.0 / self.percent_span(),
+            },
+            ViewSlider::FindAmount => mxm_ui::control::Steps::DEFAULT,
         }
     }
 
@@ -293,7 +310,7 @@ impl ViewSlider {
                 1 => "1 band".to_owned(),
                 bands => format!("{bands} bands"),
             },
-            _ => format!("{} %", (normalised * 100.0).round() as u32),
+            _ => format!("{} %", (normalised * self.percent_span()).round() as u32),
         }
     }
 
@@ -312,12 +329,13 @@ impl ViewSlider {
                     .is_finite()
                     .then(|| (number.round() - 1.0).clamp(0.0, DETAIL_SPAN) / DETAIL_SPAN)
             }
-            _ => parse_percent(typed),
+            _ => parse_percent(typed, self.percent_span()),
         }
     }
 
     fn write(self, settings: &mut ViewSettings, normalised: f64) {
-        let percent = (normalised * 100.0).round().clamp(0.0, 100.0) as u8;
+        let span = self.percent_span();
+        let percent = (normalised * span).round().clamp(0.0, span) as u8;
         match self {
             ViewSlider::FindAmount => settings.amount = percent,
             ViewSlider::MatchAmount => settings.match_amount = percent,
@@ -783,7 +801,7 @@ pub fn match_tree(choices: Vec<String>) -> Node<Leaf> {
         ]),
         selector_leaf(Leaf::MatchTo, "Match to", choices),
         tree::row(vec![
-            slider(Leaf::MatchAmount, "Amount", "100 %"),
+            slider(Leaf::MatchAmount, "Amount", "200 %"),
             slider(Leaf::Detail, "Detail", "24 bands"),
         ]),
         tree::row(vec![
@@ -793,10 +811,10 @@ pub fn match_tree(choices: Vec<String>) -> Node<Leaf> {
     ])
 }
 
-/// A typed Amount, `35`, `35%` or `35 %`, as a share; `None` for anything else.
-fn parse_percent(typed: &str) -> Option<f64> {
+/// A typed Amount, `35`, `35%` or `35 %`, as a share of `span` percent; `None` for anything else.
+fn parse_percent(typed: &str, span: f64) -> Option<f64> {
     let number: f64 = typed.trim().trim_end_matches('%').trim().parse().ok()?;
-    number.is_finite().then(|| (number / 100.0).clamp(0.0, 1.0))
+    number.is_finite().then(|| (number / span).clamp(0.0, 1.0))
 }
 
 const METER_PEAK_HOLD_SECONDS: f64 = 0.450;
