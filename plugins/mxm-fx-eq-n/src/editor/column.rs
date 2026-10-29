@@ -200,9 +200,13 @@ const MATCH_AMOUNT_DESCRIPTION: &str =
     "How much of the difference from the reference the match takes.";
 const DETAIL_DESCRIPTION: &str =
     "At most how many bands the match proposes. Fewer keeps the broadest differences.";
-const MATCH_HEARD_DESCRIPTION: &str =
-    "How long this track has been learned. Thirty seconds or more makes a steadier match.";
+const MATCH_HEARD_DESCRIPTION: &str = "How long this track has been learned, and how many bands \
+     the match proposes. Thirty seconds or more makes a steadier match.";
 const MATCH_APPLY_DESCRIPTION: &str = "Makes the proposed bands, in one step Undo takes back.";
+const MATCH_NOTHING_DESCRIPTION: &str = "Nothing to apply: what differs is less than you would hear \
+     at this Amount. Raise Amount, or learn longer for a surer match.";
+const MATCH_WAITING_DESCRIPTION: &str =
+    "The bands are being fitted again for the change; Apply waits for them.";
 const PREVIEW_DESCRIPTION: &str = "While on, plays the proposed bands as if applied, following \
      Amount and Detail as they move. Off plays the EQ as it is. Nothing is written until Apply.";
 const MATCH_AMOUNT_KEY: &str = "match amount";
@@ -1424,6 +1428,13 @@ impl EqApp {
             Leaf::MatchApply => {
                 let settings = self.params.view.get();
                 let current = self.match_current(&settings);
+                let description = if current {
+                    MATCH_APPLY_DESCRIPTION
+                } else if self.match_bands.is_empty() {
+                    MATCH_NOTHING_DESCRIPTION
+                } else {
+                    MATCH_WAITING_DESCRIPTION
+                };
                 let clicked = navigation::at(ui, "match apply", |ui| {
                     let response = ui
                         .add_enabled(
@@ -1431,8 +1442,8 @@ impl EqApp {
                             egui::Button::new("Apply")
                                 .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
                         )
-                        .on_hover_text(MATCH_APPLY_DESCRIPTION)
-                        .on_disabled_hover_text(MATCH_APPLY_DESCRIPTION);
+                        .on_hover_text(description)
+                        .on_disabled_hover_text(description);
                     navigation::mark_unclaimed(ui, response.id, response.rect);
                     response.clicked()
                 });
@@ -1493,13 +1504,21 @@ impl EqApp {
             }
             Leaf::MatchHeard => {
                 let seconds = self.learned_seconds();
-                let reading = if self.learning {
+                let mut reading = if self.learning {
                     format!("Learning {seconds:.0} s")
                 } else if seconds > 0.0 {
                     format!("Learned {seconds:.0} s")
                 } else {
                     "Nothing learned".to_owned()
                 };
+                // What the match proposes, while it is matched to something it can read.
+                if seconds > 0.0 && self.matched_reference().is_some() {
+                    reading.push_str(&match self.match_bands.len() {
+                        0 => ", no change".to_owned(),
+                        1 => ", 1 band".to_owned(),
+                        bands => format!(", {bands} bands"),
+                    });
+                }
                 let response = ui.allocate_rect(rect, egui::Sense::hover());
                 ui.painter_at(rect).text(
                     rect.left_center(),

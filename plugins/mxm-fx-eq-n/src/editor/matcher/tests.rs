@@ -177,8 +177,7 @@ fn octaves(a: f32, b: f32) -> f32 {
 /// bands in all.
 #[test]
 fn a_known_difference_is_matched() {
-    // Long enough for the lows to settle, the low shelf's among them.
-    let matcher = fixture(30.0, 1.0);
+    let matcher = fixture(12.0, 1.0);
     assert!(matcher.learned().seconds > 0.0);
     for amount in [1.0, 0.4] {
         let fit = fitted(&matcher, &flat(), amount, 24);
@@ -365,11 +364,11 @@ fn three_bands_are_the_unbounded_fits_first_three() {
     assert_eq!(Some(three), third);
 }
 
-/// **A short learn matches only what has settled, and silence counts for nothing** (plan §7.6):
-/// three seconds of the known difference settle the highs and not the lows, so the 3 kHz bell is
-/// proposed and nothing under 300 Hz; a silent stretch in the side chain changes nothing.
+/// **A short learn matches only what it knows, and silence counts for nothing** (plan §7.6): three
+/// seconds of the known difference read the highs and not the lows, so the 3 kHz bell is proposed
+/// and nothing under 300 Hz; a silent stretch in the side chain changes nothing.
 #[test]
-fn a_short_learn_matches_only_what_settled_and_silence_counts_for_nothing() {
+fn a_short_learn_matches_only_what_it_knows_and_silence_counts_for_nothing() {
     let early = fixture(3.0, 1.0);
     let fit = Fit {
         track: Arc::new(early.learned()),
@@ -383,7 +382,7 @@ fn a_short_learn_matches_only_what_settled_and_silence_counts_for_nothing() {
     let bands = fit.run().bands;
     assert!(
         bands.iter().all(|band| band.freq > 300.0),
-        "nothing where it has not settled: {bands:#?}"
+        "nothing where nothing is known yet: {bands:#?}"
     );
     assert!(
         bands
@@ -392,11 +391,11 @@ fn a_short_learn_matches_only_what_settled_and_silence_counts_for_nothing() {
         "what has: {bands:#?}"
     );
 
-    let plain = fixture(16.0, 1.0);
+    let plain = fixture(24.0, 1.0);
     let mut noise = Noise(0x2545_f491);
     let mut chain = Chain::new(&cascades(&known_eq()));
     let mut sample = 0usize;
-    let gapped = heard_for(16.0, move || {
+    let gapped = heard_for(24.0, move || {
         let x = 0.3 * noise.next();
         let y = chain.tick(x);
         sample += 1;
@@ -404,8 +403,9 @@ fn a_short_learn_matches_only_what_settled_and_silence_counts_for_nothing() {
         ([x, x], if silent { [0.0; 2] } else { [y, y] })
     });
     // The same match: the two fits' responses within 0.5 dB over the range. A frame straddling
-    // the silence mixes it in a little differently on rungs of different lengths, which a longer
-    // listen dilutes; the bands' own numbers may differ inside that.
+    // the silence mixes it in a little differently on rungs of different lengths, and the silent
+    // seconds leave the reference's lows less sure, so shrunk a little more: at 16 s, 0.52 dB at
+    // 31 Hz. A longer listen dilutes both; the bands' own numbers may differ inside that.
     let response = |fit: &Fitted| -> Vec<f64> {
         let responses: Vec<Vec<f64>> = fit
             .bands
@@ -582,8 +582,8 @@ fn an_unread_reference_cell_weighs_nothing() {
     for (freq, weight) in points.iter().zip(&weights) {
         if *freq > 8_100.0 {
             assert_eq!(*weight, 0.0, "{freq} Hz");
-        } else if (1_000.0..=8_000.0).contains(freq) {
-            assert_eq!(*weight, 1.0, "{freq} Hz, settled there");
+        } else if (RANGE.0..=8_000.0).contains(freq) {
+            assert_eq!(*weight, 1.0, "{freq} Hz");
         }
     }
 }
@@ -622,6 +622,18 @@ fn a_learn_reads_the_level_of_what_played_its_pauses_aside() {
             );
         }
     }
+}
+
+/// **A difference is shrunk by how unsure it is** (plan §7.6): well over its spread it is kept
+/// nearly whole, the size of it halved, where nothing is known nothing; sure, untouched.
+#[test]
+fn a_difference_is_shrunk_by_how_unsure_it_is() {
+    assert!((shrunk(4.0, 1.0) - 64.0 / 17.0).abs() < 1.0e-5);
+    assert!((shrunk(-1.0, 1.0) + 0.5).abs() < 1.0e-6);
+    assert!(shrunk(0.25, 2.0).abs() < 0.01);
+    assert_eq!(shrunk(3.0, f32::INFINITY), 0.0);
+    assert_eq!(shrunk(3.0, 0.0), 3.0);
+    assert_eq!(shrunk(0.0, 0.0), 0.0);
 }
 
 /// **A fit is deterministic** (plan §7.6): the same spectra give the same bands, bit for bit.

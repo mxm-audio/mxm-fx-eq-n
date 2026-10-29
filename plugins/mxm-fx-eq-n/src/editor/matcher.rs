@@ -7,12 +7,15 @@
 //! - **One learn, two streams** ([`Matcher::ingest`]): a block's input before the EQ, which the
 //!   match changes, and its output after it, what another EQ matches to, learned together while
 //!   Learn is on. A reset or a dropped block restarts the frames and keeps what was heard.
-//! - **Two halves, for how settled it is**: every [`CHUNK_SECONDS`] of sound heard, the frames go
-//!   to the other half. Where the halves' smoothed levels agree, what was learned there has
-//!   settled; their spread, the level between them taken out, is its uncertainty ([`Learned`]'s
-//!   spreads). A frequency counts in the fit once the track's and the reference's spreads together
-//!   are under [`SETTLED_DB`], and not at all from [`UNSETTLED_DB`]: the highs settle in seconds,
-//!   the lows, read on long frames, later. No fixed time is waited for (the owner, 2026-10-28).
+//! - **Two halves, for how sure it is**: every [`CHUNK_SECONDS`] of sound heard, the frames go to
+//!   the other half. Where the halves' smoothed levels agree, what was learned there is sure; their
+//!   spread, the level between them taken out, is its uncertainty ([`Learned`]'s spreads). **The
+//!   difference is shrunk by it** ([`shrunk`]), the track's and the reference's spreads together:
+//!   one well over its spread is kept nearly whole, one within it mostly taken back, one where
+//!   nothing is known yet not asked for at all, so the lows, read on long frames, join as they
+//!   firm. No fixed time is waited for (the owner, 2026-10-28), and no frequency is left out only
+//!   for being unsure: a voice's halves differ by a dB or more almost everywhere, and a large
+//!   difference is still a difference.
 //! - **The long-term spectra** (`research:effects/parametric-equalizers.md` §10.1): width frames on
 //!   F4's rungs ([`finder::rung_specs`]), power means over every frame, in linear units per bin:
 //!   the input's covariance (`|L|²`, `|R|²`, `L·conj(R)`), so the EQ is counted as heard, Mid and
@@ -49,10 +52,6 @@ pub use crate::learned::Learned;
 
 /// How much sound each half of a learn takes before the other does, in seconds heard.
 pub const CHUNK_SECONDS: f64 = 1.0;
-/// A frequency's spread, the track's and the reference's together, at or under which it counts
-/// in full, and at or over which not at all, in dB.
-pub const SETTLED_DB: f32 = 0.5;
-pub const UNSETTLED_DB: f32 = 1.0;
 /// Amount's default, in percent (decision 33): Ozone advises under 50 %, Melda 30–40 % (§10.3).
 pub const DEFAULT_AMOUNT: u8 = 40;
 /// Detail's default, at most how many bands (decision 33): Ramos & López's error was about 0.5 dB
@@ -539,8 +538,7 @@ pub struct Reference {
 }
 
 impl Reference {
-    /// Its spread at `cell`: 0 for one taken as settled throughout, infinite where it cannot be
-    /// told.
+    /// Its spread at `cell`: 0 for one taken as sure throughout, infinite where it cannot be told.
     fn spread_at(&self, cell: usize) -> f32 {
         if self.spread.is_empty() {
             0.0
@@ -554,24 +552,20 @@ impl Reference {
     }
 }
 
-/// How much a cell counts in the fit for its spread, `track` and `reference` together (plan
-/// §7.6): in full at or under [`SETTLED_DB`], not at all from [`UNSETTLED_DB`], linearly between.
-pub fn settled(track: f32, reference: f32) -> f32 {
-    let spread = track.hypot(reference);
-    ((UNSETTLED_DB - spread) / (UNSETTLED_DB - SETTLED_DB)).clamp(0.0, 1.0)
-}
-
-/// How much each cell counts for how settled `track` and `reference` are, as the fit reads it
-/// (plan §7.6); with no reference, the track's alone: what the graph draws faint.
-pub fn settled_cells(track: &Learned, reference: Option<&Reference>) -> Vec<Option<f32>> {
-    (0..CELLS)
-        .map(|cell| {
-            Some(settled(
-                input_spread_at(track, cell),
-                reference.map_or(0.0, |reference| reference.spread_at(cell)),
-            ))
-        })
-        .collect()
+/// `difference` shrunk by `spread`, both in dB (plan §7.6): `s·s²/(s² + u²)`, so a difference well
+/// over its spread is kept nearly whole, one the size of it halved, one well within it mostly taken
+/// back, and none asked for where the spread is infinite, nothing known yet.
+pub fn shrunk(difference: f32, spread: f32) -> f32 {
+    if !spread.is_finite() {
+        return 0.0;
+    }
+    let square = difference * difference;
+    let whole = square + spread * spread;
+    if whole > 0.0 {
+        difference * square / whole
+    } else {
+        difference
+    }
 }
 
 /// `learned`'s input spread at `cell`, as [`Reference::spread_at`] reads its own.
@@ -686,15 +680,14 @@ pub fn smooth(values: &[Option<f32>]) -> Vec<Option<f32>> {
         .collect()
 }
 
-/// What the fit is asked for in one cell: the smoothed difference `D`, the smoothed EQ as heard
-/// `E`, the source's power in the cell (linear, its whole 1/48 octave) for the loudness, and how
-/// much the cell counts for how settled the track and the reference are there ([`settled`]).
+/// What the fit is asked for in one cell: the smoothed difference `D`, shrunk by how unsure it is,
+/// the smoothed EQ as heard `E`, and the source's power in the cell (linear, its whole 1/48 octave)
+/// for the loudness.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CellCurve {
     pub d: f32,
     pub e: f32,
     pub power: f64,
-    pub settled: f32,
 }
 
 /// The cells' smoothed levels in dB — the track's, the reference's and the track's through the EQ
@@ -724,7 +717,8 @@ pub fn levels(track: &Learned, reference: &Reference, heard_eq: &HeardEq) -> Lev
 }
 
 /// The cells' curves (plan §7.6), `None` where the track was not heard or the reference has no
-/// level.
+/// level. The difference's shape about its mean over the range is shrunk by each cell's spread
+/// ([`shrunk`]); the mean, a level the match takes out, is not.
 pub fn curves(
     track: &Learned,
     reference: &Reference,
@@ -732,15 +726,27 @@ pub fn curves(
 ) -> Vec<Option<CellCurve>> {
     let levels = levels(track, reference, heard_eq);
     let width = 2f64.powf(1.0 / (2.0 * f64::from(CELLS_PER_OCTAVE)));
+    let differences: Vec<Option<f32>> = (0..levels.densities.len())
+        .map(|cell| Some(levels.reference[cell]? - levels.source[cell]?))
+        .collect();
+    let (mut sum, mut weights) = (0.0f64, 0.0f64);
+    for (cell, difference) in differences.iter().enumerate() {
+        if let Some(difference) = difference {
+            let weight = f64::from(ease(cell_freq(cell)));
+            sum += weight * f64::from(*difference);
+            weights += weight;
+        }
+    }
+    let mean = if weights > 0.0 { sum / weights } else { 0.0 } as f32;
     (0..levels.densities.len())
         .map(|cell| {
             let density = levels.densities[cell]?;
             let centre = f64::from(cell_freq(cell));
+            let spread = input_spread_at(track, cell).hypot(reference.spread_at(cell));
             Some(CellCurve {
-                d: levels.reference[cell]? - levels.source[cell]?,
+                d: mean + shrunk(differences[cell]? - mean, spread),
                 e: levels.through[cell]? - levels.source[cell]?,
                 power: density.source * centre * (width - width.recip()),
-                settled: settled(input_spread_at(track, cell), reference.spread_at(cell)),
             })
         })
         .collect()
@@ -788,7 +794,7 @@ pub fn k_weight(freq: f64) -> f64 {
 
 /// The level `c` (plan §7.6): the constant that, taken out after the Amount, leaves the source's
 /// K-weighted power through the EQ and the target what it is through the EQ alone. By bisection,
-/// the ease and how settled each cell is included.
+/// the ease included.
 pub fn level_offset(cells: &[Option<CellCurve>], amount: f32) -> f32 {
     let weighed: Vec<(f64, f64, f64, f64)> = cells
         .iter()
@@ -796,7 +802,7 @@ pub fn level_offset(cells: &[Option<CellCurve>], amount: f32) -> f32 {
         .filter_map(|(cell, curve)| {
             let curve = (*curve)?;
             let freq = cell_freq(cell);
-            let w = f64::from(ease(freq) * curve.settled);
+            let w = f64::from(ease(freq));
             (w > 0.0).then(|| {
                 (
                     k_weight(f64::from(freq)) * curve.power,
@@ -870,27 +876,19 @@ pub fn target(cells: &[Option<CellCurve>], points: &[f32], amount: f32, level: f
         .collect()
 }
 
-/// The fit's weights at `points`: the [`ease`] times how settled the cells beside a point are,
-/// read between them, and 0 where neither has a curve, where the reference was not read and `D` is
-/// not known (plan §7.6).
+/// The fit's weights at `points`: the [`ease`], and 0 where neither cell beside a point has a
+/// curve, where the reference was not read and `D` is not known (plan §7.6).
 pub fn weights(points: &[f32], cells: &[Option<CellCurve>]) -> Vec<f32> {
-    let settled = |cell: usize| {
-        cells
-            .get(cell)
-            .copied()
-            .flatten()
-            .map(|curve| curve.settled)
-    };
+    let known = |cell: usize| cells.get(cell).is_some_and(Option::is_some);
     points
         .iter()
         .map(|&freq| {
-            let (below, t) = beside(freq);
-            let settled = match (settled(below), settled(below + 1)) {
-                (Some(a), Some(b)) => a + (b - a) * t,
-                (Some(a), None) | (None, Some(a)) => a,
-                (None, None) => 0.0,
-            };
-            ease(freq) * settled
+            let (below, _) = beside(freq);
+            if known(below) || known(below + 1) {
+                ease(freq)
+            } else {
+                0.0
+            }
         })
         .collect()
 }

@@ -412,9 +412,10 @@ The full text of each follows, in *The editor in full*.
   (`update_lamp`), so a track sending nothing shows. **What was learned is drawn**
   (`learned_lines`, the owner: *"I still cannot see the eq curve of what has been learned"*): the
   reference and this track as lettered lines on the analyser's scale
-  (`graph::learned_display_db`), each read while it sounds, faint where it is still settling.
-  **No fixed time** (the owner, 2026-10-28: *"Yes drop the 10 secs"*): each frequency counts once
-  the halves of both learns agree there (`matcher::settled`). **Preview** plays the proposals in
+  (`graph::learned_display_db`), each read while it sounds, solid: drawn faint where unsure, a
+  voice's lines only flickered while their shape stood still (the owner, 2026-10-28). **No fixed
+  time** (*"Yes drop the 10 secs"*): each difference's shape is shrunk by how unsure it is
+  (`matcher::shrunk`). **Preview** plays the proposals in
   the free slots before Apply (`preview.rs`), a transient command as solo is; after an Apply it
   holds what it played for `PREVIEW_HOLD_FRAMES`, while the host takes the bands written.
   Learn and a choice end Find and Freeze;
@@ -448,7 +449,7 @@ The full text of each follows, in *The editor in full*.
     mid/side stage at the cell's centre (`through_power`). Read per bin before it was kept per
     cell, the measured reference and the computed through-the-EQ level agreed within 0.003 dB on
     every cell; per cell they agree within the test's 0.5 dB with a Mid and a Left band in it.
-  - *How settled.* A learn's frames alternate between two halves every `CHUNK_SECONDS` of sound;
+  - *How sure.* A learn's frames alternate between two halves every `CHUNK_SECONDS` of sound;
     each half's smoothed level, their difference less its mean over the range, its RMS over the
     smoothing's window, halved and widened by `√(1 + 2/n)` for `n` seconds in the smaller half, is
     a cell's spread. Measured on the known difference's noise, each learn's spread in dB:
@@ -461,10 +462,14 @@ The full text of each follows, in *The editor in full*.
     | 20 s | 0.26 | 0.45 | 0.32 | 0.45 | 0.29 | 0.09 | 0.07 | 0.03 |
     | 30 s | 0.16 | 0.32 | 0.23 | 0.31 | 0.15 | 0.05 | 0.04 | 0.04 |
 
-    Two of them together, the track's and the reference's, settle a cell under 0.5 dB and none
-    from 1 dB (`SETTLED_DB`, `UNSETTLED_DB`): the highs in three seconds, the lows in about
-    thirty, so the known difference's low shelf needs 30 s of it (`a_known_difference_is_matched`),
-    and two separate 11 s learns' 1 dB under 400 Hz is what the spreads read there.
+    Two separate 11 s learns' 1 dB under 400 Hz is what the spreads read there. **Why shrunk, not
+    left out**: counting a cell only under 0.5 to 1 dB of the two spreads together, as it was
+    built first, left a voice-over's almost every cell out (its halves hold different sounds) and
+    proposed one +3 dB bell where the lines differed by 5 dB at 100 Hz, nothing at 40 % (the owner
+    in Resolve, 2026-10-28). Shrunk, `s·s²/(s² + u²)`, a 4 dB difference unsure by 1 dB stays
+    3.8 dB; the known difference's low shelf is matched in 12 s again. A silent stretch in the
+    reference leaves its lows less sure, so shrunk a little more: 0.52 dB at 31 Hz after 16 s,
+    diluted by 24.
   - *The ease* weighs the fit's error, not the target: easing the target to 0 dB had the fit
     answer a +4 dB low shelf with a −4.5 dB one at 30 Hz, undoing its own tail.
   - *The fit* names F4's `fit_bell` scheme; its regions are read on the weighted residual, and the

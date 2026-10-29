@@ -253,10 +253,6 @@ const SIDE_CHAIN_LABEL_HEIGHT: f32 = 16.0;
 
 /// The learned lines' width (plan §7.6): heavier than the live spectra's outline.
 const LEARNED_STROKE: f32 = 1.5;
-/// How much a cell must count in the match for its learned line to be drawn solid, and how
-/// strongly a line is drawn where it counts less, still settling.
-const SETTLED_DRAWN: f32 = 0.5;
-const UNSETTLED_ALPHA: f32 = 0.35;
 
 /// A learned level at `freq`, power per hertz in dB, as the analyser draws a level there: the
 /// power in the display's band, a twelfth of an octave, both scaled so a full-scale sine reads
@@ -1571,47 +1567,35 @@ impl EqApp {
             self.external_name = name;
             // What Match has learned (plan §7.6): the reference and the track, smoothed as the
             // match reads them, at the level they sound, lettered, never told apart by hue alone:
-            // "Ref" above its line's end, "Track" below its own; solid where the match uses it,
-            // faint where it is still settling.
-            if let Some([reference, track, settled]) = self.learned_lines(now) {
+            // "Ref" above its line's end, "Track" below its own. Solid throughout: a voice's
+            // lines stop changing long before its spread is small, and drawn faint by it they only
+            // flickered (the owner, 2026-10-28).
+            if let Some([reference, track]) = self.learned_lines(now) {
                 let tilt = settings.tilt.db_per_octave();
                 for (cells, label, colour, below) in [
                     (&reference, "Ref", tokens.warning, false),
                     (&track, "Track", tokens.text_primary, true),
                 ] {
-                    // Runs of one style, each joined to the one before; a gap breaks them.
-                    let mut runs: Vec<(bool, Vec<Pos2>)> = Vec::new();
-                    let mut broken = true;
+                    // Runs between what was not read.
+                    let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
                     for (&x, &freq) in curves.xs.iter().zip(&curves.freqs) {
-                        let Some(db) = super::matcher::cell_at(cells, freq)
+                        let db = super::matcher::cell_at(cells, freq)
                             .map(|db| learned_display_db(db, freq, tilt))
-                            .filter(|db| *db > SPECTRUM_BOTTOM_DB)
-                        else {
-                            broken = true;
-                            continue;
-                        };
-                        let at = pos2(x, axes.spectrum_y(db));
-                        let firm = super::matcher::cell_at(&settled, freq)
-                            .is_some_and(|weight| weight >= SETTLED_DRAWN);
-                        let joint = runs.last().and_then(|(_, run)| run.last().copied());
-                        let same = !broken && runs.last().is_some_and(|(style, _)| *style == firm);
-                        if same {
-                            if let Some((_, run)) = runs.last_mut() {
-                                run.push(at);
+                            .filter(|db| *db > SPECTRUM_BOTTOM_DB);
+                        match db {
+                            Some(db) => {
+                                if let Some(run) = runs.last_mut() {
+                                    run.push(pos2(x, axes.spectrum_y(db)));
+                                }
                             }
-                        } else {
-                            let joint = joint.filter(|_| !broken);
-                            runs.push((firm, joint.into_iter().chain([at]).collect()));
+                            None if runs.last().is_some_and(|run| !run.is_empty()) => {
+                                runs.push(Vec::new());
+                            }
+                            None => {}
                         }
-                        broken = false;
                     }
-                    let end = runs.last().and_then(|(_, run)| run.last().copied());
-                    for (firm, run) in runs.into_iter().filter(|(_, run)| run.len() > 1) {
-                        let colour = if firm {
-                            colour
-                        } else {
-                            colour.gamma_multiply(UNSETTLED_ALPHA)
-                        };
+                    let end = runs.iter().rev().find_map(|run| run.last().copied());
+                    for run in runs.into_iter().filter(|run| run.len() > 1) {
                         painter.add(Painted::line(run, Stroke::new(LEARNED_STROKE, colour)));
                     }
                     if let Some(end) = end {

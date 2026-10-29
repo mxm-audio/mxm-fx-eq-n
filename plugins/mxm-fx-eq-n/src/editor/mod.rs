@@ -169,9 +169,8 @@ pub const LINES_SECONDS: f64 = 0.25;
 
 /// What the learned lines were made from: the matcher's revision, the reference's stamp and Learn.
 type LinesBasis = (u64, u64, bool);
-/// The learned lines per cell: the reference's, the track's, and how much each cell counts for
-/// how settled they are.
-pub(crate) type LearnedLines = [Vec<Option<f32>>; 3];
+/// The learned lines per cell: the reference's, then the track's.
+pub(crate) type LearnedLines = [Vec<Option<f32>>; 2];
 
 /// What the editor hands its worker (plan §7.5, §7.6): Find's search or Match's fit, one at a time.
 pub enum Task {
@@ -1539,11 +1538,7 @@ impl EqApp {
             .as_ref()
             .map(|learned| matcher::smooth(&learned.input_levels()))
             .unwrap_or_default();
-        let settled = learned
-            .as_ref()
-            .map(|learned| matcher::settled_cells(learned, matched.as_ref()))
-            .unwrap_or_default();
-        let lines = [reference, track, settled];
+        let lines = [reference, track];
         self.learned_lines = Some((basis, now, lines.clone()));
         Some(lines)
     }
