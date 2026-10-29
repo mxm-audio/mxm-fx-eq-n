@@ -340,7 +340,10 @@ The full text of each follows, in *The editor in full*.
   a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
   all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
   **Amount** (whole percent, 20 % by default) is view state, saved, a change marking the project
-  dirty and ending no freeze (`ViewSettings::display`). The search runs on `finder::Worker`, so
+  dirty and ending no freeze (`ViewSettings::display`). It is written as it is dragged, so the
+  proposals follow the slider, and marks the project dirty once, let go: written only when let go,
+  nothing moved through the drag (the owner, 2026-10-29: *"There jsut isnt any animation of what
+  happend when I change the anmount"*). The search runs on `finder::Worker`, so
   the GUI thread pays only for listening and a copy of the evidence, inside
   `spectrum::BUDGET_MS` (`finder_cost`).
 - **Find, the resonance finder** (plan §7.5, `editor/finder.rs`), in the order the work goes:

@@ -198,7 +198,9 @@ transaction.
     the next Apply replaces (decision 51). A saved
     reference is a file, never a preset (`references.rs`). A change to them marks the project
     dirty through `GuiContext::set_state`, nice-plug's dirty-only transaction, which neither
-    wrapper may answer by waiting on the audio thread ([NOTES.md § Marking the project dirty](NOTES.md#marking-the-project-dirty)).
+    wrapper may answer by waiting on the audio thread ([NOTES.md § Marking the project dirty](NOTES.md#marking-the-project-dirty));
+    **an Amount or Detail is written as it is dragged**, so the proposals and Preview follow it,
+    and marks it once, let go (`amount_moves_the_proposals_while_it_is_dragged`).
   - **The GUI thread's budget**: the analyser and Find's and Match's listening inside
     `spectrum::BUDGET_MS` of a frame (`analyser_cost`, `finder_cost`, `match_cost`), their
     searches and fits on `finder::Worker`.

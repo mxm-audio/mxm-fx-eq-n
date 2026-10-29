@@ -1,5 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 45 — An Amount is heard and drawn as it is dragged** (2026-10-29; §7.5, §7.6). The
+Amount and Detail sliders wrote their setting only when let go, so Find's proposals, Match's and
+Preview stood still through the drag (the owner: *"There jsut isnt any animation of what happend
+when I change the anmount"*). They now write it as they move, and mark the project dirty once, let
+go. **Built** (2026-10-29).
 **Revision 44 — Match's lines on the EQ's scale, and a Lines toggle** (2026-10-29; §7.6). The
 Ref and Track lines sat on the analyser's scale, 96 dB over the graph's height against the EQ's
 60, so the gap between them looked smaller than the dashed match it makes. They now sit on the EQ's

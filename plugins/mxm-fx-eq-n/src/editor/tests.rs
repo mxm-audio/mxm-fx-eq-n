@@ -3436,6 +3436,51 @@ fn amount_sets_the_depth_and_a_full_set_proposes_nothing() {
     assert_eq!(rig.app.find_refusal(), Some(FindRefusal::Full));
 }
 
+/// **Amount moves the proposals while it is dragged** (the owner, 2026-10-29: *"There jsut isnt
+/// any animation of what happend when I change the anmount"*): they follow the slider before it is
+/// let go, and the project is marked dirty once, when it is. Match's Amount and Detail are the
+/// same slider.
+#[test]
+fn amount_moves_the_proposals_while_it_is_dragged() {
+    let mut rig = finding_rig(vec![candidate(
+        1_000.0,
+        &[(finder::Domain::Average, 10.0, 8.0)],
+    )]);
+    let shallow = rig.app.proposals[0].bands[0].gain_db;
+    let states = *rig.host.states.lock().unwrap();
+    let rect = mxm_ui::navigation::spots(&rig.ctx)
+        .into_iter()
+        .find(|spot| spot.key == "amount")
+        .map(|spot| spot.rect)
+        .expect("drawn");
+    let y = rect.bottom() - 4.0;
+    let from = egui::pos2(rect.left() + rect.width() * 0.2, y);
+    let to = egui::pos2(rect.left() + rect.width() * 0.6, y);
+    rig.press(pointer(from, Some(true)));
+    for step in 1..=8 {
+        rig.press(pointer(from + (to - from) * (step as f32 / 8.0), None));
+    }
+    for _ in 0..8 {
+        rig.press(pointer(to, None));
+    }
+    let deep = rig.app.proposals[0].bands[0].gain_db;
+    assert!(
+        deep < shallow - 1.0,
+        "deeper before it is let go: {shallow} to {deep}"
+    );
+    assert_eq!(
+        *rig.host.states.lock().unwrap(),
+        states,
+        "not dirty mid-drag"
+    );
+    rig.press(pointer(to, Some(false)));
+    assert_eq!(
+        *rig.host.states.lock().unwrap(),
+        states + 1,
+        "marked dirty once, at its end"
+    );
+}
+
 /// **At a low gain scale a proposal is the depth Apply gives it** (plan §7.5): the band written
 /// is heard at the depth shown.
 #[test]

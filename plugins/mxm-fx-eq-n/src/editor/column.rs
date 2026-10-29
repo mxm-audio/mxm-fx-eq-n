@@ -1689,9 +1689,10 @@ impl EqApp {
         let mut settings = self.params.view.get();
         let key = which.key();
         let id = egui::Id::new(("mxm-fx-eq-n", key));
-        let mut normalised = ui
-            .data(|data| data.get_temp::<f64>(id))
-            .unwrap_or(which.normalised(&settings));
+        // While a gesture is open: where the slider stands, and the settings it began on.
+        let open = ui.data(|data| data.get_temp::<(f64, ViewSettings)>(id));
+        let before = open.map_or(settings, |(_, began)| began);
+        let mut normalised = open.map_or_else(|| which.normalised(&settings), |(at, _)| at);
         let text = which.text(normalised);
         let view = mxm_ui::control::ParamView {
             default: which.default(),
@@ -1724,16 +1725,24 @@ impl EqApp {
             parsed
         } else {
             if outcome.changed {
-                ui.data_mut(|data| data.insert_temp(id, normalised));
+                ui.data_mut(|data| data.insert_temp(id, (normalised, before)));
+                // Written as it moves, so Find's and Match's proposals, their curves and Preview
+                // follow the drag (the owner, 2026-10-29: *"There just isnt any animation of what
+                // happend when I change the amount"*); the project is marked dirty once, at its end.
+                which.write(&mut settings, normalised);
+                self.params.view.edit(settings);
             }
             outcome.gesture_ended.then_some(normalised)
         };
         if outcome.gesture_ended || submitted.is_some() {
-            ui.data_mut(|data| data.remove_temp::<f64>(id));
+            ui.data_mut(|data| data.remove_temp::<(f64, ViewSettings)>(id));
         }
         if let Some(normalised) = submitted {
             which.write(&mut settings, normalised);
-            self.set_view(settings);
+            self.params.view.edit(settings);
+            if settings != before {
+                self.mark_dirty();
+            }
         }
     }
 
