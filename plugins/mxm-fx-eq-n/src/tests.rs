@@ -262,21 +262,27 @@ fn solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell() {
 /// +12 dB bell at 1 kHz previewed in slot 3 is not heard without an editor, is heard with one, gives
 /// way to a band the player puts in that slot, and is heard offline too, as Resolve plays. One
 /// marked to replace a band Match applied plays in its place, and an Off one silences it
-/// (decision 51).
+/// (decision 51); one of Find's plays at its placement (decision 52).
 #[test]
 fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
-    let tone = |plugin: &mut MxmFxEqN| -> f64 {
+    let tones = |plugin: &mut MxmFxEqN| -> [f64; 2] {
         let input: Vec<f32> = (0..96_000)
             .map(|i| (0.25 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
             .collect();
         let mut buffers = vec![input.clone(), input];
         run(plugin, &mut buffers);
-        tone_db(&buffers[0], 1_000.0, 0.25)
+        [
+            tone_db(&buffers[0], 1_000.0, 0.25),
+            tone_db(&buffers[1], 1_000.0, 0.25),
+        ]
     };
+    let tone = |plugin: &mut MxmFxEqN| tones(plugin)[0];
+    let bell = |gain_db: f32, placement: mxm_fx_eq_n_dsp::Placement| {
+        Some((Shape::Bell, 1_000.0, gain_db, 1.0, placement))
+    };
+    let stereo = |gain_db: f32| bell(gain_db, mxm_fx_eq_n_dsp::Placement::Stereo);
     let mut plugin = prepared(2);
-    plugin
-        .preview
-        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), false)]);
+    plugin.preview.publish(&[(3, stereo(12.0), false)]);
     assert!(tone(&mut plugin).abs() < 0.01, "no editor: not heard");
     plugin.telemetry.connect(true);
     let heard = tone(&mut plugin);
@@ -291,9 +297,7 @@ fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     );
     let heard = tone(&mut plugin);
     assert!((heard + 6.0).abs() < 0.05, "the player's band: {heard}");
-    plugin
-        .preview
-        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), true)]);
+    plugin.preview.publish(&[(3, stereo(12.0), true)]);
     let heard = tone(&mut plugin);
     assert!((heard - 12.0).abs() < 0.05, "in place of Match's: {heard}");
     plugin.preview.publish(&[(3, None, true)]);
@@ -301,7 +305,13 @@ fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     assert!(heard.abs() < 0.01, "Match's turned Off: {heard}");
     plugin
         .preview
-        .publish(&[(3, Some((Shape::Bell, 1_000.0, 12.0, 1.0)), false)]);
+        .publish(&[(3, bell(-6.0, mxm_fx_eq_n_dsp::Placement::Right), true)]);
+    let [left, right] = tones(&mut plugin);
+    assert!(
+        left.abs() < 0.01 && (right + 6.0).abs() < 0.05,
+        "Find's at its placement: {left}, {right}"
+    );
+    plugin.preview.publish(&[(3, stereo(12.0), false)]);
     set_band(
         &plugin.params.bands[3],
         None,
@@ -353,9 +363,17 @@ fn with_an_editor_open_processing_never_allocates() {
             set_int(&plugin.params.bands[1].kind, 0);
             let (endings, _) = plugin.audition.state();
             assert!(plugin.audition.request(endings, Some(4)));
-            plugin
-                .preview
-                .publish(&[(1, Some((Shape::Bell, 1_000.0, 3.0, 1.0)), false)]);
+            plugin.preview.publish(&[(
+                1,
+                Some((
+                    Shape::Bell,
+                    1_000.0,
+                    3.0,
+                    1.0,
+                    mxm_fx_eq_n_dsp::Placement::Left,
+                )),
+                false,
+            )]);
         }
         let (left, right) = buffers.split_at_mut(1);
         let mut channels: [&mut [f32]; 2] = [&mut left[0], &mut right[0]];

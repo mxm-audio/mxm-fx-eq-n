@@ -1,14 +1,14 @@
-//! Match's Preview (plan §7.6): the proposed bands heard before they are applied. A transient
-//! command, as band solo is (`audition.rs`): no id, state or preset value, so a project never
-//! reopens previewing and automation never plays one.
+//! Match's and Find's Preview (plan §7.5, §7.6): the proposed bands heard before they are applied.
+//! A transient command, as band solo is (`audition.rs`): no id, state or preset value, so a project
+//! never reopens previewing and automation never plays one.
 //!
-//! - **Into the slots Apply writes**: the editor puts each proposed band in the slot Apply would
-//!   write, and the shell plays it there each block, only with an editor connected, whatever mode
-//!   the host says it runs in (`MxmFxEqN::sync`). In an Off slot always; in a slot holding a band
-//!   Match applied only when the editor marks it to **replace** that band, as Apply would, and a
-//!   slot of Match's that Apply would turn Off is previewed as an Off band. A slot the player has
-//!   since used is the player's. Each slot is set once a block, so the engine's transitions run as
-//!   for any band.
+//! - **Into the slots Apply writes**: the editor puts each proposed band in the slot Apply (Find's
+//!   Apply all) would write, at its placement, and the shell plays it there each block, only with
+//!   an editor connected, whatever mode the host says it runs in (`MxmFxEqN::sync`). In an Off slot
+//!   always; in a slot holding a band the feature applied only when the editor marks it to
+//!   **replace** that band, as Apply would, and a slot of its own that Apply would turn Off is
+//!   previewed as an Off band. A slot the player has since used is the player's. Each slot is set
+//!   once a block, so the engine's transitions run as for any band.
 //! - **A sequence lock of atomics**: the editor writes the bands between two counts of a sequence,
 //!   odd while it writes; the audio thread reads the count, the bands and the count again, and keeps
 //!   what it last read whole when they differ. One writer, the editor; nothing allocates, locks or
@@ -16,32 +16,36 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
-use mxm_fx_eq_n_dsp::{Band, SLOTS, Shape};
+use mxm_fx_eq_n_dsp::{Band, Placement, SLOTS, Shape};
 
 /// One slot's previewed band: its shape (0 none, [`OFF`] an Off band, else its place in
-/// `params::SHAPES` and one), whether it replaces the slot's own band, and its frequency, gain and
-/// Q as bits.
+/// `params::SHAPES` and one), whether it replaces the slot's own band, its placement as the
+/// `place` parameter holds it, and its frequency, gain and Q as bits.
 #[derive(Default)]
 struct Slot {
     shape: AtomicU8,
     replace: AtomicBool,
+    place: AtomicU8,
     freq: AtomicU32,
     gain_db: AtomicU32,
     q: AtomicU32,
 }
 
-/// A slot's shape byte for an Off band: a band Match applied that Apply would turn Off.
+/// A slot's shape byte for an Off band: a band Match or Find applied that Apply would turn Off.
 const OFF: u8 = u8::MAX;
 
-/// What the editor previews in one slot: the slot, the band (`None` for Off), and whether it
-/// replaces the slot's own band, one Match applied, rather than only an Off slot's.
-pub type Entry = (usize, Option<(Shape, f32, f32, f32)>, bool);
+/// What the editor previews in one slot: the slot, the band (`None` for Off) as its shape,
+/// frequency, gain, Q and placement, and whether it replaces the slot's own band, one Match or Find
+/// applied, rather than only an Off slot's.
+pub type Entry = (usize, Option<(Shape, f32, f32, f32, Placement)>, bool);
 
 /// What the shell plays in a slot while Preview is on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Previewed {
     /// The band, static as Apply writes it, its slope the default; Off for one Apply turns Off.
     pub band: Band,
+    /// Where it works: Match's are Stereo, Find's may be placed (plan §7.3).
+    pub placement: Placement,
     /// Whether it replaces the slot's own band; otherwise it plays only while the slot is Off.
     pub replace: bool,
 }
@@ -79,19 +83,23 @@ impl Preview {
             let Some(slot) = self.slots.get(index) else {
                 continue;
             };
-            let shape = match entry {
-                None => OFF,
-                Some((shape, freq, gain_db, q)) => {
+            let (shape, placement) = match entry {
+                None => (OFF, Placement::Stereo),
+                Some((shape, freq, gain_db, q, placement)) => {
                     let Some(place) = crate::params::SHAPES.iter().position(|s| *s == shape) else {
                         continue;
                     };
                     slot.freq.store(freq.to_bits(), Ordering::Relaxed);
                     slot.gain_db.store(gain_db.to_bits(), Ordering::Relaxed);
                     slot.q.store(q.to_bits(), Ordering::Relaxed);
-                    place as u8 + 1
+                    (place as u8 + 1, placement)
                 }
             };
             slot.replace.store(replace, Ordering::Relaxed);
+            slot.place.store(
+                crate::params::placement_value(placement) as u8,
+                Ordering::Relaxed,
+            );
             slot.shape.store(shape, Ordering::Relaxed);
         }
         self.sequence
@@ -126,6 +134,9 @@ impl Preview {
                     f32::from_bits(slot.gain_db.load(Ordering::Relaxed)),
                     f32::from_bits(slot.q.load(Ordering::Relaxed)),
                 ),
+                placement: crate::params::placement_of(i32::from(
+                    slot.place.load(Ordering::Relaxed),
+                )),
                 replace: slot.replace.load(Ordering::Relaxed),
             });
         }
@@ -140,16 +151,24 @@ impl Preview {
 mod tests {
     use super::*;
 
-    /// **What is published is read whole, and cleared** (plan §7.6): bands in their slots, one to
-    /// replace a band Match applied and one Off, nothing elsewhere, and none once cleared; a read
-    /// during a write keeps what was read before.
+    /// **What is published is read whole, and cleared** (plan §7.5, §7.6): bands in their slots
+    /// at their placements, one to replace a band Match applied and one Off, nothing elsewhere,
+    /// and none once cleared; a read during a write keeps what was read before.
     #[test]
     fn what_is_published_is_read_whole_and_cleared() {
         let preview = Preview::default();
         let mut out = [None; SLOTS];
         preview.publish(&[
-            (2, Some((Shape::LowShelf, 120.0, 3.0, 0.71)), false),
-            (5, Some((Shape::Bell, 2_000.0, -2.0, 1.5)), true),
+            (
+                2,
+                Some((Shape::LowShelf, 120.0, 3.0, 0.71, Placement::Stereo)),
+                false,
+            ),
+            (
+                5,
+                Some((Shape::Bell, 2_000.0, -2.0, 1.5, Placement::Side)),
+                true,
+            ),
             (7, None, true),
         ]);
         preview.read(&mut out);
@@ -161,6 +180,7 @@ mod tests {
         );
         assert!(!at(2).replace);
         assert_eq!(at(5).band, band(Some(Shape::Bell), 2_000.0, -2.0, 1.5));
+        assert_eq!(at(5).placement, Placement::Side, "at its placement");
         assert!(at(5).replace, "a band Match applied, replaced");
         assert_eq!(
             (at(7).band.shape, at(7).replace),

@@ -700,7 +700,7 @@ impl EqApp {
     /// The proposal at `at` (plan §7.5): its drawn label, or the nearest triangle within the hit
     /// radius.
     pub(crate) fn proposal_at(&self, axes: &Axes, curves: &Curves, at: Pos2) -> Option<usize> {
-        if !self.find {
+        if !self.proposals_shown() {
             return None;
         }
         let labelled = self
@@ -726,7 +726,8 @@ impl EqApp {
     }
 
     /// The lines the proposals would make (plan §7.5), over `curves`' frequencies: the one curve,
-    /// or with placed bands among the EQ and the proposals each channel's.
+    /// or with placed bands among the EQ and the proposals each channel's; in place of Find's own
+    /// cuts, which Apply all replaces (decision 52).
     fn proposal_lines(&self, curves: &Curves) -> Vec<Vec<f32>> {
         let rate = self.sample_rate();
         let extra: Vec<(Cascade, Placement)> = self
@@ -735,7 +736,7 @@ impl EqApp {
             .flat_map(|proposal| &proposal.bands)
             .map(|band| (band.cascade(rate), band.domain.placement()))
             .collect();
-        self.lines_with(curves, extra, &[])
+        self.lines_with(curves, extra, &self.find_owned_slots())
     }
 
     /// The lines the match would make (plan §7.6), as [`proposal_lines`](Self::proposal_lines)':
@@ -1802,8 +1803,9 @@ impl EqApp {
         // Find's proposals (plan §7.5): the curve they would make, dashed over the EQ's, and a
         // downward triangle at each candidate with its frequency and depth, told apart by shape
         // and text; a label that would overlap a stronger one's is not drawn, the keyboard's
-        // always is.
-        if self.find && !self.proposals.is_empty() {
+        // always is. Not while they are applied as they stand: their curve is the EQ's, their
+        // cuts the bands drawn (decision 52).
+        if self.proposals_shown() {
             let current = self
                 .proposal_curve
                 .as_ref()

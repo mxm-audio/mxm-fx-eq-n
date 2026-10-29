@@ -552,6 +552,7 @@ fn the_cursor_reaches_and_operates_every_control() {
             "speed",
             "tilt",
             "find",
+            "find preview",
             "apply all",
             "amount",
             "learn",
@@ -3481,6 +3482,122 @@ fn amount_moves_the_proposals_while_it_is_dragged() {
     );
 }
 
+/// **Find's Preview plays Amount, and Apply all replaces the cuts Find applied** (plan §7.5,
+/// decision 52; the owner, 2026-10-29: *"I cant see, to hear any difference"*): Preview plays the
+/// cuts in the slots Apply all writes, at their placements; applied, they stand applied and are no
+/// longer offered; a larger Amount is previewed in Find's slots and written there in one step, so
+/// nothing piles up, and a smaller one turns a cut it no longer needs Off; Undo brings Find's cuts
+/// back as its own; a cut applied by hand goes in Find's slot at its resonance; a band changed by
+/// hand is the player's; the record is kept with the project; closing the window ends Preview.
+#[test]
+fn find_s_preview_plays_amount_and_apply_all_replaces_its_cuts() {
+    use mxm_fx_eq_n_dsp::Placement;
+    let mut rig = finding_rig(vec![
+        candidate(1_000.0, &[(finder::Domain::Average, 10.0, 8.0)]),
+        candidate(4_000.0, &[(finder::Domain::Left, 4.0, 6.0)]),
+    ]);
+    assert_eq!(rig.app.proposals.len(), 2);
+    let read = |rig: &Rig| {
+        let mut out = [None; SLOTS];
+        rig.app.preview.read(&mut out);
+        out
+    };
+    let amount = |rig: &mut Rig, percent: u8| {
+        let mut settings = rig.app.params.view.get();
+        settings.amount = percent;
+        rig.app.set_view(settings);
+        for _ in 0..8 {
+            rig.press(Vec::new());
+        }
+    };
+    let in_use = |rig: &Rig| {
+        (0..SLOTS)
+            .filter(|&slot| rig.band(slot).shape.is_some())
+            .count()
+    };
+    assert!(read(&rig).iter().all(Option::is_none), "off: nothing");
+    rig.app.find_previewing = true;
+    rig.press(Vec::new());
+    let out = read(&rig);
+    let first = out[0].expect("in the first Off slot");
+    assert!(
+        !first.replace && (first.band.gain_db + 2.0).abs() < 0.1,
+        "20 %: {first:?}"
+    );
+    let second = out[1].expect("and the second");
+    assert_eq!(second.placement, Placement::Left, "at its placement");
+    assert_eq!(out.iter().flatten().count(), 2, "and nothing else");
+
+    let depth = rig.depth();
+    assert_eq!(rig.app.apply_all(), [0, 1]);
+    rig.press(Vec::new());
+    assert_eq!(rig.depth(), depth + 1, "one undo step");
+    assert_eq!(rig.app.find_owned_slots(), [0, 1]);
+    assert_eq!(rig.app.placement_now(1), Placement::Left);
+    assert_eq!(
+        rig.app.proposals.len(),
+        2,
+        "proposed still, its own left out"
+    );
+    assert!(rig.app.find_applied_as_shown() && !rig.app.proposals_shown());
+    assert!(rig.app.apply_all().is_empty(), "nothing to apply");
+
+    // A larger Amount: heard in Find's slots, then written there.
+    amount(&mut rig, 60);
+    assert!(rig.app.proposals_shown(), "offered again");
+    let first = read(&rig)[0].expect("in Find's slot");
+    assert!(
+        first.replace && (first.band.gain_db + 6.0).abs() < 0.1,
+        "60 %: {first:?}"
+    );
+    assert_eq!(rig.app.apply_all(), [0, 1]);
+    rig.press(Vec::new());
+    assert!((rig.band(0).gain_db + 6.0).abs() < 0.1, "resized in place");
+    assert_eq!(in_use(&rig), 2, "nothing piles up");
+
+    // A smaller one: the 4 kHz cut no longer needed, Off.
+    amount(&mut rig, 5);
+    assert_eq!(rig.app.proposals.len(), 1);
+    let off = read(&rig)[1].expect("Find's other slot");
+    assert!(off.replace && off.band.shape.is_none(), "previewed Off");
+    assert_eq!(rig.app.apply_all(), [0]);
+    rig.press(Vec::new());
+    assert!(rig.band(1).shape.is_none(), "turned Off");
+
+    rig.app.undo();
+    rig.press(Vec::new());
+    assert_eq!(rig.app.find_owned_slots(), [0, 1], "Undo brings them back");
+
+    // By hand: into Find's slot at that resonance, never a second cut.
+    amount(&mut rig, 20);
+    let index = rig.app.proposals.iter().position(|p| p.freq == 1_000.0);
+    assert_eq!(rig.app.apply_proposals(&[index.unwrap()], false), [0]);
+    rig.press(Vec::new());
+    assert_eq!(in_use(&rig), 2);
+
+    // A band changed by hand is the player's, left alone.
+    let gain = band_index(1, Field::Gain);
+    rig.app.instant(&[(gain, rig.app.normalised(gain, -3.0))]);
+    rig.press(Vec::new());
+    assert!(!rig.app.find_owned_slots().contains(&1));
+    amount(&mut rig, 60);
+    assert_eq!(rig.app.apply_all(), [0, 2]);
+    rig.press(Vec::new());
+    assert!((rig.band(1).gain_db + 3.0).abs() < 0.05, "left alone");
+
+    let fields = rig.app.params.serialize_fields();
+    let restored = EqParams::default();
+    restored.deserialize_fields(&fields);
+    assert_eq!(
+        *restored.find_applied.read().unwrap(),
+        *rig.app.params.find_applied.read().unwrap(),
+        "kept with the project"
+    );
+    mxm_editor::Panel::closed(&mut rig.app, &GuiContext::new(rig.host.clone()));
+    assert!(read(&rig).iter().all(Option::is_none), "the window closed");
+    assert!(!rig.app.find_previewing);
+}
+
 /// **At a low gain scale a proposal is the depth Apply gives it** (plan §7.5): the band written
 /// is heard at the depth shown.
 #[test]
@@ -4735,7 +4852,21 @@ fn reset_makes_the_instance_as_new() {
             freq: 1_000.0,
             gain_db: 2.0,
             q: 1.0,
+            place: 0,
         });
+    rig.app
+        .params
+        .find_applied
+        .write()
+        .unwrap()
+        .push(crate::learned::AppliedBand {
+            kind: 1,
+            freq: 3_000.0,
+            gain_db: -2.0,
+            q: 8.0,
+            place: 1,
+        });
+    rig.app.find_previewing = true;
     let mut settings = rig.app.params.view.get();
     settings.match_amount = 136;
     rig.app.set_view(settings);
@@ -4760,6 +4891,11 @@ fn reset_makes_the_instance_as_new() {
         "what it learned deleted"
     );
     assert!(rig.app.params.match_applied.read().unwrap().is_empty());
+    assert!(
+        rig.app.params.find_applied.read().unwrap().is_empty(),
+        "and what Find applied"
+    );
+    assert!(!rig.app.find_previewing, "Find's Preview ended");
     assert_eq!(rig.app.params.view.get(), ViewSettings::default());
 
     let mut rig = Rig::new();

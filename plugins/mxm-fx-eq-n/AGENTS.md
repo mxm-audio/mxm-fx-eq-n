@@ -18,8 +18,9 @@ No control map (plan §6): no collection role fits on-demand bands.
 - `src/preset.rs`: the `mxm_preset::Instrument` seam and the factory set's design.
 - `presets/`: the factory set, generated from that design, never hand-edited.
 - `src/audition.rs`: band solo, a transient command.
-- `src/preview.rs`: Match's Preview, the other transient command (plan §7.6).
-- `src/learned.rs`: what Match learned of the track and what it is matched to, host state.
+- `src/preview.rs`: Match's and Find's Preview, the other transient command (plan §7.5, §7.6).
+- `src/learned.rs`: what Match learned of the track and what it is matched to, and the record of
+  the bands Match and Find applied, host state.
 - `src/telemetry.rs`: the editor link and the Out meter, two of mxm-kit's `PeakMeter`s.
 - `src/analyser.rs`: the analyser's audio half, and the share tap's (`Tap::capture_post`).
 - `src/instances.rs`: the registry other tracks' editors read this instance through, its id and
@@ -124,14 +125,17 @@ transaction.
   editor ends it on close.
 - `solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell` and `audition.rs`'s tests.
 
-## Match's Preview is a transient command too — [NOTES.md § Why](NOTES.md#matchs-preview-is-a-transient-command-too)
+## Preview, Match's and Find's, is a transient command too — [NOTES.md § Why](NOTES.md#preview-matchs-and-finds-is-a-transient-command-too)
 
-- **No id, state or preset value**, as solo (plan §7.6, decision 50); `preview.rs`, the bands by
-  the slot Apply writes, one writer, latest wins. **The shell plays it** each block only with an
-  editor connected, whatever the host's mode, in an Off slot or in place of a band of Match's the
-  editor marks to replace (decision 51); **the editor ends it** on close.
-- `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode` and
-  `preview_hands_the_proposals_to_the_free_slots`.
+- **No id, state or preset value**, as solo (plan §7.5, §7.6, decisions 50 and 52); `preview.rs`,
+  the bands by the slot Apply (Find's Apply all) writes, each at its placement, one writer, latest
+  wins; Find's while its Preview is on and it has proposals, else Match's. **The shell plays it**
+  each block only with an editor connected, whatever the host's mode, in an Off slot or in place
+  of a band of the feature's own the editor marks to replace (decisions 51, 52); **the editor ends
+  it** on close.
+- `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode`,
+  `preview_hands_the_proposals_to_the_free_slots` and
+  `find_s_preview_plays_amount_and_apply_all_replaces_its_cuts`.
 
 ## The analyser's and the meter's handoffs — [NOTES.md § The handoffs](NOTES.md#the-handoffs-in-full)
 
@@ -175,8 +179,8 @@ transaction.
   another selection, the band leaving the sound, a patch replaced or the editor closed; Ctrl/Cmd on
   a point solos while held. **The gain scale fades** while no band in the sound has a gain.
 - **Reset makes the instance as new** (the owner, 2026-10-29): every parameter to Init as one
-  undo step; outside the history, what Match learned, matched to and applied deleted, Learn, Find,
-  a freeze and Preview ended, the view settings the defaults; saved references stay
+  undo step; outside the history, what Match learned, matched to and applied and what Find
+  applied deleted, Learn, Find, a freeze and both Previews ended, the view settings the defaults; saved references stay
   (`reset_makes_the_instance_as_new`).
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
@@ -188,14 +192,18 @@ transaction.
   (`slot_writes`, twelve fields); Split is one undo step.
 - **The features**, a bullet each in [NOTES.md § The editor's features in short](NOTES.md#the-editors-features-in-short).
   What binds them:
-  - **Every command is one undo step**: a proposal written (Find, Match's Apply), Split, a Phase
-    or Resolution change, an edit of a selection's primary, which moves the group (`group_edit`).
+  - **Every command is one undo step**: a proposal written (Find's Apply all or one by hand,
+    Match's Apply), Split, a Phase or Resolution change, an edit of a selection's primary, which
+    moves the group (`group_edit`).
   - **Nothing they hold is saved but view state** (`view.rs`, persisted, dirty-only): the
     analyser's settings, the External line, Collisions, Find's Amount, Match's Amount, Detail and Lines;
     and Match's, what this EQ learned, what it is matched to and the bands it applied
     (`EqParams::learned`, `match_to`, `match_applied`, host state beside it, every other EQ
     reading the first through the registry); a band still as Match applied it is Match's, which
-    the next Apply replaces (decision 51). A saved
+    the next Apply replaces (decision 51); and the cuts Find's Apply all wrote (`find_applied`),
+    a cut still as written, at its placement, Find's, which its searches leave out and the next
+    Apply all replaces, a cut applied by hand going into Find's slot at its resonance (decision
+    52). A saved
     reference is a file, never a preset (`references.rs`). A change to them marks the project
     dirty through `GuiContext::set_state`, nice-plug's dirty-only transaction, which neither
     wrapper may answer by waiting on the audio thread ([NOTES.md § Marking the project dirty](NOTES.md#marking-the-project-dirty));

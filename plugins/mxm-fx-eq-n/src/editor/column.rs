@@ -87,7 +87,9 @@ pub enum Leaf {
     Find,
     /// The share of each resonance a proposed cut takes.
     Amount,
-    /// Makes every proposed cut as a band.
+    /// Plays the proposed cuts while on, before they are applied.
+    FindPreview,
+    /// Makes every proposed cut as a band, in place of the cuts it made before.
     ApplyAll,
     /// Learns this track while on, keeps what it learned while off (plan §7.6).
     Learn,
@@ -175,7 +177,12 @@ const FIND_FULL_DESCRIPTION: &str =
 const FIND_NO_GAIN_DESCRIPTION: &str =
     "The gain scale is at 0 %, where a bell does nothing, so no cut is proposed.";
 const AMOUNT_DESCRIPTION: &str = "How much of each resonance a proposed cut takes away.";
-const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in one step Undo takes back.";
+const APPLY_ALL_DESCRIPTION: &str = "Makes every proposed cut a band, in place of the ones the \
+     last Apply all made, in one step Undo takes back.";
+const APPLY_ALL_APPLIED_DESCRIPTION: &str = "These cuts are applied. Move Amount and Apply all \
+     replaces the cuts it made; a band you have changed since stays yours.";
+const FIND_PREVIEW_DESCRIPTION: &str = "While on, plays the proposed cuts as if applied, following \
+     Amount as it moves. Off plays the EQ as it is. Nothing is written until Apply all.";
 /// The Amount slider's key in the cursor's registry and its held value's.
 const AMOUNT_KEY: &str = "amount";
 const LEARN_DESCRIPTION: &str = "While on, learns this track's sound from what plays, before \
@@ -735,7 +742,7 @@ pub fn analyser_tree(external: Vec<String>) -> Node<Leaf> {
     ])
 }
 
-/// The Resonances card (plan §7.5): Find and Apply all on a row, Amount under them.
+/// The Resonances card (plan §7.5): Find, Preview and Apply all on a row, Amount under them.
 pub fn resonances_tree() -> Node<Leaf> {
     stack(vec![
         tree::row(vec![
@@ -743,6 +750,12 @@ pub fn resonances_tree() -> Node<Leaf> {
                 Leaf::Find,
                 Kind::Toggle {
                     label: "Find".to_owned(),
+                },
+            ),
+            leaf(
+                Leaf::FindPreview,
+                Kind::Toggle {
+                    label: "Preview".to_owned(),
                 },
             ),
             button_leaf(Leaf::ApplyAll, "Apply all"),
@@ -1357,8 +1370,36 @@ impl EqApp {
                     self.set_find(on);
                 }
             }
+            Leaf::FindPreview => {
+                let analyser = self.params.view.get().analyser;
+                let mut on = self.find_previewing;
+                let changed = navigation::at(ui, "find preview", |ui| {
+                    ui.add_enabled_ui(analyser, |ui| {
+                        mxm_ui::control::toggle_sized(
+                            ui,
+                            tokens,
+                            "Preview",
+                            "Preview cuts",
+                            &mut on,
+                            false,
+                            FIND_PREVIEW_DESCRIPTION,
+                            0.0,
+                        )
+                    })
+                    .inner
+                });
+                if changed {
+                    self.find_previewing = on;
+                }
+            }
             Leaf::ApplyAll => {
-                let any = !self.proposals.is_empty();
+                let applied = self.find_applied_as_shown();
+                let any = self.find && !self.proposals.is_empty() && !applied;
+                let description = if applied {
+                    APPLY_ALL_APPLIED_DESCRIPTION
+                } else {
+                    APPLY_ALL_DESCRIPTION
+                };
                 let clicked = navigation::at(ui, "apply all", |ui| {
                     let response = ui
                         .add_enabled(
@@ -1366,14 +1407,13 @@ impl EqApp {
                             egui::Button::new("Apply all")
                                 .min_size(vec2(0.0, mxm_ui::space::MIN_TARGET)),
                         )
-                        .on_hover_text(APPLY_ALL_DESCRIPTION)
-                        .on_disabled_hover_text(APPLY_ALL_DESCRIPTION);
+                        .on_hover_text(description)
+                        .on_disabled_hover_text(description);
                     navigation::mark_unclaimed(ui, response.id, response.rect);
                     response.clicked()
                 });
                 if clicked {
-                    let all: Vec<usize> = (0..self.proposals.len()).collect();
-                    self.apply_proposals(&all, false);
+                    self.apply_all();
                 }
             }
             Leaf::PhaseMode | Leaf::LinearResolution => self.paint_phase(ui, tokens, leaf),

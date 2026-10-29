@@ -96,12 +96,13 @@ fn latency_of(phase: Phase, sample_rate: f32) -> u32 {
 }
 
 impl MxmFxEqN {
-    /// The parameters, the solo request and Match's Preview, into the engine. Solo and Preview are
-    /// auditions, played only while an editor holds them, whatever mode the host says it runs in:
-    /// Resolve says offline as it plays (the owner, 2026-10-29). A previewed band plays in its slot
-    /// while the slot is Off, or in place of the slot's own band where the editor marks it to
-    /// replace one Match applied (Off where Apply would turn it Off), static, unkeyed and Stereo, as
-    /// Apply writes it; each slot is set once, so a band's transitions run as any band's.
+    /// The parameters, the solo request and Match's or Find's Preview, into the engine. Solo and
+    /// Preview are auditions, played only while an editor holds them, whatever mode the host says
+    /// it runs in: Resolve says offline as it plays (the owner, 2026-10-29). A previewed band plays
+    /// in its slot while the slot is Off, or in place of the slot's own band where the editor marks
+    /// it to replace one Match or Find applied (Off where Apply would turn it Off), static, unkeyed
+    /// and at its placement, as Apply writes it; each slot is set once, so a band's transitions run
+    /// as any band's.
     fn sync(&mut self) {
         let auditioning = self.telemetry.connected();
         if auditioning {
@@ -109,17 +110,17 @@ impl MxmFxEqN {
         } else {
             self.previewed = [None; mxm_fx_eq_n_dsp::SLOTS];
         }
-        let mut previewing = [false; mxm_fx_eq_n_dsp::SLOTS];
+        let mut previewing = [None; mxm_fx_eq_n_dsp::SLOTS];
         for (slot, band) in self.params.bands.iter().enumerate() {
             let band = band.band();
-            let previewed = self.previewed[slot]
-                .filter(|previewed| previewed.replace || band.shape.is_none())
-                .map(|previewed| previewed.band);
-            previewing[slot] = previewed.is_some();
-            self.engine.set_band(slot, previewed.unwrap_or(band));
+            let previewed =
+                self.previewed[slot].filter(|previewed| previewed.replace || band.shape.is_none());
+            previewing[slot] = previewed.map(|previewed| previewed.placement);
+            self.engine
+                .set_band(slot, previewed.map_or(band, |previewed| previewed.band));
         }
         for (slot, dynamics) in self.params.dynamics.iter().enumerate() {
-            let dynamics = if previewing[slot] {
+            let dynamics = if previewing[slot].is_some() {
                 mxm_fx_eq_n_dsp::Dynamics::STATIC
             } else {
                 dynamics.dynamics()
@@ -128,14 +129,10 @@ impl MxmFxEqN {
         }
         for (slot, key) in self.params.keys.iter().enumerate() {
             self.engine
-                .set_side_chain(slot, key.side_chain.value() && !previewing[slot]);
+                .set_side_chain(slot, key.side_chain.value() && previewing[slot].is_none());
         }
         for (slot, place) in self.params.places.iter().enumerate() {
-            let placement = if previewing[slot] {
-                mxm_fx_eq_n_dsp::Placement::Stereo
-            } else {
-                place.placement()
-            };
+            let placement = previewing[slot].unwrap_or_else(|| place.placement());
             self.engine.set_placement(slot, placement);
         }
         self.engine.set_output_gain(self.params.output.value());

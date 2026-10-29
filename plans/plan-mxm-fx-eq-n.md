@@ -1,5 +1,12 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 46 — Find previews its cuts and owns those Apply all makes** (2026-10-29; §7.5,
+decision 52). Find's Amount was never heard: its proposals played nothing until applied, and once
+applied they were ordinary bands Amount never touched (the owner: *"I cant see, to hear any
+difference"*). Asked how it should be heard, the owner chose *"Like Match"*: a **Preview** on the
+Resonances card plays the cuts in the slots Apply all writes, at their placements, following Amount
+as it moves, and **Apply all replaces the cuts it made before**, as Match's Apply does (decision
+51). **Built** (2026-10-29).
 **Revision 45 — An Amount is heard and drawn as it is dragged** (2026-10-29; §7.5, §7.6). The
 Amount and Detail sliders wrote their setting only when let go, so Find's proposals, Match's and
 Preview stood still through the drag (the owner: *"There jsut isnt any animation of what happend
@@ -250,6 +257,7 @@ Everything an implementer must not settle alone, in one place; the sections belo
 | 48 | **What an EQ learned is saved by name as a reference**, a file per reference in a folder beside the EQ's user presets, listed in Match to and chosen for any track in any project, the choice saved with the project; the alternative keeps a reference only while the editor is open and keeps a match by saving the applied bands as an ordinary preset, which matches only material like the track it was fitted on (§7.6) | **Settled** (owner, 2026-10-28: the reference saved) | F5.6 |
 | 49 | **No fixed time; an unsure difference is shrunk by how unsure it is**: a learn read in two halves, a second of sound each in turn, whose agreement after smoothing is its spread; the difference's shape about its mean shrunk by the track's and the reference's spreads together, `s·s²/(s² + u²)`, so a difference well over its spread is kept and one within it mostly taken back, and nothing is asked where nothing is known yet; the alternatives waited 10 s of each for every frequency, or left out every frequency less sure than 0.5 to 1 dB, which left a voice's almost all out (§7.6) | **Settled** (owner, 2026-10-28: *"Yes drop the 10 secs"*; *"that seems like too little"*) | F5.10, F5.11 |
 | 51 | **Match owns the bands it applies**: a record of the bands Apply wrote, kept with the project (`EqParams::match_applied`, the newest `APPLIED_KEPT`); a slot still holding one as written, static, unbypassed, unkeyed and Stereo, is Match's. The fit leaves Match's bands out, Apply rewrites them first and turns Off those it no longer needs, and Preview plays the new match in their place; a band changed by hand is the player's. The alternative added each Apply's bands to the free slots, on top of the last (§7.6) | **Settled** (owner, 2026-10-29: *"yes build it"*) | F5.14 |
+| 52 | **Find works as Match does: a Preview, and it owns the cuts Apply all makes**: Preview on the Resonances card plays the cuts in the slots Apply all writes, at their placements, as decision 50's; a record of the cuts Apply all wrote, kept with the project (`EqParams::find_applied`), a slot still holding one as written, at its placement, being Find's. Searches leave Find's cuts out, so the proposals are the whole set at the current Amount; Apply all rewrites Find's cuts first and turns Off those no longer proposed; applied as they stand, the proposals are not drawn or offered. A cut applied by hand, a click, a drag or ADD, goes in Find's slot at its resonance, else an Off slot. The alternatives were Amount rescaling the applied cuts directly, or the proposals heard whenever Find holds them (§7.5) | **Settled** (owner, 2026-10-29: *"Like Match"*) | F4.4 |
 | 50 | **Preview plays the proposals before they are applied**, following Amount and Detail, as a transient command as band solo is (§5.2): no parameter written, only with an editor, whatever mode the host says it runs in, since Resolve says offline as it plays; the alternative applied, listened and undid (§7.6) | **Settled** (owner, 2026-10-28: *"Yes"*; 2026-10-29: *"I never render with open audio effects anyway"*) | F5.10, F5.13 |
 | 47 | **Global transforms come from the selection**: Select all, then drag or the arrows, and Invert gain on the menu; no Shift parameter; the alternative adds Bitwig's and DMG's **Shift**, an automatable parameter moving every band by one ratio in the DSP, a host able to ride it (§7.9) | **Settled** (owner, 2026-10-16) | F8.1 |
 | 30 | **A second column of cards**: the Band card alone in the first, Output, Analyser and a new Resonances card in the second, the window opening wider and hugged to the taller; the alternative keeps one column, which then scrolls at the opening size (§7.5) | **Settled** (owner, 2026-10-15) | F4.2 |
@@ -1264,15 +1272,17 @@ mistuning cost more than the resonance, Fazenda, §8.4). For one isolated peak, 
 where the EQ does nothing, that bell at 100 % is the peak's exact inverse in the band's half-gain
 convention (§3.2). **Amount is view state**, in whole percent, saved with the analyser's settings
 (§4): a project from before loads it at 20 % (the settings' own default), a change marks the project
-dirty, and it is not part of a freeze's basis (§7.4). Find, what it heard and its proposals are the
-editor's moment, never saved.
-- **What is left decides.** What the EQ as heard already takes off a candidate is the bell fitted
-  to its spectrum less the bell fitted, from the same start, to that spectrum plus the EQ there —
-  the graph's self-response for that channel (§7.3), gain scale, bypass and placement included, a
-  dynamic band at its drawn gain. Where the EQ already takes Amount × P off to within 0.5 dB, the
-  candidate is **treated** and not proposed; otherwise the remainder is proposed as
-  a further band. A shown proposal goes only once under 0.25 dB, so updates do not flicker. After an
-  Apply, a bypass or a larger Amount, Find shows what is left.
+dirty, and it is not part of a freeze's basis (§7.4); it is written as its slider moves, so the
+proposals and Preview follow the drag (revision 45). Find, what it heard and its proposals are the
+editor's moment, never saved; the record of the cuts Apply all wrote is kept (decision 52).
+- **What is left decides.** What the EQ as heard, **less Find's own cuts** (decision 52), already
+  takes off a candidate is the bell fitted to its spectrum less the bell fitted, from the same
+  start, to that spectrum plus the EQ there — the graph's self-response for that channel (§7.3),
+  gain scale, bypass and placement included, a dynamic band at its drawn gain. Where the EQ already
+  takes Amount × P off to within 0.5 dB, the candidate is **treated** and not proposed; otherwise
+  the remainder is proposed as a further band. A shown proposal goes only once under 0.25 dB, so
+  updates do not flicker. After a band applied by hand, a bypass or a larger Amount, Find shows
+  what is left; Find's own cuts it proposes whole, at the current Amount, for Apply all to replace.
 - **Depths are solved together**, since a neighbour's skirt cuts into a centre. **What is solved**:
   at each candidate's centre, its spectrum's response — the self-response the graph draws for that
   channel (§7.3), and for Stereo the power average of the left's and the right's — of the EQ as heard
@@ -1296,11 +1306,19 @@ on a triangle applies it; a drag applies it with the gain following the drag** (
 two gains move together). Either is one undo step, BACK during the drag leaves nothing, and a band's
 point under the pointer comes first. **The keyboard**, with Find on and no band selected: ← → walk
 the proposals, the focused one's label always drawn, and ADD applies it. **Every path writes a band's
-every field** (`slot_writes`): a static, unkeyed bell at its placement, whatever an Off slot held.
+every field** (`slot_writes`): a static, unkeyed bell at its placement, whatever an Off slot held. A
+click, a drag or ADD writes into the slot of Find's own cut at that resonance (its placement, within
+half a semitone), so nothing is cut twice, else the lowest Off slot (decision 52). While the
+proposals stand applied, as Apply all left them, none of this is drawn or offered: their curve is
+the EQ's.
 
-**The Resonances card**: **Find**, **Amount** and **Apply all**, which writes every proposal shown
-into the lowest free slots as one undo step, disabled with none. With every slot in use nothing is
-proposed and Find's hover says why. Hover only, no help text.
+**The Resonances card**: **Find**, **Preview**, **Apply all** and **Amount** (decision 52). Apply
+all writes every proposal shown as one undo step, in place of the cuts it made before, then the
+lowest Off slots, turning Off its cuts no longer proposed; disabled with none, or applied as they
+stand, its hover saying which. Preview plays the cuts in the slots Apply all writes, at their
+placements, following Amount as it moves, a transient command as Match's is (decision 50); the
+shell plays it only with an editor, and closing the window or Reset ends it. With no slot to write,
+of Find's own or Off, nothing is proposed and Find's hover says why. Hover only, no help text.
 
 **A second column** (decision 30). The column stands at 1,048 of the 1,080 px budget, so a fourth
 card cannot go under the others, and the owner allowed the window to grow sideways (2026-10-15,
@@ -1318,8 +1336,7 @@ for a frame, while listening and the copy stay inside the analyser's budget (§4
 
 **Not in F4**: continuous or dynamic suppression; proposing dynamic bands; a decay test (it needs the
 excitation to stop, and ringing is a poor guide to audibility, §8.4); excluding a note's multiples
-by pitch tracking (§8.2); finding in the side chain or the output; auditioning a candidate before it
-is applied.
+by pitch tracking (§8.2); finding in the side chain or the output.
 
 **Tests** (written at the end): a fixed Q-10 resonance at 1 kHz under a melody of quarter-second
 notes is found within a forty-eighth of an octave, its Q within 20 %, and neither the melody's
@@ -1345,6 +1362,7 @@ reaching the new card; the finder inside the analyser's 2 ms budget (§4) at 192
 | **F4.1** | The finder's analysis: the rungs, the five spectra, peaks per frame, persistence, the long-term spectra, candidates, placement and ranking (`editor/finder.rs`). **Built** (2026-10-15): the finder's tests, the measurements above found by them | Unit tests at the end |
 | **F4.2** | Proposals: depth, Q, treated candidates, the solve; the graph's curve and triangles; Apply all, click, drag, keyboard; the Resonances card, Amount and the second column (opening 1,532 × 692); the DOX: `plugins/mxm-fx-eq-n/AGENTS.md` and its `NOTES.md`, and the Child DOX Index rows in `plugins/AGENTS.md` and the root `AGENTS.md`. **Built** (2026-10-15), with the editor's tests; its cost at 192 kHz is `finder_cost`'s, recorded in the plugin's `NOTES.md` (*Find*) | On Windows `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`, the release cost measurement; one agent-loop review of F4.1–F4.2 |
 | **F4.3** | The owner by ear, on real material | Owner sign-off |
+| **F4.4** | Decision 52: Find's Preview and the cuts Apply all owns (`find_applied`, `find_targets`, `apply_all`); Preview's slots carry a placement. **Built** (2026-10-29), held by `find_s_preview_plays_amount_and_apply_all_replaces_its_cuts` and the shell's `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode` | On Windows `python ws.py check`, the host tests; the owner in Resolve |
 
 ### 7.6 F5 — EQ match to a reference (revision 28; redesigned in revisions 32 and 34)
 

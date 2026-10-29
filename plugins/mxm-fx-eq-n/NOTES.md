@@ -86,10 +86,12 @@ undo it, and a request to turn solo off fails only when the shell already turned
 `solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell` and `audition.rs`'s tests hold the
 lifecycle.
 
-## Match's Preview is a transient command too
+## Preview, Match's and Find's, is a transient command too
 
-Plan §7.6, decision 50; the kit's exception for a transient, non-value action
-(`plugins/AGENTS.md`, *Editor*), as band solo is.
+Plan §7.5, §7.6, decisions 50 and 52; the kit's exception for a transient, non-value action
+(`plugins/AGENTS.md`, *Editor*), as band solo is. Find's came when its Amount turned out never to be
+heard (the owner, 2026-10-29: *"I cant see, to hear any difference"*; asked, *"Like Match"*). Its
+cuts may be placed, so each previewed slot carries its placement too.
 
 - **Why not a parameter.** Preview is an audition of bands not yet applied. Saved, a project would
   reopen playing bands it does not hold; automated or rendered, a render would play them; so
@@ -331,14 +333,22 @@ The full text of each follows, in *The editor in full*.
   stays inside the graph (`graph::peak_marker`), so a peak above 0 dB under Tilt is still grabbed. A drag from a peak makes a static bell at its frequency with its Q, only the gain
   following the drag, one undo step; frozen with no band selected, ← → walk the peaks and ADD
   makes the focused one's bell. With every slot in use nothing is made and the hover says why.
-- **Find in short** (plan §7.5, decisions 27–30): the Resonances card's toggle, offered only
+- **Find in short** (plan §7.5, decisions 27–30 and 52): the Resonances card's toggle, offered only
   with the analyser on; Find and Freeze each end the other, the analyser off or the editor closed
   ends it, and it is never saved. On, it learns from the pre-EQ input that plays (`finder.rs`);
   off, it holds what it learned, as a noise reduction holds its profile, until on again learns
   anew (the owner, 2026-10-27: "Just the audio you play to it"). It proposes static
   cut bells, never a continuous curve: dashed curve and labelled downward triangles on the graph;
   a click, a drag (gain following, a pair together), ADD on the keyboard's proposal or **Apply
-  all** writes them as ordinary bands, every slot field (`slot_writes`), one undo step each.
+  all** writes them, every slot field (`slot_writes`), one undo step each. **It works as Match
+  does** (decision 52): **Preview** plays the cuts in the slots Apply all writes; Apply all keeps a
+  record of what it wrote (`find_applied`), searches leave Find's own cuts out, so the proposals
+  are the whole set at the current Amount, and the next Apply all rewrites them in place, turning
+  Off those no longer proposed (`find_targets`). Applied as they stand, the proposals are not
+  drawn or offered (`proposals_shown`). One applied by hand goes into Find's slot at its
+  resonance, so nothing is cut twice, and is the player's unless it is the cut Apply all wrote.
+  Before it, Amount was never heard: the cuts played nothing until applied, and applied, Amount
+  never touched them.
   **Amount** (whole percent, 20 % by default) is view state, saved, a change marking the project
   dirty and ending no freeze (`ViewSettings::display`). It is written as it is dragged, so the
   proposals follow the slider, and marks the project dirty once, let go: written only when let go,

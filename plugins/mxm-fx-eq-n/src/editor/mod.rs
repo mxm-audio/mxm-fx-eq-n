@@ -13,8 +13,9 @@
 //!   or the patch is replaced; a Ctrl/Cmd press on a point solos that point while held. It crosses
 //!   `crate::audition`, so the DSP reads no editor state; the shell ends it on reset, deactivation
 //!   and restore, and the editor ends it on close.
-//! - **Find** (plan §7.5) listens to the input for resonances while it is on, and its proposals are
-//!   applied as ordinary bands, each one undo step ([`EqApp::apply_proposals`]).
+//! - **Find** (plan §7.5) listens to the input for resonances while it is on; Apply all writes its
+//!   proposals in place of the cuts it made before ([`EqApp::apply_all`], decision 52), and a
+//!   click, a drag or ADD one by hand ([`EqApp::apply_proposals`]), each one undo step.
 //! - **Match** (plan §7.6) learns a reference and the track, each held once learned, and proposes
 //!   the bands that bring the track's tone to the reference's, applied together as one undo step
 //!   ([`EqApp::apply_match`]); a reference can be saved by name and chosen for any track
@@ -172,6 +173,13 @@ type LinesBasis = (u64, u64, bool);
 /// The learned lines per cell: the reference's, then the track's.
 pub(crate) type LearnedLines = [Vec<Option<f32>>; 2];
 
+/// Where Find writes (plan §7.5, decision 52): each band as written with its slot and placement,
+/// and Find's own slots turned Off.
+pub(crate) struct FindTargets {
+    pub(crate) placed: Vec<(usize, mxm_fx_eq_n_dsp::Band, mxm_fx_eq_n_dsp::Placement)>,
+    pub(crate) off: Vec<usize>,
+}
+
 /// What the editor hands its worker (plan §7.5, §7.6): Find's search or Match's fit, one at a time.
 pub enum Task {
     Search(finder::Search),
@@ -284,12 +292,14 @@ pub struct EqApp {
     pub(crate) params: Arc<EqParams>,
     pub(crate) telemetry: Arc<Telemetry>,
     pub(crate) audition: Arc<Audition>,
-    /// Match's Preview (plan §7.6): the shell's handoff; whether it is on; the version of the
-    /// proposals last given it, `None` once it was cleared; and how many more frames what it plays
-    /// is held after an Apply, until the host has the bands.
+    /// Match's and Find's Preview (plan §7.5, §7.6): the shell's handoff; whether Match's is on and
+    /// whether Find's is; whose proposals were last given it (Find's or not), their version and the
+    /// slots of its own, `None` once it was cleared; and how many more frames what it plays is held
+    /// after Match's Apply, until the host has the bands.
     preview: Arc<crate::preview::Preview>,
     pub(crate) previewing: bool,
-    preview_published: Option<(u64, u32)>,
+    pub(crate) find_previewing: bool,
+    preview_published: Option<(bool, u64, u32)>,
     preview_hold: u32,
     pub(crate) history: history::Shared,
     analyser: Option<rtrb::Consumer<Block>>,
@@ -455,6 +465,7 @@ impl EqApp {
             audition: handles.audition,
             preview: handles.preview,
             previewing: false,
+            find_previewing: false,
             preview_published: None,
             preview_hold: 0,
             history: handles.history,
@@ -589,6 +600,7 @@ impl EqApp {
         self.shown_learned = false;
         // Preview is the window's moment, as solo is.
         self.previewing = false;
+        self.find_previewing = false;
         self.preview.clear();
         self.preview_published = None;
         self.telemetry.connect(false);
@@ -1124,14 +1136,10 @@ impl EqApp {
         self.worker = None;
     }
 
-    /// The EQ as heard (plan §7.5): every band in the sound, at its drawn gain under the gain
-    /// scale, with its placement; a bypassed band and a placed band in mono are not in it.
-    pub(crate) fn heard_eq(&self) -> finder::HeardEq {
-        self.heard_eq_except(&[])
-    }
-
-    /// [`heard_eq`](Self::heard_eq) without the bands in `skip`: Match's own, which its next fit
-    /// leaves out (plan §7.6, decision 51).
+    /// The EQ as heard (plan §7.5) without the bands in `skip`: every band in the sound, at its
+    /// drawn gain under the gain scale, with its placement; a bypassed band and a placed band in
+    /// mono are not in it. `skip` is Find's own or Match's own, which its next proposal leaves out
+    /// (decisions 51 and 52).
     pub(crate) fn heard_eq_except(&self, skip: &[usize]) -> finder::HeardEq {
         let sample_rate = self.sample_rate();
         let scale = self.gain_scale_now();
@@ -1184,9 +1192,144 @@ impl EqApp {
                     && self.dynamics_now(slot).range_db == 0.0
                     && !self.key_now(slot)
                     && self.placement_now(slot) == mxm_fx_eq_n_dsp::Placement::Stereo
-                    && applied.iter().any(|written| written.is(&band))
+                    && applied
+                        .iter()
+                        .any(|written| written.is(&band, mxm_fx_eq_n_dsp::Placement::Stereo))
             })
             .collect()
+    }
+
+    /// The slots holding a cut Find's Apply all wrote, as it was written (plan §7.5, decision 52):
+    /// static, unbypassed and unkeyed, not held by a gesture, its shape, frequency, gain, Q and
+    /// placement those of a band in `find_applied`. Find's searches leave them out and the next Apply
+    /// all replaces them; a band edited by hand since is the player's.
+    pub(crate) fn find_owned_slots(&self) -> Vec<usize> {
+        let applied = self
+            .params
+            .find_applied
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if applied.is_empty() {
+            return Vec::new();
+        }
+        (0..SLOTS)
+            .filter(|&slot| {
+                let band = self.band_now(slot);
+                band.shape.is_some()
+                    && !band.bypass
+                    && !self.open.holds(band_index(slot, Field::Type))
+                    && self.dynamics_now(slot).range_db == 0.0
+                    && !self.key_now(slot)
+                    && applied
+                        .iter()
+                        .any(|written| written.is(&band, self.placement_now(slot)))
+            })
+            .collect()
+    }
+
+    /// Where Find writes the bands of the proposals in `which` (plan §7.5, decision 52): each a
+    /// static bell, its gain the depth heard under the gain scale, at its placement (Stereo in a mono
+    /// layout), in the slot of Find's own that holds its resonance, at that placement within half a
+    /// semitone, else in the lowest Off slot. With `all`, as Apply all writes, Find's own slots left
+    /// over take the rest first, and those still left are turned Off. `None` when there is nothing
+    /// to write, it does not fit, or the gain scale is 0 %.
+    pub(crate) fn find_targets(&self, which: &[usize], all: bool) -> Option<FindTargets> {
+        let scale = self.gain_scale_now();
+        if scale <= f32::EPSILON {
+            return None;
+        }
+        let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
+        let mono = self.telemetry.mono();
+        let bands: Vec<(mxm_fx_eq_n_dsp::Band, mxm_fx_eq_n_dsp::Placement)> = which
+            .iter()
+            .filter_map(|&index| self.proposals.get(index))
+            .flat_map(|proposal| proposal.bands.iter())
+            .map(|band| {
+                let placement = if mono {
+                    mxm_fx_eq_n_dsp::Placement::Stereo
+                } else {
+                    band.domain.placement()
+                };
+                let written = mxm_fx_eq_n_dsp::Band {
+                    shape: Some(Shape::Bell),
+                    bypass: false,
+                    freq: self.clamp_freq(band.freq),
+                    gain_db: (band.gain_db / scale).clamp(-range, range),
+                    q: band.q,
+                    slope: DEFAULT_SLOPE,
+                };
+                (written, placement)
+            })
+            .collect();
+        if bands.is_empty() {
+            return None;
+        }
+        let mut owned = self.find_owned_slots();
+        let held: Vec<Option<usize>> = bands
+            .iter()
+            .map(|(band, placement)| {
+                let at = owned.iter().position(|&slot| {
+                    self.placement_now(slot) == *placement
+                        && (self.band_now(slot).freq / band.freq).log2().abs()
+                            <= finder::HALF_SEMITONE
+                })?;
+                Some(owned.remove(at))
+            })
+            .collect();
+        let left: Vec<usize> = if all { owned } else { Vec::new() };
+        let mut spare = left.iter().copied().chain(self.free_slots());
+        let mut placed = Vec::with_capacity(bands.len());
+        for ((band, placement), slot) in bands.into_iter().zip(held) {
+            placed.push((slot.or_else(|| spare.next())?, band, placement));
+        }
+        drop(spare);
+        let off = left
+            .into_iter()
+            .filter(|slot| !placed.iter().any(|(used, ..)| used == slot))
+            .collect();
+        Some(FindTargets { placed, off })
+    }
+
+    /// The writes for `targets`: each band's every field, static and unkeyed at its placement, and
+    /// Off for the slots turned Off.
+    fn find_writes(&self, targets: &FindTargets) -> Vec<(usize, f32)> {
+        let mut writes: Vec<(usize, f32)> = Vec::new();
+        for &(slot, band, placement) in &targets.placed {
+            writes.extend(self.slot_writes(
+                slot,
+                band,
+                mxm_fx_eq_n_dsp::Dynamics::STATIC,
+                false,
+                placement,
+            ));
+        }
+        for &slot in &targets.off {
+            writes.push((band_index(slot, Field::Type), 0.0));
+        }
+        writes
+    }
+
+    /// What Apply all writes for the proposals shown, `None` when there is nothing to write.
+    fn find_all(&self) -> Option<(FindTargets, Vec<(usize, f32)>)> {
+        let all: Vec<usize> = (0..self.proposals.len()).collect();
+        let targets = self.find_targets(&all, true)?;
+        let writes = self.find_writes(&targets);
+        Some((targets, writes))
+    }
+
+    /// Whether the proposals shown are applied as they stand: Apply all would change nothing.
+    pub(crate) fn find_applied_as_shown(&self) -> bool {
+        self.find_all().is_some_and(|(_, writes)| {
+            writes
+                .iter()
+                .all(|&(index, value)| (self.normalised_now(index) - value).abs() <= 1.0e-6)
+        })
+    }
+
+    /// Whether Find's proposals are offered: drawn, walked and applied one by one. Not while they
+    /// are applied as they stand, when their curve is the EQ's and their cuts the bands drawn.
+    pub(crate) fn proposals_shown(&self) -> bool {
+        self.find && !self.proposals.is_empty() && !self.find_applied_as_shown()
     }
 
     /// The slots Apply writes, in its order: Match's own, then the Off ones, lowest first each.
@@ -1208,10 +1351,10 @@ impl EqApp {
         }
     }
 
-    /// Why Find proposes nothing although it listens: every slot in use, or the gain scale at 0 %,
-    /// where a bell is flat.
+    /// Why Find proposes nothing although it listens: no slot to write, of its own or Off, or the
+    /// gain scale at 0 %, where a bell is flat.
     pub(crate) fn find_refusal(&self) -> Option<FindRefusal> {
-        if self.free_slots().next().is_none() {
+        if self.free_slots().next().is_none() && self.find_owned_slots().is_empty() {
             Some(FindRefusal::Full)
         } else if self.gain_scale_now() <= f32::EPSILON {
             Some(FindRefusal::NoGain)
@@ -1221,11 +1364,29 @@ impl EqApp {
     }
 
     /// What proposals depend on besides the candidates: every parameter as this editor last set
-    /// it, Amount and the layout.
+    /// it, what Find applied (which decides which bands are its own: how many, and the newest),
+    /// Amount and the layout.
     fn proposal_basis(&self, amount: u8) -> Vec<u32> {
         let mut basis: Vec<u32> = (0..self.pointers.len())
             .map(|index| self.normalised_now(index).to_bits())
             .collect();
+        {
+            let applied = self
+                .params
+                .find_applied
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            basis.push(applied.len() as u32);
+            if let Some(newest) = applied.last() {
+                basis.extend([
+                    newest.kind as u32,
+                    newest.freq.to_bits(),
+                    newest.gain_db.to_bits(),
+                    newest.q.to_bits(),
+                    newest.place as u32,
+                ]);
+            }
+        }
         basis.push(u32::from(amount));
         basis.push(u32::from(self.telemetry.mono()));
         basis
@@ -1272,6 +1433,9 @@ impl EqApp {
         // search that should have found them never ran.
         let refind = heard_new || self.refind_pending;
         let revision = self.finder.revision();
+        // The whole set of cuts each time, on the EQ without Find's own, which Apply all replaces
+        // (decision 52): Amount resizes what was applied rather than adds to it.
+        let owned = self.find_owned_slots();
         let search = finder::Search {
             evidence: self.finder.evidence().clone(),
             candidates: (!refind).then(|| self.candidates.clone()),
@@ -1280,9 +1444,9 @@ impl EqApp {
             } else {
                 Vec::new()
             },
-            heard: self.heard_eq(),
+            heard: self.heard_eq_except(&owned),
             amount: settings.amount_share(),
-            free_slots: self.free_slots().count(),
+            free_slots: owned.len() + self.free_slots().count(),
             shown: self.proposals.clone(),
             listen: self.finder.listen(),
         };
@@ -1361,45 +1525,18 @@ impl EqApp {
         self.listen_seen = self.finder.listen();
     }
 
-    /// Applies proposals (plan §7.5): each band a static, unkeyed bell at its placement in the
-    /// lowest Off slots, every field written, its gain the depth heard under the gain scale. One
-    /// undo step; `opened` keeps the fields in the drag's gesture that follows. Returns the slots,
-    /// empty when they do not fit.
+    /// Applies proposals by hand (plan §7.5): a click, a drag or ADD. Each band a static, unkeyed
+    /// bell at its placement, every field written, its gain the depth heard under the gain scale,
+    /// in the slot of Find's own cut at its resonance, so nothing is cut twice, else in the lowest
+    /// Off slot ([`find_targets`](Self::find_targets)); the player's from then on, unless it is the
+    /// cut Apply all wrote there. One undo step; `opened` keeps the fields in the drag's gesture
+    /// that follows. Returns the slots, empty when they do not fit.
     pub(crate) fn apply_proposals(&mut self, which: &[usize], opened: bool) -> Vec<usize> {
-        let scale = self.gain_scale_now();
-        let bands: Vec<finder::ProposedBand> = which
-            .iter()
-            .filter_map(|&index| self.proposals.get(index))
-            .flat_map(|proposal| proposal.bands.iter().copied())
-            .collect();
-        let slots: Vec<usize> = self.free_slots().take(bands.len()).collect();
-        if bands.is_empty() || slots.len() < bands.len() || scale <= f32::EPSILON {
+        let Some(targets) = self.find_targets(which, false) else {
             return Vec::new();
-        }
-        let range = mxm_fx_eq_n_dsp::GAIN_RANGE as f32;
-        let mono = self.telemetry.mono();
-        let mut writes: Vec<(usize, f32)> = Vec::new();
-        for (&slot, band) in slots.iter().zip(&bands) {
-            let placement = if mono {
-                mxm_fx_eq_n_dsp::Placement::Stereo
-            } else {
-                band.domain.placement()
-            };
-            writes.extend(self.slot_writes(
-                slot,
-                mxm_fx_eq_n_dsp::Band {
-                    shape: Some(Shape::Bell),
-                    bypass: false,
-                    freq: self.clamp_freq(band.freq),
-                    gain_db: (band.gain_db / scale).clamp(-range, range),
-                    q: band.q,
-                    slope: DEFAULT_SLOPE,
-                },
-                mxm_fx_eq_n_dsp::Dynamics::STATIC,
-                false,
-                placement,
-            ));
-        }
+        };
+        let writes = self.find_writes(&targets);
+        let slots: Vec<usize> = targets.placed.iter().map(|&(slot, ..)| slot).collect();
         self.close_open();
         if opened {
             for (index, value) in writes {
@@ -1410,8 +1547,8 @@ impl EqApp {
         }
         self.select_set(&slots, slots.first().copied());
         self.edge = None;
-        if let Some(band) = bands.first() {
-            self.focus_freq = self.clamp_freq(band.freq);
+        if let Some((_, band, _)) = targets.placed.first() {
+            self.focus_freq = band.freq;
         }
         // What was applied leaves the proposals at once, so it cannot be applied twice before the
         // next search shows what is left.
@@ -1421,6 +1558,44 @@ impl EqApp {
             !which.contains(&(index - 1))
         });
         self.proposals_version += 1;
+        self.focus_proposal = None;
+        self.proposals_stale = true;
+        slots
+    }
+
+    /// Apply all (plan §7.5, decision 52): every proposal shown, written in place of the cuts the
+    /// last Apply all made ([`find_targets`](Self::find_targets)), those no longer proposed turned
+    /// Off, as one undo step, and the bands written kept as Find's. The proposals stay, applied as
+    /// they stand, so the next Amount shows and plays against them. Returns the slots, empty when
+    /// they do not fit or are applied as they stand.
+    pub(crate) fn apply_all(&mut self) -> Vec<usize> {
+        if self.find_applied_as_shown() {
+            return Vec::new();
+        }
+        let Some((targets, writes)) = self.find_all() else {
+            return Vec::new();
+        };
+        let slots: Vec<usize> = targets.placed.iter().map(|&(slot, ..)| slot).collect();
+        self.close_open();
+        self.instant(&writes);
+        {
+            let mut applied = self
+                .params
+                .find_applied
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            applied.extend(targets.placed.iter().filter_map(|(_, band, placement)| {
+                crate::learned::AppliedBand::of(band, *placement)
+            }));
+            let excess = applied.len().saturating_sub(crate::learned::APPLIED_KEPT);
+            applied.drain(..excess);
+        }
+        self.mark_dirty();
+        self.select_set(&slots, slots.first().copied());
+        self.edge = None;
+        if let Some((_, band, _)) = targets.placed.first() {
+            self.focus_freq = band.freq;
+        }
         self.focus_proposal = None;
         self.proposals_stale = true;
         slots
@@ -1506,16 +1681,31 @@ impl EqApp {
         self.previewing = on;
     }
 
-    /// What Preview plays, given the shell whenever the proposals or Match's own slots change: each
-    /// band in the slot Apply would write, as Apply writes it, replacing a band of Match's there,
-    /// and Off in a slot of Match's that Apply would turn Off (decision 51); nothing while Preview
-    /// is off or there are none. After an Apply what it played is held for [`PREVIEW_HOLD_FRAMES`],
-    /// so the bands written take over from it without a gap.
+    /// What Preview plays, given the shell whenever the proposals or the feature's own slots
+    /// change: Find's while its Preview is on and it has proposals (plan §7.5, decision 52), else
+    /// Match's while its Preview is on (§7.6, decision 51); the two never have proposals at once.
+    /// Each band in the slot Apply would write, as Apply writes it, at its placement, replacing a
+    /// band of the feature's own there, and Off in a slot of its own that Apply would turn Off;
+    /// nothing while neither is on or there are none. After Match's Apply what it played is held for
+    /// [`PREVIEW_HOLD_FRAMES`], so the bands written take over from it without a gap; Find's
+    /// proposals stay after Apply all, so its Preview plays on.
     pub(crate) fn update_preview(&mut self) {
-        let owned = self.match_owned_slots();
+        let find = self.find_previewing && self.find && !self.proposals.is_empty();
+        let owned = if find {
+            self.find_owned_slots()
+        } else {
+            self.match_owned_slots()
+        };
         let owned_mask = owned.iter().fold(0u32, |mask, &slot| mask | 1 << slot);
-        let wanted = (self.previewing && !self.match_bands.is_empty())
-            .then_some((self.match_version, owned_mask));
+        let wanted = if find {
+            Some((true, self.proposals_version, owned_mask))
+        } else {
+            (self.previewing && !self.match_bands.is_empty()).then_some((
+                false,
+                self.match_version,
+                owned_mask,
+            ))
+        };
         if wanted == self.preview_published {
             return;
         }
@@ -1523,17 +1713,32 @@ impl EqApp {
             self.preview_hold -= 1;
             return;
         }
-        match self.match_writes().filter(|_| wanted.is_some()) {
-            Some((placed, _)) => {
+        let entry = |slot: usize,
+                     band: &mxm_fx_eq_n_dsp::Band,
+                     placement: mxm_fx_eq_n_dsp::Placement|
+         -> Option<crate::preview::Entry> {
+            let shape = band.shape?;
+            Some((
+                slot,
+                Some((shape, band.freq, band.gain_db, band.q, placement)),
+                owned.contains(&slot),
+            ))
+        };
+        let entries: Option<Vec<crate::preview::Entry>> = match wanted {
+            Some((true, ..)) => self.find_all().map(|(targets, _)| {
+                let mut entries: Vec<crate::preview::Entry> = targets
+                    .placed
+                    .iter()
+                    .filter_map(|&(slot, band, placement)| entry(slot, &band, placement))
+                    .collect();
+                entries.extend(targets.off.iter().map(|&slot| (slot, None, true)));
+                entries
+            }),
+            Some((false, ..)) => self.match_writes().map(|(placed, _)| {
                 let mut entries: Vec<crate::preview::Entry> = placed
                     .iter()
                     .filter_map(|&(slot, band)| {
-                        let shape = band.shape?;
-                        Some((
-                            slot,
-                            Some((shape, band.freq, band.gain_db, band.q)),
-                            owned.contains(&slot),
-                        ))
+                        entry(slot, &band, mxm_fx_eq_n_dsp::Placement::Stereo)
                     })
                     .collect();
                 entries.extend(
@@ -1542,8 +1747,12 @@ impl EqApp {
                         .skip(placed.len())
                         .map(|&slot| (slot, None, true)),
                 );
-                self.preview.publish(&entries);
-            }
+                entries
+            }),
+            None => None,
+        };
+        match entries {
+            Some(entries) => self.preview.publish(&entries),
             None => self.preview.clear(),
         }
         self.preview_hold = 0;
@@ -2045,11 +2254,9 @@ impl EqApp {
                 .match_applied
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            applied.extend(
-                placed
-                    .iter()
-                    .filter_map(|(_, band)| crate::learned::AppliedBand::of(band)),
-            );
+            applied.extend(placed.iter().filter_map(|(_, band)| {
+                crate::learned::AppliedBand::of(band, mxm_fx_eq_n_dsp::Placement::Stereo)
+            }));
             let excess = applied.len().saturating_sub(crate::learned::APPLIED_KEPT);
             applied.drain(..excess);
         }
@@ -2171,6 +2378,12 @@ impl EqApp {
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_empty()
+            && self
+                .params
+                .find_applied
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
             && self.params.view.get() == ViewSettings::default()
     }
 
@@ -2178,15 +2391,22 @@ impl EqApp {
     /// should delete everything from the plugin instance and set the init values"*). Every
     /// parameter back to Init, the empty EQ, as one undo step, so Undo brings the bands back,
     /// which the preset bar's Init, a new undo epoch, cannot; the bar then names no preset. And
-    /// everything else the instance holds, outside the history: Learn, Find, a freeze and Preview
-    /// end, what Match learned, what it is matched to and the bands it applied are deleted, and the
-    /// view settings are the defaults. Saved references are files, the person's, and stay.
+    /// everything else the instance holds, outside the history: Learn, Find, a freeze and both
+    /// Previews end, what Match learned, what it is matched to and the bands Match and Find applied
+    /// are deleted, and the view settings are the defaults. Saved references are files, the
+    /// person's, and stay.
     pub(crate) fn reset(&mut self) {
         self.unfreeze();
         self.end_find();
         self.end_match();
         self.shown_learned = false;
         self.set_preview(false);
+        self.find_previewing = false;
+        self.params
+            .find_applied
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.matcher.restart();
         self.params.learned.store(None);
         *self
@@ -2366,7 +2586,7 @@ impl EqApp {
                 // On a proposal, ADD applies it (plan §7.5).
                 let proposal = self
                     .focus_proposal
-                    .filter(|_| self.find && self.selected.is_none())
+                    .filter(|_| self.proposals_shown() && self.selected.is_none())
                     .filter(|&index| {
                         self.proposals.get(index).is_some_and(|proposal| {
                             (proposal.freq - self.focus_freq).abs() < 1.0e-3
@@ -2480,7 +2700,7 @@ impl EqApp {
             Direction::Up | Direction::Down => return,
         };
         // With Find's proposals and no band selected, ← → walk the proposals (§7.5).
-        if self.selected.is_none() && !coarse && self.find && !self.proposals.is_empty() {
+        if self.selected.is_none() && !coarse && self.proposals_shown() {
             let mut by_freq: Vec<(f32, usize)> = self
                 .proposals
                 .iter()
