@@ -52,7 +52,6 @@ pub struct MxmFxEqN {
     share: Tap,
     instance: Arc<instances::Instance>,
     channels: usize,
-    offline: bool,
     /// The phase the parameters last asked for while active, reported to the host as its latency
     /// (plan §7.7); the engine's own is the one in force.
     asked_phase: Phase,
@@ -81,7 +80,6 @@ impl Default for MxmFxEqN {
             share,
             instance,
             channels: 2,
-            offline: false,
             asked_phase: Phase::ZeroLatency,
         }
     }
@@ -99,11 +97,12 @@ fn latency_of(phase: Phase, sample_rate: f32) -> u32 {
 
 impl MxmFxEqN {
     /// The parameters, the solo request and Match's Preview, into the engine. Solo and Preview are
-    /// auditions: never in an offline render, and never without an editor to hold them. A
-    /// previewed band plays in its slot only while the slot is Off, static, unkeyed and Stereo, as
-    /// Apply writes it; each slot is set once, so a band's transitions run as any band's.
+    /// auditions, played only while an editor holds them, whatever mode the host says it runs in:
+    /// Resolve says offline as it plays (the owner, 2026-10-29). A previewed band plays in its slot
+    /// only while the slot is Off, static, unkeyed and Stereo, as Apply writes it; each slot is set
+    /// once, so a band's transitions run as any band's.
     fn sync(&mut self) {
-        let auditioning = !self.offline && self.telemetry.connected();
+        let auditioning = self.telemetry.connected();
         if auditioning {
             self.preview.read(&mut self.previewed);
         } else {
@@ -160,7 +159,6 @@ impl MxmFxEqN {
             return false;
         }
         self.channels = input_channels.clamp(1, 2);
-        self.offline = offline;
         self.telemetry.publish_sample_rate(sample_rate);
         self.telemetry.publish_channels(self.channels);
         self.tap.discontinuity(sample_rate);

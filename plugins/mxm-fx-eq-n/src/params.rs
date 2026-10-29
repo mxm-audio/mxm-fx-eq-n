@@ -526,6 +526,8 @@ pub struct EqParams {
     #[persist = "preset"]
     pub preset: RwLock<mxm_preset::PresetIdentity>,
     /// The analyser's settings: view state, saved with the project, never a preset's (plan §4).
+    /// Each field below whose restore may install other than what was saved names its key to the
+    /// wrapper ([`VIEW_KEY`], [`IDENTITY_KEY`], [`LEARNED_KEY`]).
     #[persist = "view"]
     pub view: crate::view::ViewField,
     /// The instance's id (plan §7.8): host state beside the view settings, never a preset's, so an
@@ -539,6 +541,15 @@ pub struct EqParams {
     #[persist = "match-to"]
     pub match_to: RwLock<crate::learned::MatchTo>,
 }
+
+/// The persisted keys of the fields whose restore may install other than what was saved, each the
+/// `#[persist]` name above: an id another instance holds, settings or a learn from before a field
+/// they now have. nice-plug's wrapper rolls back a whole restore, bands and all, when a field reads
+/// back changed and its key did not say so (its `PATCHES.md`, defects 9 and 11); the host test
+/// `a_restore_that_reads_back_changed_keeps_its_bands` holds it.
+pub const VIEW_KEY: &str = "view";
+pub const IDENTITY_KEY: &str = "instance";
+pub const LEARNED_KEY: &str = "match-learned";
 
 impl Default for EqParams {
     fn default() -> Self {

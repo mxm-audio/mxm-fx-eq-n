@@ -66,8 +66,11 @@ impl LearnedField {
 }
 
 impl<'a> PersistentField<'a, Option<Learned>> for LearnedField {
+    /// A host's restore. One saved before a field it now has reads back with that field's default:
+    /// told to the wrapper, which otherwise rolls back the whole restore.
     fn set(&self, new_value: Option<Learned>) {
         self.store(new_value.map(Arc::new));
+        nice_plug::wrapper::accept_canonicalized_persistent_field(crate::params::LEARNED_KEY);
     }
 
     fn map<F, R>(&self, f: F) -> R

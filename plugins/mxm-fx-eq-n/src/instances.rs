@@ -90,6 +90,9 @@ impl<'a> PersistentField<'a, u64> for IdentityField {
         let id = if taken { fresh_id() } else { new_value };
         self.id.store(id, Ordering::Release);
         drop(all);
+        // A new id is this field's to give: told to the wrapper, which otherwise rolls back the
+        // whole restore, bands and all, for a field that reads back changed.
+        nice_plug::wrapper::accept_canonicalized_persistent_field(crate::params::IDENTITY_KEY);
     }
 
     fn map<F, R>(&self, f: F) -> R

@@ -76,12 +76,15 @@ ended a solo. The editor asks with the count it read, so a request made before a
 undo it, and a request to turn solo off fails only when the shell already turned it off.
 - **The shell ends solo** in `reset` and `deactivate`. A state restore and an activation both run
   `reset` (the wrapper's state transaction reactivates and resets).
-- **Each block it passes the request to the DSP's `set_solo`** only with an editor connected and
-  never in an offline render.
+- **Each block it passes the request to the DSP's `set_solo`** only with an editor connected,
+  whatever mode the host says it runs in. **Why not offline too**: Resolve tells a VST3 it runs
+  offline while it plays, so solo and Preview were never heard there (the owner, 2026-10-29: "solo
+  does nothing to the sound"); and a render made with the editor open is the player's to avoid
+  (the owner: "I never render with open audio effects anyway"). The editor ends it on close.
 - **Never waits, locks or allocates.**
 
-The editor ends it on close (E3). `solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell`
-and `audition.rs`'s tests hold the lifecycle.
+`solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell` and `audition.rs`'s tests hold the
+lifecycle.
 
 ## Match's Preview is a transient command too
 
@@ -96,13 +99,13 @@ Plan §7.6, decision 50; the kit's exception for a transient, non-value action
   audio thread reads the count, the bands and the count again, and keeps what it last read whole
   when they differ. Latest wins: it is a state, not a queue of acts, so nothing is dropped that a
   later write does not replace.
-- **The process boundary.** `MxmFxEqN::sync`, each block: only with an editor connected and never
-  offline; a band only in a slot that is Off, played static, unkeyed and Stereo, as Apply writes
+- **The process boundary.** `MxmFxEqN::sync`, each block: only with an editor connected, whatever
+  the host's mode, as solo (above); a band only in a slot that is Off, played static, unkeyed and Stereo, as Apply writes
   it; each slot set once a block, since the engine starts a band's transition on any change. A
   reset or a restore leaves it to the editor, which hands it over anew whenever the proposals
   change. **The editor ends it** on close; after Apply it holds what it played for
   `PREVIEW_HOLD_FRAMES`, while the host takes the bands written, so the sound does not dip.
-- **Tests**: `preview_plays_in_an_off_slot_with_an_editor_and_never_offline`,
+- **Tests**: `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode`,
   `with_an_editor_open_processing_never_allocates` (a preview published mid-run),
   `preview_hands_the_proposals_to_the_free_slots` and `preview.rs`'s own.
 
@@ -619,8 +622,26 @@ cutting up to 6 dB over −30 dB with a 1 ms attack, and *Resonance tamer*, a na
   restored static through the wrapper's own `filter_state`, the EQ on the plain stereo
   configuration, a restored Linear phase delaying the render by its latency to the bit, auto gain
   on a restored broadband boost at the dry level, the instance id kept through the host's state,
-  and the player's bypass bit-exact dry. They read this repository's own
-  `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle there first).
+  a restore that reads back changed keeping its bands, and the player's bypass bit-exact dry. They
+  read this repository's own `target/bundled/` (with a shared `CARGO_TARGET_DIR`, copy the bundle
+  there first).
+
+## A restore that reads back changed
+
+nice-plug's wrapper restores a state as one transaction (its `PATCHES.md`, defects 8, 9 and 11):
+after the persisted fields are set it serialises them again, and when one reads back other than it
+was saved, it takes that field to have refused its input and rolls the whole restore back, so the
+EQ comes up at Init. A field that installed something else on purpose must say so, by its key,
+inside the restore. Three of the EQ's do:
+- **`instance`**: an id a live instance already holds (a duplicated track, or two instances given
+  one project's state) is replaced by a new one.
+- **`view`**: settings saved before a setting existed read back with its default.
+- **`match-learned`**: a learn saved before the spreads (plan §7.6) reads back with them empty.
+
+Found in Resolve (the owner, 2026-10-29: *"Why is it empty when I open it again"*): the EQ on the
+voice-over came back with no bands, nothing learned and every view setting at its default.
+`a_restore_that_reads_back_changed_keeps_its_bands` fails on a build without the three and passes
+with them. `preset` and `match-to` read back as saved.
 
 ## The slower checks
 

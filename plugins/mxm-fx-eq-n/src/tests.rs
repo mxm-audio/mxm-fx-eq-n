@@ -206,7 +206,7 @@ fn a_saved_eq_is_heard_from_its_first_sample() {
 }
 
 #[test]
-fn solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell() {
+fn solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell() {
     let mut plugin = prepared(2);
     set_band(
         &plugin.params.bands[2],
@@ -247,20 +247,22 @@ fn solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell() {
     plugin.deactivate();
     assert_eq!(plugin.audition.slot(), None);
 
-    // An offline render never solos, editor or not.
+    // Offline, as Resolve says it is while it plays, an editor's solo is heard all the same, and
+    // none without the editor.
     assert!(plugin.prepare(48_000.0, 2, true));
     ask(&plugin, 2);
-    for _ in 0..10 {
-        run(&mut plugin, &mut buffers);
-    }
+    run(&mut plugin, &mut buffers);
+    assert_eq!(plugin.engine.audition(), Some(2));
+    plugin.telemetry.connect(false);
+    run(&mut plugin, &mut buffers);
     assert_eq!(plugin.engine.audition(), None);
 }
 
-/// **Match's Preview is heard in an Off slot, with an editor, never offline** (plan §7.6): a +12 dB
-/// bell at 1 kHz previewed in slot 3 is not heard without an editor, is heard with one, gives way
-/// to a band the player puts in that slot, and is never heard in an offline render.
+/// **Match's Preview is heard in an Off slot, with an editor, whatever the mode** (plan §7.6): a
+/// +12 dB bell at 1 kHz previewed in slot 3 is not heard without an editor, is heard with one, gives
+/// way to a band the player puts in that slot, and is heard offline too, as Resolve plays.
 #[test]
-fn preview_plays_in_an_off_slot_with_an_editor_and_never_offline() {
+fn preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode() {
     let tone = |plugin: &mut MxmFxEqN| -> f64 {
         let input: Vec<f32> = (0..96_000)
             .map(|i| (0.25 * (TAU * 1_000.0 * i as f64 / 48_000.0).sin()) as f32)
@@ -297,7 +299,7 @@ fn preview_plays_in_an_off_slot_with_an_editor_and_never_offline() {
     );
     assert!(plugin.prepare(48_000.0, 2, true));
     let heard = tone(&mut plugin);
-    assert!(heard.abs() < 0.01, "offline: {heard}");
+    assert!((heard - 12.0).abs() < 0.05, "offline: {heard}");
 }
 
 #[test]

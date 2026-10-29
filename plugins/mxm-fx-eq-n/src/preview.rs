@@ -1,11 +1,11 @@
 //! Match's Preview (plan §7.6): the proposed bands heard before they are applied. A transient
 //! command, as band solo is (`audition.rs`): no id, state or preset value, so a project never
-//! reopens previewing and a render never plays one.
+//! reopens previewing and automation never plays one.
 //!
 //! - **Into the free slots**: the editor puts each proposed band in the slot Apply would write, and
-//!   the shell plays it there in place of the slot's Off, each block, only with an editor connected
-//!   and never offline (`MxmFxEqN::sync`); a slot the player has since used is the player's. Each
-//!   slot is set once a block, so the engine's transitions run as for any band.
+//!   the shell plays it there in place of the slot's Off, each block, only with an editor connected,
+//!   whatever mode the host says it runs in (`MxmFxEqN::sync`); a slot the player has since used is
+//!   the player's. Each slot is set once a block, so the engine's transitions run as for any band.
 //! - **A sequence lock of atomics**: the editor writes the bands between two counts of a sequence,
 //!   odd while it writes; the audio thread reads the count, the bands and the count again, and keeps
 //!   what it last read whole when they differ. One writer, the editor; nothing allocates, locks or

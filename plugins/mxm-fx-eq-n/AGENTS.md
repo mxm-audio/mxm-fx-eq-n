@@ -59,6 +59,11 @@ No control map (plan §6): no collection role fits on-demand bands.
   `default_missing_legacy_parameter`, a host state through `filter_state`
   (`preset::add_missing_at_defaults`), which also extends a loaded preset's baseline so it stays
   clean.
+- **A persisted field whose restore may install other than what was saved says so**, with
+  `nice_plug::wrapper::accept_canonicalized_persistent_field` and its key (`params::VIEW_KEY`,
+  `IDENTITY_KEY`, `LEARNED_KEY`); otherwise the wrapper rolls back the whole restore, bands and
+  all ([NOTES.md § Restores](NOTES.md#a-restore-that-reads-back-changed)).
+  `a_restore_that_reads_back_changed_keeps_its_bands` holds it.
 - **Automation belongs to the slot number** (decision 10). A new band takes the lowest Off slot,
   and a preset's band 3 is slot 3. No ownership state exists.
 
@@ -114,16 +119,17 @@ transaction.
 - `audition.rs` is one atomic word, the band asked for and a count of the shell's endings; a request
   made before an ending cannot undo it.
 - **The shell ends solo** in `reset` and `deactivate` (a restore and an activation both reset);
-  **each block passes it to `set_solo`** only with an editor connected and never offline; it never
-  waits, locks or allocates. The editor ends it on close.
-- `solo_needs_an_editor_never_plays_offline_and_ends_with_the_shell` and `audition.rs`'s tests.
+  **each block passes it to `set_solo`** only with an editor connected, whatever mode the host
+  says it runs in (Resolve says offline as it plays); it never waits, locks or allocates. The
+  editor ends it on close.
+- `solo_needs_an_editor_whatever_the_mode_and_ends_with_the_shell` and `audition.rs`'s tests.
 
 ## Match's Preview is a transient command too — [NOTES.md § Why](NOTES.md#matchs-preview-is-a-transient-command-too)
 
 - **No id, state or preset value**, as solo (plan §7.6, decision 50); `preview.rs`, the bands by
   the slot Apply writes, one writer, latest wins. **The shell plays it** each block only with an
-  editor connected, never offline, only in an Off slot; **the editor ends it** on close.
-- `preview_plays_in_an_off_slot_with_an_editor_and_never_offline` and
+  editor connected, whatever the host's mode, only in an Off slot; **the editor ends it** on close.
+- `preview_plays_in_an_off_slot_with_an_editor_whatever_the_mode` and
   `preview_hands_the_proposals_to_the_free_slots`.
 
 ## The analyser's and the meter's handoffs — [NOTES.md § The handoffs](NOTES.md#the-handoffs-in-full)

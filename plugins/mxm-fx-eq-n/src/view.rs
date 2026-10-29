@@ -237,10 +237,13 @@ impl ViewField {
 }
 
 impl<'a> PersistentField<'a, ViewSettings> for ViewField {
-    /// A host's restore: the wrapper calls this only when it deserialises saved state.
+    /// A host's restore: the wrapper calls this only when it deserialises saved state. Settings
+    /// saved before one existed read back with its default: told to the wrapper, which otherwise
+    /// rolls back the whole restore.
     fn set(&self, new_value: ViewSettings) {
         self.edit(new_value);
         self.restores.fetch_add(1, Ordering::AcqRel);
+        nice_plug::wrapper::accept_canonicalized_persistent_field(crate::params::VIEW_KEY);
     }
 
     fn map<F, R>(&self, f: F) -> R

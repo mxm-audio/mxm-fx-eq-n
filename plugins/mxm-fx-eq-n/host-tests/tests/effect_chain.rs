@@ -472,6 +472,57 @@ fn a_restored_broadband_boost_with_auto_gain_renders_at_the_dry_level() {
     assert!(change.abs() < 0.1, "{change} dB");
 }
 
+/// **A restore that reads back changed keeps its bands** (plan §7.8): nice-plug rolls back a whole
+/// restore when a persisted field reads back other than it was saved without saying so. One EQ's
+/// state into a second in the same process, as a duplicated track has it: the second takes a new
+/// id and keeps the band. Then a state whose view settings and learn are from before fields they
+/// now have: each band still comes back.
+#[test]
+fn a_restore_that_reads_back_changed_keeps_its_bands() {
+    let Some(effect) = eq_n() else {
+        return;
+    };
+    let effects = [(effect.as_path(), EFFECT_ID), (effect.as_path(), EFFECT_ID)];
+    let mut harness =
+        Harness::with_fx(&source(), SOURCE_ID, 1, &effects).expect("the chain builds");
+    let mut state = dynamic_bell(&mut harness.fx[0].instance);
+    load_state(&mut harness.fx[0].instance, &state);
+    let held = save_state(&mut harness.fx[0].instance)["fields"]["instance"].clone();
+    load_state(&mut harness.fx[1].instance, &state);
+    assert_eq!(text(&mut harness.fx[1].instance, "Band 1 type"), "Bell");
+    assert_ne!(
+        save_state(&mut harness.fx[1].instance)["fields"]["instance"],
+        held,
+        "the id was taken"
+    );
+
+    let older = [
+        ("view", json!(r#"{"analyser":false}"#), 2, "Low shelf"),
+        (
+            "match-learned",
+            json!(
+                r#"{"cells_per_octave":48.0,"lowest_hz":20.0,"input":[],"output":[],"seconds":1.0,"sample_rate":48000.0}"#
+            ),
+            3,
+            "High shelf",
+        ),
+    ];
+    for (key, saved, kind, shape) in older {
+        let fields = state["fields"].as_object_mut().expect("persisted fields");
+        assert!(fields.contains_key(key), "{key}: {fields:?}");
+        fields.insert(key.into(), saved);
+        let params = state["params"].as_object_mut().expect("parameter map");
+        params.insert("type_1".into(), json!({"i32": kind}));
+        load_state(&mut harness.fx[0].instance, &state);
+        assert_eq!(
+            text(&mut harness.fx[0].instance, "Band 1 type"),
+            shape,
+            "{key}"
+        );
+    }
+    harness.shutdown();
+}
+
 /// **The instance id is the host's state, never a preset's** (plan §7.8): restored, it is saved
 /// again as it came.
 #[test]
