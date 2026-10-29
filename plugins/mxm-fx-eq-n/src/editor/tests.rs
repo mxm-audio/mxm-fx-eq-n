@@ -4632,10 +4632,53 @@ fn delete_and_duplicate_take_the_whole_selection() {
     assert_eq!(rig.depth(), depth, "nothing copied, no undo step");
 }
 
-/// **Reset empties the EQ in one undo step** (the owner, 2026-10-29): every band Off and the
-/// output back to Init's, which Undo takes back whole; at Init it has nothing to write.
+/// **Reset makes the instance as newly inserted** (the owner, 2026-10-29: *"reset should delete
+/// everything from the plugin instance and set the init values"*): every band Off and the output
+/// back to Init's in one undo step, which Undo takes back whole; and, on a flat EQ still
+/// matching, what Match learned, matched to and applied deleted, its proposals gone, the view
+/// settings the defaults. Then it has nothing to do.
 #[test]
-fn reset_empties_the_eq_in_one_undo_step() {
+fn reset_makes_the_instance_as_new() {
+    let (mut rig, _other) = match_rig();
+    match_heard(&mut rig, 2.0);
+    rig.app.set_learn(false);
+    rig.app
+        .params
+        .match_applied
+        .write()
+        .unwrap()
+        .push(crate::learned::AppliedBand {
+            kind: 1,
+            freq: 1_000.0,
+            gain_db: 2.0,
+            q: 1.0,
+        });
+    let mut settings = rig.app.params.view.get();
+    settings.match_amount = 136;
+    rig.app.set_view(settings);
+    let basis = rig.app.match_basis(&settings);
+    rig.app.accept_fit(Fitted {
+        bands: vec![MatchBand {
+            shape: Shape::Bell,
+            freq: 2_000.0,
+            gain_db: -2.0,
+            q: 1.5,
+        }],
+        listen: rig.app.matcher.listen(),
+        basis,
+    });
+    assert!(rig.app.reset_writes().is_empty() && !rig.app.is_fresh());
+    rig.app.reset();
+    assert!(rig.app.is_fresh(), "as newly inserted");
+    assert_eq!(rig.app.match_to(), MatchTo::Nothing);
+    assert!(rig.app.match_bands.is_empty());
+    assert!(
+        rig.app.params.learned.get().is_none(),
+        "what it learned deleted"
+    );
+    assert!(rig.app.params.match_applied.read().unwrap().is_empty());
+    assert_eq!(rig.app.params.view.get(), ViewSettings::default());
+
     let mut rig = Rig::new();
     let slots = with_bells(&mut rig, &[(200.0, 3.0), (800.0, -6.0), (3_000.0, 2.0)]);
     rig.app.select_set(&[slots[0], slots[2]], Some(slots[2]));
@@ -4648,10 +4691,7 @@ fn reset_empties_the_eq_in_one_undo_step() {
     assert!((0..SLOTS).all(|slot| rig.band(slot).shape.is_none()));
     assert_eq!(rig.app.normalised_now(OUTPUT_INDEX), output);
     assert_eq!(rig.depth(), depth + 1, "one undo step");
-    assert!(
-        rig.app.reset_writes().is_empty(),
-        "at Init, nothing to write"
-    );
+    assert!(rig.app.is_fresh(), "nothing left to do");
 
     rig.app.undo();
     rig.press(Vec::new());

@@ -2153,18 +2153,60 @@ impl EqApp {
             .collect()
     }
 
-    /// Reset, beside Undo (the owner, 2026-10-29: *"I would rather just have a "reset" button up
-    /// here"*): the EQ back to Init, empty, as one undo step, so Undo brings it all back, which
-    /// the preset bar's Init, a new undo epoch, cannot. The bar then names no preset, as after its
-    /// Init. What Match learned, what it matches to and the view stay: the project's, never a
-    /// preset's.
+    /// Whether the instance is as newly inserted, so Reset has nothing to do: every parameter at
+    /// Init, nothing learned, matched, applied, found or frozen, the view settings the defaults.
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.reset_writes().is_empty()
+            && !(self.learning
+                || self.shown_learned
+                || self.find
+                || self.frozen.is_some()
+                || !self.proposals.is_empty()
+                || !self.match_bands.is_empty())
+            && self.match_to() == MatchTo::Nothing
+            && self.params.learned.get().is_none()
+            && self
+                .params
+                .match_applied
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+            && self.params.view.get() == ViewSettings::default()
+    }
+
+    /// Reset, beside Undo: **the instance as newly inserted** (the owner, 2026-10-29: *"reset
+    /// should delete everything from the plugin instance and set the init values"*). Every
+    /// parameter back to Init, the empty EQ, as one undo step, so Undo brings the bands back,
+    /// which the preset bar's Init, a new undo epoch, cannot; the bar then names no preset. And
+    /// everything else the instance holds, outside the history: Learn, Find, a freeze and Preview
+    /// end, what Match learned, what it is matched to and the bands it applied are deleted, and the
+    /// view settings are the defaults. Saved references are files, the person's, and stay.
     pub(crate) fn reset(&mut self) {
+        self.unfreeze();
+        self.end_find();
+        self.end_match();
+        self.shown_learned = false;
+        self.set_preview(false);
+        self.matcher.restart();
+        self.params.learned.store(None);
+        *self
+            .params
+            .match_to
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = MatchTo::Nothing;
+        self.params
+            .match_applied
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.params.view.edit(ViewSettings::default());
+        self.reference_version = self.reference_version.wrapping_add(1);
+        self.mark_dirty();
         let writes = self.reset_writes();
-        if writes.is_empty() {
-            return;
+        if !writes.is_empty() {
+            self.close_open();
+            self.instant(&writes);
         }
-        self.close_open();
-        self.instant(&writes);
         self.select_none();
         mxm_preset::identity::mark_none(self.params.as_ref());
     }

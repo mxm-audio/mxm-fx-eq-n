@@ -1,5 +1,10 @@
 # plan-mxm-fx-eq-n — a parametric EQ with only the bands you need
 
+**Revision 43 — Reset makes the instance as new** (2026-10-29; §5.4). After a Reset the graph
+still showed Match's lines and proposals, and the owner: *"reset should delete everything from the
+plugin instance and set the init values"*. Reset still writes Init as one undo action, and now also
+deletes what Match learned, what it is matched to and the bands it applied, ends Learn, Find, a
+freeze and Preview, and puts the view settings back to their defaults. **Built** (2026-10-29).
 **Revision 42 — Match owns the bands it applies** (2026-10-29; §7.6, decision 51). The owner,
 moving Amount up and down and applying a few times: *"I end up with this chaos"*, all 24 slots
 taken by bands undoing each other, since each Apply added the difference left on top of the last.
@@ -146,6 +151,8 @@ approved; **E1, the DSP crate** (2026-10-13), measured, and its code approved by
 | 15 | **Round 12 (3).** Solo crosses the transient-command path, so the DSP reads no editor state; every identity band parks, and re-entry is the same event as creation; decision 11 re-decided by the owner as option A (matches are echoes, inside an expiry window). §5.2–§5.4 consolidated. |
 | 29 | **F6 designed** (2026-10-15), §7.7, for the owner's approval: Zero latency and Linear phase, no Natural phase (decision 35); three resolutions, Medium by default (decision 36); dynamic bands held at their drawn gain in Linear phase (decision 37); a zero-phase kernel per channel or a 2×2 matrix for placed bands, uniformly partitioned, its latency `N/2 + B` reported at activation and a change restarting the plugin; `phase` and `resolution` appended, not automatable; the DSP crate's first dependency, `mxm-fft` |
 | 30 | **F7 designed** (2026-10-16), §7.8, for the owner's approval: of F7's four candidates the owner chose auto gain and other tracks' spectra; auto gain estimated from the curve, K-weighted over the corpus mean mix (decisions 38, 39), a parameter off by default (40); instances meeting in one process (41), named by the host's track names through an mxm-kit addition (42), one external spectrum with collisions (43) |
+| 43 | **Reset makes the instance as new** (2026-10-29), §5.4, from the owner after a Reset that left Match's proposals on the graph: everything the instance holds deleted or at its default, the parameters as one undo action (`EqApp::reset`, `is_fresh`); `reset_empties_the_eq_in_one_undo_step` became `reset_makes_the_instance_as_new` |
+| 42 | **Match owns the bands it applies** (2026-10-29), §7.6, decision 51, from the owner's 24 stacked bands: F5.14 |
 | 41 | **The VST3 wrapper fixed for Resolve** (2026-10-29), §4, §7.6, from Resolve freezing and the voice-over's EQ keeping no edit: nice-plug's VST3 wrapper on a review branch (its `PATCHES.md`); `a_restore_that_reads_back_changed_keeps_its_bands` through the VST3 too |
 | 40 | **Reset in the app bar** (2026-10-29), §5.4, from the owner: Reset before Undo, Init's values as one undo action (`EqApp::reset`); `reset_empties_the_eq_in_one_undo_step` |
 | 39 | **A restore that reads back changed keeps its bands** (2026-10-29), §4, §7.6, §7.8, from the owner's empty EQ in Resolve: the `instance`, `view` and `match-learned` fields tell nice-plug's wrapper when they install other than what was saved, so it no longer rolls the whole restore back; the host test `a_restore_that_reads_back_changed_keeps_its_bands` |
@@ -652,9 +659,13 @@ and a cut's.
   (`docs/MXM_DESIGN_SYSTEM.md` §3.1), and so do Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z. They make deleting a
   band recoverable without a dialog (§7.2).
   - **Reset**, before Undo (the owner, 2026-10-29: *"I would rather just have a "reset" button up
-    here"*): the EQ back to Init, every parameter's default as the preset bar's Init patch writes
-    them, but as one undo action rather than a replacement, so Undo brings it all back; the bar then
-    names no preset. Disabled at Init. What Match learned and the view stay.
+    here"*): **the instance as newly inserted** (*"reset should delete everything from the plugin
+    instance and set the init values"*). Every parameter's default as the preset bar's Init patch
+    writes them, but as one undo action rather than a replacement, so Undo brings the bands back;
+    the bar then names no preset. And, outside the history, everything else the instance holds:
+    Learn, Find, a freeze and Preview end, what Match learned, what it is matched to and the bands
+    it applied are deleted, and the view settings are the defaults. Saved references are files,
+    the person's, and stay. Disabled while the instance is as new.
   - **What the history is.** A bounded list of editor actions, each the parameters one gesture changed,
     before and after. It belongs to the plugin instance, so it survives the editor closing
     (`mxm-fx-curve`'s precedent).

@@ -174,6 +174,10 @@ transaction.
 - **Solo is a toggle** (the owner, 2026-10-14), latched on the selected band until pressed again,
   another selection, the band leaving the sound, a patch replaced or the editor closed; Ctrl/Cmd on
   a point solos while held. **The gain scale fades** while no band in the sound has a gain.
+- **Reset makes the instance as new** (the owner, 2026-10-29): every parameter to Init as one
+  undo step; outside the history, what Match learned, matched to and applied deleted, Learn, Find,
+  a freeze and Preview ended, the view settings the defaults; saved references stay
+  (`reset_makes_the_instance_as_new`).
 - **Undo is plain** (`history.rs`): the host context records every write; epochs at whatever the
   preset bar writes and at a host restore, **each ending every open gesture, a column control's
   too, where the host has it, writing nothing**; the history is the instance's.

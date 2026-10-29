@@ -247,6 +247,10 @@ The full text of each follows, in *The editor in full*.
   "before" values as one gesture, redo their "after" values: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or
   Ctrl+Y, and the app bar's buttons. **Reset**, before them, writes Init's values as one action,
   not a replacement, so Undo takes it back, which the bar's Init cannot (the owner, 2026-10-29).
+  It makes the instance as new: what Match learned, matched to and applied is deleted and the view
+  settings are the defaults too, outside the history, since a Reset that left Match's lines and
+  proposals on the graph was no reset (the owner, 2026-10-29: *"reset should delete everything
+  from the plugin instance and set the init values"*).
   **Epochs**: whatever the preset bar writes (a load, Init) is a
   whole-patch replacement, and a host restore is counted by the view field's `set`; either clears
   the history, and **ends a gesture still open where the host has it, writing nothing**

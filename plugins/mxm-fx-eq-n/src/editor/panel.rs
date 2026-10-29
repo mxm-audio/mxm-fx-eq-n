@@ -15,8 +15,9 @@ use crate::view::ViewSettings;
 pub const WHEEL_GESTURE_SECONDS: f64 = 0.4;
 
 /// Reset's hover, in the app bar beside Undo.
-const RESET_DESCRIPTION: &str = "Empties the EQ: every band removed, and Output, Gain scale, \
-     Phase and Auto gain as new. Undo brings it all back.";
+const RESET_DESCRIPTION: &str = "Makes this EQ as new: every band removed, every control at \
+     its start, and what Match learned, matched to and applied deleted. Undo brings the bands \
+     back, not what Match learned. Saved references stay.";
 
 impl EqApp {
     /// Whether another surface owns the keyboard this frame: a value or a reference's name being
@@ -242,7 +243,7 @@ impl EqApp {
             let history = history::lock(&self.history);
             (history.can_undo(), history.can_redo())
         };
-        let can_reset = !self.reset_writes().is_empty();
+        let can_reset = !self.is_fresh();
         let mut reset = false;
         let mut undo = false;
         let mut redo = false;
