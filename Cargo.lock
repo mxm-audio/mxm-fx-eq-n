@@ -2732,7 +2732,7 @@ dependencies = [
 [[package]]
 name = "nice-plug"
 version = "0.4.2"
-source = "git+https://github.com/mxm-audio/nice-plug?branch=main#987806f54158ee21f910cf59578f5f35b831651c"
+source = "git+https://github.com/mxm-audio/nice-plug?branch=main#8c701a64b5f57b82aadd7886f9874512f187fd73"
 dependencies = [
  "anyhow",
  "anymap3",
