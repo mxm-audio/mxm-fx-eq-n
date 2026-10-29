@@ -665,6 +665,49 @@ fn a_restore_while_the_editor_is_closed_starts_an_epoch_on_reopening() {
     );
 }
 
+/// **A refused state keeps the history; a restore before it still ends it** (VST3 review,
+/// 2026-10-29): a state the wrapper rolls back is no restore, but one refused while the editor is
+/// closed, after a restore nobody saw yet, its view unreadable so only its rollback sets the field,
+/// leaves that restore counted, and reopening starts an epoch.
+#[test]
+fn a_refused_state_keeps_the_history_and_hides_no_restore_before_it() {
+    use nice_plug::params::persist::PersistentField;
+    use nice_plug::wrapper::{as_rollback, as_transaction};
+    let mut rig = Rig::new();
+    rig.press(Vec::new());
+    rig.app.insert_at(1_000.0);
+    let view = rig.app.params.view.get();
+    as_transaction(|| {
+        PersistentField::set(&rig.app.params.view, ViewSettings::default());
+        as_rollback(|| PersistentField::set(&rig.app.params.view, view));
+    });
+    rig.press(Vec::new());
+    assert!(
+        history::lock(&rig.app.history).can_undo(),
+        "a refused state is no restore"
+    );
+
+    rig.app.detach();
+    as_transaction(|| PersistentField::set(&rig.app.params.view, view));
+    as_transaction(|| as_rollback(|| PersistentField::set(&rig.app.params.view, view)));
+    let mut reopened = EqApp::new(Handles {
+        params: rig.app.params.clone(),
+        telemetry: rig.telemetry.clone(),
+        audition: rig.audition.clone(),
+        preview: Arc::new(crate::preview::Preview::default()),
+        history: rig.app.history.clone(),
+        analyser: None,
+        instance: crate::instances::Instance::detached(),
+    });
+    reopened.attach(GuiContext::new(rig.host.clone()));
+    rig.app = reopened;
+    rig.press(Vec::new());
+    assert!(
+        !history::lock(&rig.app.history).can_undo(),
+        "the restore before the refused state ended the history"
+    );
+}
+
 /// A drag that starts on the line makes the band and moves it as one action: one undo takes it
 /// away, and BACK during the drag leaves nothing to undo.
 #[test]
