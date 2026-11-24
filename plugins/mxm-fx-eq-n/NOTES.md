@@ -524,9 +524,14 @@ The full text of each follows, in *The editor in full*.
     phase in force playing on until then (MXM Player's headless path never restarts, so there it
     waits for the next activation). `Telemetry::phase` publishes the phase in force; `deactivate`
     drops Linear phase's engine and its design thread.
-  - *Reported at activation.* nice-plug defers `ActivateContext::set_latency_samples` until
-    `activate` returns, and a latency different from the last one asks the host for a restart once
-    the plugin is active; reporting the same again asks nothing, so the restart does not loop.
+  - *Reported at activation.* nice-plug holds `ActivateContext::set_latency_samples` until the end
+    of `activate` and tells the host there (`clap_host_latency::changed`, where CLAP allows it) when
+    the latency differs from one the host has read; it asks nothing from inside `activate`, and
+    reporting the same again tells nothing. A state load's reactivation, outside `activate`, asks
+    for the restart instead. **Before the fork's fix (4e447c8, 2026-11-24)** an activation's new
+    latency asked for a restart from inside `activate`, which Bitwig 6 holds, ignoring every later
+    request: an EQ created already in Linear phase (a duplicated track) never heard a Phase change
+    there, and Bitwig kept compensating the old latency (mxm-fx-pitch's `NOTES.md`, *Bitwig*).
     Through MXM Player (`a_restored_linear_phase_eq_delays_the_render_by_its_latency`) a restored
     Linear phase's render is the dry one later by exactly the latency, 2,304 frames at Low.
   - *Asked while active.* `process` reports the asked phase's latency once (`phase_change`); the
