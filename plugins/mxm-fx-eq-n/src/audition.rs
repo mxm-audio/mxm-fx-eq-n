@@ -36,12 +36,21 @@ impl Audition {
 
     /// The shell ends any solo. Never waits: a racing request fails rather than undoing it.
     pub fn end(&self) {
-        let _ = self
-            .word
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
-                let (endings, _) = unpack(word);
-                Some(pack(endings.wrapping_add(1), None))
-            });
+        // The loop `fetch_update` ran, written out: Rust 1.99 deprecates it for `try_update`,
+        // newer than this crate's MSRV.
+        let mut word = self.word.load(Ordering::Acquire);
+        loop {
+            let (endings, _) = unpack(word);
+            match self.word.compare_exchange_weak(
+                word,
+                pack(endings.wrapping_add(1), None),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => word = actual,
+            }
+        }
     }
 
     /// The editor asks for `slot` (or none), as of the count of endings it read. False, with
